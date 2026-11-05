@@ -1,0 +1,11 @@
+#!/bin/sh
+# Refuse direct pushes to main; every change goes through a pull request.
+protected="main"
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  branch="${remote_ref#refs/heads/}"
+  if [ "$branch" = "$protected" ]; then
+    echo "pre-push: direct push to '$protected' is blocked. Open a pull request instead."
+    exit 1
+  fi
+done
+exit 0
