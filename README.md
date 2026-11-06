@@ -29,7 +29,7 @@ src/
                    google-pubsub/ (push OIDC check), openai/ (LLM client, prompts)
   db/              Prisma client and generated types
   domain/          business rules with no I/O: rfq, sent-mail state machine, reply linking
-  telemetry/       withSpan() and the span-name constants for Gmail, OpenAI and the agent
+  telemetry/       runInsideSpan(): a business-named parent span around each outbound call
   utils/           pure functions with fixture tests, no network: mime/ (parse, quoted-text stripping), crypto/
 ```
 
@@ -43,15 +43,13 @@ src/
   `packages/core` reads `process.env` or keeps a module-level instance.
 - **Two deliberate process-wide globals.** OpenTelemetry registers one global tracer/meter
   provider per process before application code loads; `packages/core` depends only on
-  `@opentelemetry/api` and reaches that global through `withSpan()` or `trace.getTracer()`. The
-  Prisma client works the same way: the composition root calls `initializePrismaClient(config)`
-  once, everything else calls `getPrismaClient()`. Neither reads `process.env` itself.
+  `@opentelemetry/api` and reaches that global through `runInsideSpan()` or `trace.getTracer()`.
 
 ## Telemetry
 
 OpenTelemetry end to end, exported over OTLP/HTTP to **Grafana Cloud** (spans to Tempo, metrics to
 Mimir). Same two env vars everywhere: `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_EXPORTER_OTLP_HEADERS`
-(basic auth, instance id + token). Unset locally, nothing is exported and `withSpan()` is a no-op.
+(basic auth, instance id + token). Unset locally, nothing is exported and `runInsideSpan()` is a no-op.
 
 |                  | API (Railway)                                                                                     | Lambdas                                                                |
 | ---------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
@@ -64,16 +62,16 @@ Rules:
 
 - **Auto-instrumentation records the wire.** Inbound requests carry `http.route`; outbound calls
   carry `server.address` (`gmail.googleapis.com`, `api.openai.com`). No code needed.
-- **`withSpan()` records the business operation** around each outbound call so the wire span has a
+- **`runInsideSpan()` records the business operation** around each outbound call so the wire span has a
   parent that says what it was for: `openai.classify` vs `openai.extract`, `gmail.send` vs
-  `gmail.messages.get`. Names live in `telemetry/span-names.ts` (`GMAIL_SPAN`, `OPENAI_SPAN`,
-  `AGENT_SPAN`); add there first, then use in the connector. Attribute keys in `SPAN_ATTR`; keep the
-  list short, every key is a filter in Grafana.
+  `gmail.messages.get`. Convention `<system>.<operation>`, lowercase, dots; each connector defines
+  its own names as constants next to its code. Keep span attributes few: every key is a filter in
+  Grafana.
 - **No custom request metrics.** Average and p95 time per route come from the auto-emitted
   `http.server.request.duration` histogram (and from request span durations in Tempo). Do not add a
   metrics middleware.
 - **Manual tracer/meter only for the agent**: `agent.run` with one `agent.tool` child per tool call,
-  acquired via `trace.getTracer(INSTRUMENTATION_SCOPE)` / `metrics.getMeter(INSTRUMENTATION_SCOPE)`.
+  acquired via `trace.getTracer(CORE_INSTRUMENTATION_SCOPE)` / `metrics.getMeter(CORE_INSTRUMENTATION_SCOPE)`.
 - Nothing is emitted per mailbox, vendor or model as a metric label; those are span attributes only.
 - Infra metrics AWS produces itself (SQS depth, DLQ, Lambda errors) stay as CloudWatch alarms in the
   CDK stack.
