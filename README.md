@@ -7,18 +7,23 @@ Public repository: no real mail, vendor or customer data is ever committed; fixt
 
 ## Layout
 
-| Path         | What                                                |
-| ------------ | --------------------------------------------------- |
-| `packages/*` | Shared libraries (`core` lands first)               |
-| `apps/*`     | Deployables: Express API (Railway), Lambda handlers |
-| `infra`      | CDK                                                 |
+| Path         | What                                                                                 |
+| ------------ | ------------------------------------------------------------------------------------ |
+| `packages/*` | Shared libraries (`core` lands first)                                                |
+| `apps/api`   | Express API (Railway): `createAppInstance({ config })` + `index.ts` composition root |
+| `apps/*`     | Other deployables: Lambda handlers                                                   |
+| `infra`      | CDK                                                                                  |
 
 ## Getting started
 
 ```sh
 npm install
 npm run lint && npm run typecheck && npm test && npm run build
+npm run dev -w @lc/api      # http://localhost:8080/health, reads ../../.env
 ```
+
+`packages/core`'s `typecheck` emits `dist/` on purpose: `apps/*` type-check and test against
+`@lc/core`'s built declarations, so core must be built before anything that imports it.
 
 ## `packages/core` layout
 
