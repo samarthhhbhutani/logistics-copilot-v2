@@ -27,11 +27,13 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      - name: Pending migrations
-        run: npm run db:status -w @lc/core
-        env:
-          DIRECT_URL: ${{ secrets.DIRECT_URL }}
       - name: Apply migrations
         run: npm run db:deploy -w @lc/core
+        env:
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+      # `prisma migrate status` exits 1 while migrations are pending, so it can only run AFTER
+      # deploy, where a non-zero exit means the database still does not match prisma/migrations.
+      - name: Verify database matches migrations
+        run: npm run db:status -w @lc/core
         env:
           DIRECT_URL: ${{ secrets.DIRECT_URL }}
