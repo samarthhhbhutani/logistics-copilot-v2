@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getPrismaClient, initializePrismaClient } from './prisma-client.js';
+import { getPrismaClient, initializePrismaClient } from './prismaClient.js';
 
 // Constructing the client opens no connection (pg pools lazily), so a placeholder URL is safe here.
 const placeholderConfig = { DATABASE_URL: 'postgresql://user:password@localhost:6543/postgres' };

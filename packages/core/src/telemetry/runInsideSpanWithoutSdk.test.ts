@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { runInsideSpan } from './run-inside-span.js';
+import { runInsideSpan } from './runInsideSpan.js';
 
 // Runs in its own file so no tracer provider is registered in this worker.
 describe('runInsideSpan() without a registered SDK', () => {

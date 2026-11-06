@@ -1,1 +1,1 @@
-export * from './run-inside-span.js';
+export * from './runInsideSpan.js';
