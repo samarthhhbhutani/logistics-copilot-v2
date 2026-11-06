@@ -40,6 +40,10 @@ src/
 
 `connectors` and `utils` never import each other; `domain` imports neither. Apps compose the three.
 
+File names are camelCase and match their main export (`runInsideSpan.ts`, `createAppInstance.ts`);
+tests sit next to the code as `<name>.test.ts`. Tool-owned names (`package-lock.json`, workflows,
+Prisma migrations) keep their own conventions.
+
 ### Composition rules
 
 - **Singletons by construction, not by module state.** Each process has one composition root

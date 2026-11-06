@@ -6,7 +6,7 @@ import {
   TracerProvider,
 } from '@opentelemetry/sdk-trace';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { CORE_INSTRUMENTATION_SCOPE, runInsideSpan } from './run-inside-span.js';
+import { CORE_INSTRUMENTATION_SCOPE, runInsideSpan } from './runInsideSpan.js';
 
 const inMemorySpanExporter = new InMemorySpanExporter();
 
