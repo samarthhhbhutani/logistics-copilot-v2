@@ -3,16 +3,16 @@ import { z } from 'zod';
 const envSchema = z.object({
   STAGE: z.enum(['dev', 'staging', 'prod']).default('dev'),
   /** Supabase transaction pooler (6543, pgbouncer=true). The only URL the application opens. */
-  DATABASE_URL: z.string().url(),
+  DATABASE_URL: z.url(),
   /** Supabase session pooler (5432). Used only by the Prisma CLI for migrations, never by the app. */
-  DIRECT_URL: z.string().url().optional(),
+  DIRECT_URL: z.url().optional(),
   GOOGLE_CLIENT_ID: z.string().min(1).optional(),
   GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
-  GOOGLE_REDIRECT_URI: z.string().url().optional(),
+  GOOGLE_REDIRECT_URI: z.url().optional(),
   GOOGLE_PUBSUB_TOPIC: z.string().min(1).optional(),
   AWS_REGION: z.string().default('ap-south-1'),
   S3_BUCKET: z.string().optional(),
-  SQS_MESSAGES_QUEUE_URL: z.string().url().optional(),
+  SQS_MESSAGES_QUEUE_URL: z.url().optional(),
   OPENAI_API_KEY: z.string().min(1).optional(),
   MODEL_CLASSIFY: z.string().default('gpt-6-luna'),
   MODEL_AGENT: z.string().default('gpt-6.1-sol'),

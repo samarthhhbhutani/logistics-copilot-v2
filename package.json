@@ -33,9 +33,13 @@
     "prettier": "^3.4.2",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.18.1",
-    "vitest": "^2.1.8"
+    "vite": "^8.3.6",
+    "vitest": "^5.1.0"
   },
   "overrides": {
-    "prisma": "7.10.1"
+    "prisma": "7.10.1",
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "^11.0.5"
+    }
   }
 }
