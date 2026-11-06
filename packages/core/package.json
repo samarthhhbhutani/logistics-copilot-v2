@@ -33,7 +33,7 @@
     "@prisma/client": "7.10.1",
     "dotenv": "^16.4.7",
     "pg": "^8.23.1",
-    "zod": "^3.24.1"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@opentelemetry/context-async-hooks": "^3.1.0",
