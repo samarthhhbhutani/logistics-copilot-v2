@@ -17,6 +17,8 @@ const envSchema = z.object({
   MODEL_CLASSIFY: z.string().default('gpt-6-luna'),
   MODEL_AGENT: z.string().default('gpt-6.1-sol'),
   PORT: z.coerce.number().int().positive().default(8080),
+  /** HMAC key for session JWTs (API only). Generate: openssl rand -base64 48 */
+  SESSION_SECRET: z.string().min(32).optional(),
 });
 
 export type Config = z.infer<typeof envSchema>;

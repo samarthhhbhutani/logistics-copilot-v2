@@ -1,9 +1,17 @@
 import express from 'express';
 import type { Express, NextFunction, Request, Response } from 'express';
-import type { Config } from '@lc/core';
+import cookieParser from 'cookie-parser';
+import type { Config, MailboxCredentialsRepository, TenantRepository } from '@lc/core';
+import { createAuthRouter } from './auth/authRouter.js';
+import { createRequireSession, getSession } from './auth/requireSession.js';
+import { createTenantsRouter } from './tenants/tenantsRouter.js';
 
 export interface AppDependencies {
   config: Config;
+  tenantRepository: TenantRepository;
+  mailboxCredentialsRepository: MailboxCredentialsRepository;
+  /** HMAC key for session cookies; required here rather than optional on Config so index.ts fails fast. */
+  sessionSecret: string;
 }
 
 /**
@@ -13,16 +21,33 @@ export interface AppDependencies {
  * No metrics middleware: request latency and status come from OpenTelemetry's http/express
  * auto-instrumentation once instrumentation.ts lands (README, Telemetry).
  */
-export function createAppInstance({ config }: AppDependencies): Express {
+export function createAppInstance({
+  config,
+  tenantRepository,
+  mailboxCredentialsRepository,
+  sessionSecret,
+}: AppDependencies): Express {
   const expressApp = express();
   expressApp.use(express.json({ limit: '1mb' }));
+  expressApp.use(cookieParser());
+  const sessionCookie = { secure: config.STAGE !== 'dev' };
+  const requireSession = createRequireSession(sessionSecret);
 
   expressApp.get('/health', (_request, response) => {
     response.json({ ok: true, stage: config.STAGE });
   });
 
   const v1Router = express.Router();
-  // Feature routers mount here as they land: auth, mailboxes, emails, rfqs, agent.
+  v1Router.use(
+    '/auth',
+    createAuthRouter({ mailboxCredentialsRepository, sessionSecret, sessionCookie }),
+  );
+  v1Router.use('/tenants', createTenantsRouter({ tenantRepository, mailboxCredentialsRepository }));
+  // Who am I (mailbox + tenant): the smallest session-scoped route; what the frontend calls on load.
+  v1Router.get('/me', requireSession, (_request, response) => {
+    response.json(getSession(response));
+  });
+  // Feature routers mount here as they land: mailboxes, emails, rfqs, agent.
   expressApp.use('/v1', v1Router);
 
   expressApp.use((request, response) => {

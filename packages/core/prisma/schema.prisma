@@ -2,9 +2,9 @@
 // Column names stay snake_case in Postgres via @map; model fields are camelCase.
 
 generator client {
-  provider = "prisma-client"
-  output   = "../src/db/generated"
-  runtime  = "nodejs"
+  provider     = "prisma-client"
+  output       = "../src/db/generated"
+  runtime      = "nodejs"
   moduleFormat = "esm"
 }
 
@@ -12,18 +12,53 @@ datasource db {
   provider = "postgresql"
 }
 
-/// One connected Gmail account. Tenant = mailbox (a shared desk inbox), not a person.
+/// A customer organisation: one logistics desk. The unit of data isolation; every row a desk
+/// owns carries its tenant_id and every query is scoped by it. Created once, with its first mailbox.
+model Tenant {
+  id        String         @id @default(uuid()) @db.Uuid
+  name      String
+  createdAt DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  mailboxes Mailbox[]
+  logins    MailboxLogin[]
+
+  @@map("tenants")
+}
+
+/// The account a person operates: one Gmail inbox, one login, one person. The identity of the
+/// product. email_address is the only place the address lives and doubles as the login name.
+/// Exists from creation (by us); encrypted_refresh_token stays null until Gmail is connected, and
+/// connect must reject a Google account whose address differs from email_address.
 /// last_history_id is the Pub/Sub cursor; only the ingest Lambda advances it, with
 /// updateMany({ where: { id, lastHistoryId: { lt: new } } }).
 model Mailbox {
-  id                    String    @id @default(uuid()) @db.Uuid
-  tenantId              String    @map("tenant_id") @db.Uuid
-  emailAddress          String    @unique @map("email_address")
-  encryptedRefreshToken String    @map("encrypted_refresh_token")
-  lastHistoryId         BigInt?   @map("last_history_id")
-  watchExpiresAt        DateTime? @map("watch_expires_at") @db.Timestamptz
-  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  id                    String        @id @default(uuid()) @db.Uuid
+  tenantId              String        @map("tenant_id") @db.Uuid
+  tenant                Tenant        @relation(fields: [tenantId], references: [id])
+  emailAddress          String        @unique @map("email_address")
+  encryptedRefreshToken String?       @map("encrypted_refresh_token")
+  lastHistoryId         BigInt?       @map("last_history_id")
+  watchExpiresAt        DateTime?     @map("watch_expires_at") @db.Timestamptz
+  createdAt             DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt             DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  login                 MailboxLogin?
 
+  @@index([tenantId])
   @@map("mailboxes")
+}
+
+/// Password credential for one mailbox, and nothing else (no Google tokens here). Kept apart from
+/// mailboxes so the ingest Lambda's cursor writes never touch the row holding the password hash.
+/// password_hash is argon2id (packages/core/src/auth/passwordHash.ts).
+model MailboxLogin {
+  id           String   @id @default(uuid()) @db.Uuid
+  mailboxId    String   @unique @map("mailbox_id") @db.Uuid
+  mailbox      Mailbox  @relation(fields: [mailboxId], references: [id])
+  tenantId     String   @map("tenant_id") @db.Uuid
+  tenant       Tenant   @relation(fields: [tenantId], references: [id])
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([tenantId])
+  @@map("mailbox_logins")
 }

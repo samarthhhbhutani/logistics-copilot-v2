@@ -41,4 +41,4 @@ export function getPrismaClient(): PrismaClient {
 }
 
 export { PrismaClient };
-export type { Mailbox } from './generated/client.js';
+export type { Mailbox, MailboxLogin, Tenant } from './generated/client.js';
