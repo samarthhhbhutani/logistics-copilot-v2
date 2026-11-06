@@ -59,13 +59,16 @@ Prisma migrations) keep their own conventions.
 OpenTelemetry end to end, exported over OTLP/HTTP to **Grafana Cloud** (spans to Tempo, metrics to
 Mimir). Same two env vars everywhere: `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_EXPORTER_OTLP_HEADERS`
 (basic auth, instance id + token). Unset locally, nothing is exported and `runInsideSpan()` is a no-op.
+Our stack is `bouncypillow586` in `prod-ap-south-1`. `=` padding in the base64 header must be written
+`%3D` (see `.env.example`).
 
-|                  | API (Railway)                                                                                     | Lambdas                                                                |
-| ---------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| SDK start        | `apps/api/src/instrumentation.ts` (`sdk-node`), loaded with `node --import` **before** `index.js` | OTel Lambda layer + `AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-handler`        |
-| Instrumentations | listed in `instrumentation.ts`: http, undici, express, pg                                         | `OTEL_NODE_ENABLED_INSTRUMENTATIONS=aws-lambda,aws-sdk,http,undici,pg` |
-| Flush            | `sdk.shutdown()` on SIGTERM                                                                       | layer, at the end of every invocation                                  |
-| Bundling         | n/a                                                                                               | `nodeModules: ['googleapis','openai','pg']` so they stay patchable     |
+|                  | API (Railway)                                                                                                                           | Lambdas                                                                |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| SDK start        | `apps/api/src/instrumentation.ts` (`sdk-node`), loaded with `node --import` **before** `index.js`                                       | OTel Lambda layer + `AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-handler`        |
+| Instrumentations | listed in `instrumentation.ts`: http, undici, express, pg                                                                               | `OTEL_NODE_ENABLED_INSTRUMENTATIONS=aws-lambda,aws-sdk,http,undici,pg` |
+| Flush            | `sdk.shutdown()` on SIGTERM                                                                                                             | layer, at the end of every invocation                                  |
+| ESM              | `instrumentation.ts` registers `@opentelemetry/instrumentation/hook.mjs`; without it only `http` is patched and `http.route` is missing | bundled CJS, no hook needed                                            |
+| Bundling         | n/a                                                                                                                                     | `nodeModules: ['googleapis','openai','pg']` so they stay patchable     |
 
 Rules:
 
