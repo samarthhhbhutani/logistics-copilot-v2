@@ -1,0 +1,29 @@
+// Tables are added one at a time as features need them (design doc, section 3).
+// Column names stay snake_case in Postgres via @map; model fields are camelCase.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/db/generated"
+  runtime  = "nodejs"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// One connected Gmail account. Tenant = mailbox (a shared desk inbox), not a person.
+/// last_history_id is the Pub/Sub cursor; only the ingest Lambda advances it, with
+/// updateMany({ where: { id, lastHistoryId: { lt: new } } }).
+model Mailbox {
+  id                    String    @id @default(uuid()) @db.Uuid
+  tenantId              String    @map("tenant_id") @db.Uuid
+  emailAddress          String    @unique @map("email_address")
+  encryptedRefreshToken String    @map("encrypted_refresh_token")
+  lastHistoryId         BigInt?   @map("last_history_id")
+  watchExpiresAt        DateTime? @map("watch_expires_at") @db.Timestamptz
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("mailboxes")
+}

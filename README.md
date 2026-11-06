@@ -41,9 +41,11 @@ src/
   (`apps/api/src/index.ts`, each Lambda's module scope). It calls `loadConfig(process.env)` once,
   builds one Prisma client and the connectors, and passes them down as arguments. No module in
   `packages/core` reads `process.env` or keeps a module-level instance.
-- **Telemetry is the exception, by design.** OpenTelemetry registers one global tracer/meter
+- **Two deliberate process-wide globals.** OpenTelemetry registers one global tracer/meter
   provider per process before application code loads; `packages/core` depends only on
-  `@opentelemetry/api` and reaches that global through `withSpan()` or `trace.getTracer()`.
+  `@opentelemetry/api` and reaches that global through `withSpan()` or `trace.getTracer()`. The
+  Prisma client works the same way: the composition root calls `initializePrismaClient(config)`
+  once, everything else calls `getPrismaClient()`. Neither reads `process.env` itself.
 
 ## Telemetry
 
@@ -75,6 +77,28 @@ Rules:
 - Nothing is emitted per mailbox, vendor or model as a metric label; those are span attributes only.
 - Infra metrics AWS produces itself (SQS depth, DLQ, Lambda errors) stay as CloudWatch alarms in the
   CDK stack.
+
+## Database
+
+Supabase Postgres via Prisma 7 (engine-less client + `@prisma/adapter-pg`). Two projects,
+`logistics-copilot-staging` and `logistics-copilot-prod`, both in Mumbai (`ap-south-1`) beside the Lambdas; local development points at staging. Free-tier
+direct hosts are IPv6-only, so every URL goes through the pooler: `DATABASE_URL` = transaction pooler
+(6543, the only URL the app opens), `DIRECT_URL` = session pooler (5432, Prisma CLI only). Tables are
+added one at a time as features need them, in `packages/core/prisma/schema.prisma`. Nothing is ever run
+by hand in the Supabase SQL editor.
+
+Migrations run automatically: `.github/workflows/migrate-staging.yml` applies pending migrations to
+staging on every merge to `main` that touches `packages/core/prisma/**`, using the `DIRECT_URL` secret of
+the `staging` environment. Production migrations arrive with `deploy.yml`, behind its approval gate.
+
+```sh
+npm run db:migrate -- --name add_messages   # diff schema -> prisma/migrations/<ts>_add_messages/migration.sql, apply, regenerate (uses DIRECT_URL)
+npm run db:deploy                           # apply pending migrations (CI / Railway pre-deploy)
+npm run db:status                           # what is pending
+```
+
+Prisma is pinned to 7.10.1 with a root `overrides` entry: npm's `latest` tag for `prisma` currently points
+at an 8.0 release candidate that does not match `@prisma/client`.
 
 ## Contributing
 

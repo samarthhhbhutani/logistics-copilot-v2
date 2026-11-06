@@ -2,7 +2,10 @@ import { z } from 'zod';
 
 const envSchema = z.object({
   STAGE: z.enum(['dev', 'staging', 'prod']).default('dev'),
+  /** Supabase transaction pooler (6543, pgbouncer=true). The only URL the application opens. */
   DATABASE_URL: z.string().url(),
+  /** Supabase session pooler (5432). Used only by the Prisma CLI for migrations, never by the app. */
+  DIRECT_URL: z.string().url().optional(),
   GOOGLE_CLIENT_ID: z.string().min(1).optional(),
   GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
   GOOGLE_REDIRECT_URI: z.string().url().optional(),
