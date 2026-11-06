@@ -13,8 +13,8 @@
     "infra"
   ],
   "scripts": {
-    "build": "echo \"no workspaces yet (replaced when packages/core lands)\"",
-    "typecheck": "echo \"no workspaces yet (replaced when packages/core lands)\"",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
