@@ -2,7 +2,7 @@ import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['**/dist/**', '**/cdk.out/**', '**/node_modules/**'] },
+  { ignores: ['**/dist/**', '**/cdk.out/**', '**/node_modules/**', '**/src/db/generated/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
