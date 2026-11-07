@@ -1,12 +1,13 @@
 import request from 'supertest';
 import type { Express } from 'express';
 import { describe, expect, it } from 'vitest';
+import { testTenantBody } from '../tenantFixture.test-helper.js';
 import { createTestAppInstance } from '../testAppInstance.test-helper.js';
 
 const mailboxBody = { email: 'Ops@Bhatia.example', password: 'a-long-enough-password' };
 
 async function createMailbox(app: Express): Promise<{ mailboxId: string; tenantId: string }> {
-  const tenant = await request(app).post('/v1/tenants').send({ name: 'Bhatia Desk' });
+  const tenant = await request(app).post('/v1/tenants').send(testTenantBody);
   const mailbox = await request(app)
     .post(`/v1/tenants/${tenant.body.tenantId}/mailboxes`)
     .send(mailboxBody);

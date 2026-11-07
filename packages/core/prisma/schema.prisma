@@ -15,13 +15,30 @@ datasource db {
 /// A customer organisation: one logistics desk. The unit of data isolation; every row a desk
 /// owns carries its tenant_id and every query is scoped by it. Created once, with its first mailbox.
 model Tenant {
-  id        String         @id @default(uuid()) @db.Uuid
-  name      String
-  createdAt DateTime       @default(now()) @map("created_at") @db.Timestamptz
-  mailboxes Mailbox[]
-  logins    MailboxLogin[]
+  id                          String         @id @default(uuid()) @db.Uuid
+  name                        String
+  /// The desk's own Google OAuth client, created in its Workspace project with an Internal consent
+  /// screen (no verification, no 7-day token expiry). One per tenant; every mailbox consents
+  /// through it. Secret encrypted with createSecretCipher. Null only for tenants created before
+  /// this column existed; connect refuses them until an operator sets the client.
+  googleClientId              String?        @map("google_client_id")
+  encryptedGoogleClientSecret String?        @map("encrypted_google_client_secret")
+  createdAt                   DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  mailboxes                   Mailbox[]
+  logins                      MailboxLogin[]
 
   @@map("tenants")
+}
+
+/// not_connected: never consented or disconnected. connected: refresh token on file.
+/// needs_reconnect: a refresh failed (revoked, password change, 7-day test expiry); the portal
+/// shows a banner and the same connect flow repairs it.
+enum GmailConnectionStatus {
+  NOT_CONNECTED   @map("not_connected")
+  CONNECTED       @map("connected")
+  NEEDS_RECONNECT @map("needs_reconnect")
+
+  @@map("gmail_connection_status")
 }
 
 /// The account a person operates: one Gmail inbox, one login, one person. The identity of the
@@ -31,15 +48,17 @@ model Tenant {
 /// last_history_id is the Pub/Sub cursor; only the ingest Lambda advances it, with
 /// updateMany({ where: { id, lastHistoryId: { lt: new } } }).
 model Mailbox {
-  id                    String        @id @default(uuid()) @db.Uuid
-  tenantId              String        @map("tenant_id") @db.Uuid
-  tenant                Tenant        @relation(fields: [tenantId], references: [id])
-  emailAddress          String        @unique @map("email_address")
-  encryptedRefreshToken String?       @map("encrypted_refresh_token")
-  lastHistoryId         BigInt?       @map("last_history_id")
-  watchExpiresAt        DateTime?     @map("watch_expires_at") @db.Timestamptz
-  createdAt             DateTime      @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt             DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  id                    String                @id @default(uuid()) @db.Uuid
+  tenantId              String                @map("tenant_id") @db.Uuid
+  tenant                Tenant                @relation(fields: [tenantId], references: [id])
+  emailAddress          String                @unique @map("email_address")
+  encryptedRefreshToken String?               @map("encrypted_refresh_token")
+  gmailConnectionStatus GmailConnectionStatus @default(NOT_CONNECTED) @map("gmail_connection_status")
+  gmailConnectedAt      DateTime?             @map("gmail_connected_at") @db.Timestamptz
+  lastHistoryId         BigInt?               @map("last_history_id")
+  watchExpiresAt        DateTime?             @map("watch_expires_at") @db.Timestamptz
+  createdAt             DateTime              @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt             DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
   login                 MailboxLogin?
 
   @@index([tenantId])

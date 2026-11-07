@@ -6,9 +6,10 @@ const envSchema = z.object({
   DATABASE_URL: z.url(),
   /** Supabase session pooler (5432). Used only by the Prisma CLI for migrations, never by the app. */
   DIRECT_URL: z.url().optional(),
-  GOOGLE_CLIENT_ID: z.string().min(1).optional(),
-  GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
+  /** Our Gmail OAuth callback, registered on every tenant's own Google client (clients are per tenant, in the DB). */
   GOOGLE_REDIRECT_URI: z.url().optional(),
+  /** Frontend origin the Gmail callback redirects back to. Unset in local dev: the callback answers JSON instead. */
+  PORTAL_URL: z.url().optional(),
   GOOGLE_PUBSUB_TOPIC: z.string().min(1).optional(),
   AWS_REGION: z.string().default('ap-south-1'),
   S3_BUCKET: z.string().optional(),

@@ -1,15 +1,28 @@
 import express from 'express';
 import type { Express, NextFunction, Request, Response } from 'express';
 import cookieParser from 'cookie-parser';
-import type { Config, MailboxCredentialsRepository, TenantRepository } from '@lc/core';
+import type {
+  Config,
+  GmailOAuth,
+  MailboxConnectionRepository,
+  MailboxCredentialsRepository,
+  EncryptionUtil,
+  TenantRepository,
+} from '@lc/core';
 import { createAuthRouter } from './auth/authRouter.js';
 import { createRequireSession, getSession } from './auth/requireSession.js';
+import { createGmailConnectionRouter } from './gmail/gmailConnectionRouter.js';
 import { createTenantsRouter } from './tenants/tenantsRouter.js';
 
 export interface AppDependencies {
   config: Config;
   tenantRepository: TenantRepository;
   mailboxCredentialsRepository: MailboxCredentialsRepository;
+  mailboxConnectionRepository: MailboxConnectionRepository;
+  /** Google OAuth operations; the real one in index.ts, an in-memory fake in tests. */
+  gmailOAuth: GmailOAuth;
+  /** Encrypts refresh tokens and tenant client secrets before they reach the database. */
+  encryptionUtil: EncryptionUtil;
   /** HMAC key for session cookies; required here rather than optional on Config so index.ts fails fast. */
   sessionSecret: string;
 }
@@ -25,6 +38,9 @@ export function createAppInstance({
   config,
   tenantRepository,
   mailboxCredentialsRepository,
+  mailboxConnectionRepository,
+  gmailOAuth,
+  encryptionUtil,
   sessionSecret,
 }: AppDependencies): Express {
   const expressApp = express();
@@ -42,12 +58,27 @@ export function createAppInstance({
     '/auth',
     createAuthRouter({ mailboxCredentialsRepository, sessionSecret, sessionCookie }),
   );
-  v1Router.use('/tenants', createTenantsRouter({ tenantRepository, mailboxCredentialsRepository }));
+  v1Router.use(
+    '/tenants',
+    createTenantsRouter({ tenantRepository, mailboxCredentialsRepository, encryptionUtil }),
+  );
   // Who am I (mailbox + tenant): the smallest session-scoped route; what the frontend calls on load.
   v1Router.get('/me', requireSession, (_request, response) => {
     response.json(getSession(response));
   });
-  // Feature routers mount here as they land: mailboxes, emails, rfqs, agent.
+  v1Router.use(
+    '/mailbox',
+    createGmailConnectionRouter({
+      mailboxConnectionRepository,
+      tenantRepository,
+      gmailOAuth,
+      encryptionUtil,
+      requireSession,
+      sessionSecret,
+      portalUrl: config.PORTAL_URL,
+    }),
+  );
+  // Feature routers mount here as they land: emails, rfqs, agent.
   expressApp.use('/v1', v1Router);
 
   expressApp.use((request, response) => {

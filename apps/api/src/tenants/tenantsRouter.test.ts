@@ -1,13 +1,14 @@
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
-import { createTestAppInstance } from '../testAppInstance.test-helper.js';
+import { testTenantBody } from '../tenantFixture.test-helper.js';
+import { createTestApp, createTestAppInstance } from '../testAppInstance.test-helper.js';
 
 const mailboxBody = { email: 'Ops@Bhatia.example', password: 'a-long-enough-password' };
 
 describe('tenants', () => {
   it('creates a tenant, then a mailbox with credentials under it, without signing anyone in', async () => {
     const app = createTestAppInstance();
-    const tenant = await request(app).post('/v1/tenants').send({ name: 'Bhatia Desk' });
+    const tenant = await request(app).post('/v1/tenants').send(testTenantBody);
     expect(tenant.status).toBe(201);
     expect(tenant.body).toEqual({ tenantId: expect.any(String) });
 
@@ -19,6 +20,26 @@ describe('tenants', () => {
     expect(mailbox.headers['set-cookie']).toBeUndefined();
   });
 
+  it('stores the Google client secret encrypted, never as typed', async () => {
+    const { app, repositories, encryptionUtil } = createTestApp();
+    const tenant = await request(app).post('/v1/tenants').send(testTenantBody);
+    const stored = await repositories.tenantRepository.findTenantGoogleClient(tenant.body.tenantId);
+    expect(stored?.clientId).toBe(testTenantBody.googleClientId);
+    expect(stored?.encryptedClientSecret).not.toBe(testTenantBody.googleClientSecret);
+    expect(stored?.encryptedClientSecret).toMatch(/^v1\./);
+    expect(encryptionUtil.decryptSecret(stored!.encryptedClientSecret)).toBe(
+      testTenantBody.googleClientSecret,
+    );
+  });
+
+  it('rejects a tenant without its Google client', async () => {
+    const app = createTestAppInstance();
+    const response = await request(app).post('/v1/tenants').send({ name: 'Bhatia Desk' });
+    expect(response.status).toBe(400);
+    expect(response.body.error).toMatch(/googleClientId/);
+    expect(response.body.error).toMatch(/googleClientSecret/);
+  });
+
   it('unknown tenant is 404, duplicate email is 409, invalid body is 400 naming the fields', async () => {
     const app = createTestAppInstance();
     const unknown = await request(app)
@@ -26,7 +47,7 @@ describe('tenants', () => {
       .send(mailboxBody);
     expect(unknown.status).toBe(404);
 
-    const tenant = await request(app).post('/v1/tenants').send({ name: 'Bhatia Desk' });
+    const tenant = await request(app).post('/v1/tenants').send(testTenantBody);
     const path = `/v1/tenants/${tenant.body.tenantId}/mailboxes`;
     await request(app).post(path).send(mailboxBody);
     expect((await request(app).post(path).send(mailboxBody)).status).toBe(409);
