@@ -1,10 +1,15 @@
 import { CfnOutput, Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';
 import type { StackProps } from 'aws-cdk-lib';
+import * as events from 'aws-cdk-lib/aws-events';
+import * as eventsTargets from 'aws-cdk-lib/aws-events-targets';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as lambda from 'aws-cdk-lib/aws-lambda';
+import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import type { Construct } from 'constructs';
-import { PROCESS_LAMBDA_TIMEOUT } from './stageConfig.js';
+import { PipelineLambda } from './pipelineLambda.js';
+import { EMAIL_PROCESSOR_TIMEOUT } from './stageConfig.js';
 import type { Stage } from './stageConfig.js';
 
 export interface LogisticsCopilotStackProps extends StackProps {
@@ -12,15 +17,19 @@ export interface LogisticsCopilotStackProps extends StackProps {
 }
 
 /**
- * Everything the ingestion pipeline needs that is not a Lambda: where raw mail is kept, the queue
- * of Gmail message ids that ingest fills and process drains, and the one identity the Railway API
- * uses to reach them. Lambdas are added by a later change once their handlers exist.
+ * The ingestion pipeline: where raw mail is kept, the queue of Gmail message ids that the push
+ * receiver fills and the email processor drains, the Lambdas around it, and the one identity the
+ * Railway API uses to reach the bucket and the queue.
  */
 export class LogisticsCopilotStack extends Stack {
   readonly rawMailBucket: s3.Bucket;
   readonly gmailMessageIdQueue: sqs.Queue;
   readonly gmailMessageIdDeadLetterQueue: sqs.Queue;
   readonly railwayApiUser: iam.User;
+  readonly gmailPushReceiver: PipelineLambda;
+  readonly emailProcessor: PipelineLambda;
+  readonly gmailWatchRenewer: PipelineLambda;
+  readonly gmailPushReceiverUrl: lambda.FunctionUrl;
 
   constructor(scope: Construct, id: string, props: LogisticsCopilotStackProps) {
     super(scope, id, props);
@@ -59,7 +68,7 @@ export class LogisticsCopilotStack extends Stack {
       queueName: `logistics-copilot-gmail-message-ids-${stage}`,
       encryption: sqs.QueueEncryption.SQS_MANAGED,
       // Lambda polls SQS; the message must stay invisible for the whole run plus retries of the poll.
-      visibilityTimeout: Duration.seconds(PROCESS_LAMBDA_TIMEOUT.toSeconds() * 6),
+      visibilityTimeout: Duration.seconds(EMAIL_PROCESSOR_TIMEOUT.toSeconds() * 6),
       retentionPeriod: Duration.days(4),
       deadLetterQueue: { queue: this.gmailMessageIdDeadLetterQueue, maxReceiveCount: 3 },
     });
@@ -75,6 +84,50 @@ export class LogisticsCopilotStack extends Stack {
     this.rawMailBucket.grantPut(this.railwayApiUser);
     this.gmailMessageIdQueue.grantSendMessages(this.railwayApiUser);
 
+    // Pub/Sub push target. Auth NONE at the URL: Google signs each push with an OIDC token that the
+    // handler verifies itself (roadmap 1.2); IAM auth is not an option for Pub/Sub.
+    this.gmailPushReceiver = new PipelineLambda(this, 'GmailPushReceiver', {
+      stage,
+      name: 'gmailPushReceiver',
+      timeout: Duration.seconds(30),
+      memorySize: 512,
+    });
+    this.gmailPushReceiverUrl = this.gmailPushReceiver.addFunctionUrl({
+      authType: lambda.FunctionUrlAuthType.NONE,
+    });
+    this.gmailMessageIdQueue.grantSendMessages(this.gmailPushReceiver);
+
+    this.emailProcessor = new PipelineLambda(this, 'EmailProcessor', {
+      stage,
+      name: 'emailProcessor',
+      timeout: EMAIL_PROCESSOR_TIMEOUT,
+      memorySize: 1024,
+    });
+    this.emailProcessor.addEventSource(
+      new SqsEventSource(this.gmailMessageIdQueue, {
+        // One Gmail message per invocation: a failure returns exactly that id to the queue.
+        batchSize: 1,
+        reportBatchItemFailures: true,
+        // Caps parallel Gmail fetches and LLM calls per mailbox fleet, well under API quotas.
+        maxConcurrency: 10,
+      }),
+    );
+    this.rawMailBucket.grantRead(this.emailProcessor);
+    this.rawMailBucket.grantPut(this.emailProcessor);
+
+    this.gmailWatchRenewer = new PipelineLambda(this, 'GmailWatchRenewer', {
+      stage,
+      name: 'gmailWatchRenewer',
+      timeout: Duration.minutes(1),
+      memorySize: 512,
+    });
+    new events.Rule(this, 'GmailWatchRenewerSchedule', {
+      // Gmail watches last 7 days and are renewed when under 24 h remain; twice a day leaves slack.
+      schedule: events.Schedule.rate(Duration.hours(12)),
+      targets: [new eventsTargets.LambdaFunction(this.gmailWatchRenewer)],
+    });
+
+    new CfnOutput(this, 'GmailPushReceiverUrl', { value: this.gmailPushReceiverUrl.url });
     new CfnOutput(this, 'RawMailBucketName', { value: this.rawMailBucket.bucketName });
     new CfnOutput(this, 'GmailMessageIdQueueUrl', { value: this.gmailMessageIdQueue.queueUrl });
     new CfnOutput(this, 'GmailMessageIdDeadLetterQueueUrl', {
