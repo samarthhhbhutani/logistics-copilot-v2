@@ -88,6 +88,28 @@ Rules:
 - Infra metrics AWS produces itself (SQS depth, DLQ, Lambda errors) stay as CloudWatch alarms in the
   CDK stack.
 
+## Tenants, mailboxes and auth
+
+The identity is the **mailbox**: one Gmail inbox, one login, one person. `mailboxes.email_address`
+is the only place the address lives and doubles as the login name; `mailbox_logins` holds only the
+argon2id password hash. A tenant (one logistics desk) exists before its mailboxes.
+
+| Route                                  | Who      | Does                                                               |
+| -------------------------------------- | -------- | ------------------------------------------------------------------ |
+| `POST /v1/tenants`                     | operator | creates a tenant -> `{ tenantId }`                                 |
+| `POST /v1/tenants/:tenantId/mailboxes` | operator | creates a mailbox (Gmail connected later) + credentials; no cookie |
+| `POST /v1/auth/login`                  | owner    | verifies the password, sets `lc_session`                           |
+| `POST /v1/auth/logout`                 | owner    | clears the cookie                                                  |
+| `GET /v1/me`                           | owner    | `{ mailboxId, tenantId }` from the session                         |
+
+The operator routes are open for now and **must be gated by an operator token before the API is
+public**. `lc_session` is an httpOnly `SameSite=Lax` (Secure outside dev) cookie holding an HS256 JWT
+(`sub` = mailbox id, `tenantId`; 7 days) signed with `SESSION_SECRET`. Stateless: logout clears the
+cookie, a token stays valid until expiry (add `mailbox_logins.token_version` if instant revocation is
+ever needed). `requireSession` guards every session-scoped route and exposes the claims through
+`getSession(response)`. Persistence goes through `TenantRepository` and `MailboxCredentialsRepository`
+(`packages/core/src/{tenants,auth}`), so route tests run in memory and `index.ts` wires Prisma.
+
 ## Database
 
 Supabase Postgres via Prisma 7 (engine-less client + `@prisma/adapter-pg`). Two projects,

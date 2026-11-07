@@ -1,10 +1,22 @@
-import { loadConfig } from '@lc/core';
+import {
+  createPrismaMailboxCredentialsRepository,
+  createPrismaTenantRepository,
+  initializePrismaClient,
+  loadConfig,
+} from '@lc/core';
 import { createAppInstance } from './createAppInstance.js';
 import { shutdownTelemetry } from './instrumentation.js';
 
-// Composition root: the only place in the API that reads process.env.
+// Composition root: the only place in the API that reads process.env and builds singletons.
 const config = loadConfig(process.env);
-const expressApp = createAppInstance({ config });
+if (!config.SESSION_SECRET) throw new Error('SESSION_SECRET is required for the API');
+const prismaClient = initializePrismaClient(config, { maxConnections: 4 });
+const expressApp = createAppInstance({
+  config,
+  tenantRepository: createPrismaTenantRepository(prismaClient),
+  mailboxCredentialsRepository: createPrismaMailboxCredentialsRepository(prismaClient),
+  sessionSecret: config.SESSION_SECRET,
+});
 
 const httpServer = expressApp.listen(config.PORT, () => {
   console.log(`api listening on :${config.PORT} (${config.STAGE})`);
@@ -15,7 +27,7 @@ const DRAIN_TIMEOUT_MS = 30_000;
 function shutdown(signal: NodeJS.Signals): void {
   console.log(`${signal} received, draining`);
   httpServer.close(() => {
-    shutdownTelemetry().then(
+    Promise.all([shutdownTelemetry(), prismaClient.$disconnect()]).then(
       () => process.exit(0),
       (error: unknown) => {
         console.error('telemetry shutdown failed', error);
