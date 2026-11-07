@@ -32,12 +32,44 @@ describe('tenants', () => {
     );
   });
 
-  it('rejects a tenant without its Google client', async () => {
+  it('rejects a tenant without its Google client or Pub/Sub push setup, naming every field', async () => {
     const app = createTestAppInstance();
     const response = await request(app).post('/v1/tenants').send({ name: 'Bhatia Desk' });
     expect(response.status).toBe(400);
     expect(response.body.error).toMatch(/googleClientId/);
     expect(response.body.error).toMatch(/googleClientSecret/);
+    expect(response.body.error).toMatch(/pubsubTopicName/);
+    expect(response.body.error).toMatch(/pushServiceAccountEmail/);
+  });
+
+  it('stores the Pub/Sub topic and push service account, readable for watch and push verification', async () => {
+    const { app, repositories } = createTestApp();
+    const tenant = await request(app).post('/v1/tenants').send(testTenantBody);
+    expect(tenant.status).toBe(201);
+    expect(await repositories.tenantRepository.findTenantPubsubPush(tenant.body.tenantId)).toEqual({
+      topicName: testTenantBody.pubsubTopicName,
+      pushServiceAccountEmail: testTenantBody.pushServiceAccountEmail,
+    });
+  });
+
+  it('rejects a bare topic id, a topic in another resource type, and a non-service-account email', async () => {
+    const app = createTestAppInstance();
+    for (const pubsubTopicName of [
+      'gmail-notifications',
+      'projects/bhatia-shipping-mail/subscriptions/gmail-notifications',
+      'projects/Bhatia/topics/gmail-notifications',
+    ]) {
+      const response = await request(app)
+        .post('/v1/tenants')
+        .send({ ...testTenantBody, pubsubTopicName });
+      expect(response.status, pubsubTopicName).toBe(400);
+      expect(response.body.error).toMatch(/pubsubTopicName/);
+    }
+    const response = await request(app)
+      .post('/v1/tenants')
+      .send({ ...testTenantBody, pushServiceAccountEmail: 'ops@bhatia.example' });
+    expect(response.status).toBe(400);
+    expect(response.body.error).toMatch(/pushServiceAccountEmail/);
   });
 
   it('unknown tenant is 404, duplicate email is 409, invalid body is 400 naming the fields', async () => {

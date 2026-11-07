@@ -5,6 +5,7 @@ import type {
   MailboxCredentials,
   MailboxCredentialsRepository,
   TenantGoogleClient,
+  TenantPubsubPush,
   TenantRepository,
 } from '@lc/core';
 
@@ -15,6 +16,7 @@ export function createInMemoryRepositories(): {
   mailboxConnectionRepository: MailboxConnectionRepository;
 } {
   const googleClientByTenantId = new Map<string, TenantGoogleClient>();
+  const pubsubPushByTenantId = new Map<string, TenantPubsubPush>();
   const credentialsByEmail = new Map<string, MailboxCredentials>();
   const connectionByMailboxId = new Map<string, MailboxConnection>();
 
@@ -25,12 +27,18 @@ export function createInMemoryRepositories(): {
 
   return {
     tenantRepository: {
-      async createTenant({ googleClientId, encryptedGoogleClientSecret }) {
+      async createTenant({
+        googleClientId,
+        encryptedGoogleClientSecret,
+        pubsubTopicName,
+        pushServiceAccountEmail,
+      }) {
         const tenantId = randomUUID();
         googleClientByTenantId.set(tenantId, {
           clientId: googleClientId,
           encryptedClientSecret: encryptedGoogleClientSecret,
         });
+        pubsubPushByTenantId.set(tenantId, { topicName: pubsubTopicName, pushServiceAccountEmail });
         return { tenantId };
       },
       async tenantExists(tenantId) {
@@ -38,6 +46,9 @@ export function createInMemoryRepositories(): {
       },
       async findTenantGoogleClient(tenantId) {
         return googleClientByTenantId.get(tenantId);
+      },
+      async findTenantPubsubPush(tenantId) {
+        return pubsubPushByTenantId.get(tenantId);
       },
     },
     mailboxCredentialsRepository: {

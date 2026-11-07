@@ -5,6 +5,10 @@ export interface CreateTenantInput {
   /** The desk's own Google OAuth client; the secret arrives already encrypted (createEncryptionUtil). */
   googleClientId: string;
   encryptedGoogleClientSecret: string;
+  /** Where Gmail publishes change notifications for this tenant's mailboxes; same project as the client. */
+  pubsubTopicName: string;
+  /** Identity the tenant's push subscription signs deliveries with. */
+  pushServiceAccountEmail: string;
 }
 
 export interface TenantGoogleClient {
@@ -12,18 +16,37 @@ export interface TenantGoogleClient {
   encryptedClientSecret: string;
 }
 
+export interface TenantPubsubPush {
+  topicName: string;
+  pushServiceAccountEmail: string;
+}
+
 export interface TenantRepository {
   createTenant(input: CreateTenantInput): Promise<{ tenantId: string }>;
   tenantExists(tenantId: string): Promise<boolean>;
   /** Undefined when the tenant is missing or predates per-tenant clients (columns null). */
   findTenantGoogleClient(tenantId: string): Promise<TenantGoogleClient | undefined>;
+  /** Undefined when the tenant is missing or predates Pub/Sub onboarding (columns null). */
+  findTenantPubsubPush(tenantId: string): Promise<TenantPubsubPush | undefined>;
 }
 
 export function createPrismaTenantRepository(prismaClient: PrismaClient): TenantRepository {
   return {
-    async createTenant({ name, googleClientId, encryptedGoogleClientSecret }) {
+    async createTenant({
+      name,
+      googleClientId,
+      encryptedGoogleClientSecret,
+      pubsubTopicName,
+      pushServiceAccountEmail,
+    }) {
       const tenant = await prismaClient.tenant.create({
-        data: { name, googleClientId, encryptedGoogleClientSecret },
+        data: {
+          name,
+          googleClientId,
+          encryptedGoogleClientSecret,
+          pubsubTopicName,
+          pushServiceAccountEmail,
+        },
         select: { id: true },
       });
       return { tenantId: tenant.id };
@@ -41,6 +64,17 @@ export function createPrismaTenantRepository(prismaClient: PrismaClient): Tenant
       return {
         clientId: tenant.googleClientId,
         encryptedClientSecret: tenant.encryptedGoogleClientSecret,
+      };
+    },
+    async findTenantPubsubPush(tenantId) {
+      const tenant = await prismaClient.tenant.findUnique({
+        where: { id: tenantId },
+        select: { pubsubTopicName: true, pushServiceAccountEmail: true },
+      });
+      if (!tenant?.pubsubTopicName || !tenant.pushServiceAccountEmail) return undefined;
+      return {
+        topicName: tenant.pubsubTopicName,
+        pushServiceAccountEmail: tenant.pushServiceAccountEmail,
       };
     },
   };
