@@ -29,6 +29,10 @@
     "./utils": {
       "types": "./dist/utils/index.d.ts",
       "import": "./dist/utils/index.js"
+    },
+    "./connectors": {
+      "types": "./dist/connectors/index.d.ts",
+      "import": "./dist/connectors/index.js"
     }
   },
   "scripts": {
@@ -45,6 +49,7 @@
     "@prisma/client": "7.10.1",
     "argon2": "^0.45.2",
     "dotenv": "^16.4.7",
+    "google-auth-library": "^10.9.1",
     "jose": "^6.2.15",
     "pg": "^8.23.1",
     "zod": "^4.6.7"
