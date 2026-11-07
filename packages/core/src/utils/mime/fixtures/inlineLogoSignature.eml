@@ -1,0 +1,38 @@
+From: Deepak Rao <deepak@swiftcha.example>
+To: ops@bhatiashipping.example
+Subject: Clearance charges - Mundra import
+Date: Wed, 5 Nov 2025 14:02:00 +0530
+Message-ID: <inline-001@swiftcha.example>
+MIME-Version: 1.0
+Content-Type: multipart/related; boundary="rel-boundary"; type="multipart/alternative"
+
+--rel-boundary
+Content-Type: multipart/alternative; boundary="alt-boundary"
+
+--alt-boundary
+Content-Type: text/plain; charset="UTF-8"
+
+Hi Rahul,
+
+Our clearance charges for the Mundra import: INR 8,500 per BL plus actuals.
+
+Deepak Rao
+Swift CHA Services
+
+--alt-boundary
+Content-Type: text/html; charset="UTF-8"
+
+<html><body><p>Hi Rahul,</p><p>Our clearance charges for the Mundra import: INR 8,500 per BL plus actuals.</p><p>Deepak Rao<br>Swift CHA Services<br><img src="cid:logo@swiftcha" alt="Swift CHA"></p></body></html>
+
+--alt-boundary--
+
+--rel-boundary
+Content-Type: image/png; name="logo.png"
+Content-Transfer-Encoding: base64
+Content-ID: <logo@swiftcha>
+Content-Disposition: inline; filename="logo.png"
+
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8A
+AAAASUVORK5CYII=
+
+--rel-boundary--

@@ -49,14 +49,19 @@
     "@prisma/client": "7.10.1",
     "argon2": "^0.45.2",
     "dotenv": "^16.4.7",
+    "email-forward-parser": "^1.8.3",
+    "email-reply-parser": "^2.3.9",
     "google-auth-library": "^10.9.1",
+    "html-to-text": "^10.0.1",
     "jose": "^6.2.15",
     "pg": "^8.23.1",
+    "postal-mime": "^4.2.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@opentelemetry/context-async-hooks": "^3.1.0",
     "@opentelemetry/sdk-trace": "^3.1.0",
+    "@types/html-to-text": "^9.0.4",
     "@types/pg": "^8.23.1",
     "prisma": "7.10.1"
   }
