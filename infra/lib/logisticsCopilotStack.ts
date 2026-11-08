@@ -57,11 +57,16 @@ export class LogisticsCopilotStack extends Stack {
       ],
     });
 
+    // Long polling: a ReceiveMessage call waits for a message instead of returning empty, so any
+    // consumer other than Lambda's own poller (CLI redrive, local debugging) does not burn requests.
+    const SQS_LONG_POLL_WAIT = Duration.seconds(20);
+
     this.gmailMessageIdDeadLetterQueue = new sqs.Queue(this, 'GmailMessageIdDeadLetterQueue', {
       queueName: `logistics-copilot-gmail-message-ids-dlq-${stage}`,
       encryption: sqs.QueueEncryption.SQS_MANAGED,
       // Maximum SQS allows, so a bad deploy over a long weekend still leaves the ids to replay.
       retentionPeriod: Duration.days(14),
+      receiveMessageWaitTime: SQS_LONG_POLL_WAIT,
     });
 
     this.gmailMessageIdQueue = new sqs.Queue(this, 'GmailMessageIdQueue', {
@@ -71,6 +76,7 @@ export class LogisticsCopilotStack extends Stack {
       visibilityTimeout: Duration.seconds(EMAIL_PROCESSOR_TIMEOUT.toSeconds() * 6),
       retentionPeriod: Duration.days(4),
       deadLetterQueue: { queue: this.gmailMessageIdDeadLetterQueue, maxReceiveCount: 3 },
+      receiveMessageWaitTime: SQS_LONG_POLL_WAIT,
     });
 
     // The Railway-hosted API: reads mail and attachments for the UI, enqueues message ids on manual resync.
