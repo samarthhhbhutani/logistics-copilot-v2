@@ -23,6 +23,12 @@ model Tenant {
   /// this column existed; connect refuses them until an operator sets the client.
   googleClientId              String?        @map("google_client_id")
   encryptedGoogleClientSecret String?        @map("encrypted_google_client_secret")
+  /// Pub/Sub topic in the SAME Google project as the OAuth client (Gmail rejects any other project),
+  /// `projects/<project>/topics/<topic>`; passed to users.watch for every mailbox of the tenant.
+  pubsubTopicName             String?        @map("pubsub_topic_name")
+  /// Service account the tenant's push subscription signs deliveries with; the push receiver accepts
+  /// only OIDC tokens whose email matches. Both null for tenants created before Pub/Sub onboarding.
+  pushServiceAccountEmail     String?        @map("push_service_account_email")
   createdAt                   DateTime       @default(now()) @map("created_at") @db.Timestamptz
   mailboxes                   Mailbox[]
   logins                      MailboxLogin[]

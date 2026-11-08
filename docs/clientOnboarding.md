@@ -162,9 +162,16 @@ PUSH_ENDPOINT=https://t3x6leuzhskn32hfhaw3f7u5wm0azded.lambda-url.ap-south-1.on.
    `TOKEN_ENCRYPTION_KEY`:
 
    ```sh
-   curl -X POST "$API_BASE_URL/v1/tenants" -H 'content-type: application/json' \
-     -d '{"name":"Acme Logistics","googleClientId":"<client id>","googleClientSecret":"<client secret>"}'
+   curl -X POST "$API_BASE_URL/v1/tenants" -H 'content-type: application/json' -d '{
+     "name": "Acme Logistics",
+     "googleClientId": "<client id>",
+     "googleClientSecret": "<client secret>",
+     "pubsubTopicName": "projects/acme-logistics-mail/topics/gmail-notifications",
+     "pushServiceAccountEmail": "logistics-copilot-push@acme-logistics-mail.iam.gserviceaccount.com"
+   }'
    ```
+
+   The topic name and service account are what `users.watch` and the push receiver check against.
 
 2. For each mailbox, create its operator login:
 
@@ -172,9 +179,6 @@ PUSH_ENDPOINT=https://t3x6leuzhskn32hfhaw3f7u5wm0azded.lambda-url.ap-south-1.on.
    curl -X POST "$API_BASE_URL/v1/tenants/<tenantId>/mailboxes" -H 'content-type: application/json' \
      -d '{"email":"ops@acme-logistics.com","password":"<initial password>"}'
    ```
-
-3. Record the Pub/Sub topic name and push service account email on the tenant. (Fields land with
-   roadmap 1.1; until then they are kept in the deployment notes.)
 
 ## Part E: connect each mailbox (client operator)
 
