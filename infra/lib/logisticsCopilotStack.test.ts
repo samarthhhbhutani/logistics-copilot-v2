@@ -61,11 +61,12 @@ describe('LogisticsCopilotStack', () => {
     });
   });
 
-  it('Gmail message-id queue dead-letters after 3 receives and outlives the Lambda timeout six times', () => {
+  it('Gmail message-id queues long-poll, dead-letter after 3 receives and outlive the Lambda timeout six times', () => {
     template.resourceCountIs('AWS::SQS::Queue', 2);
     template.hasResourceProperties('AWS::SQS::Queue', {
       QueueName: 'logistics-copilot-gmail-message-ids-staging',
       VisibilityTimeout: EMAIL_PROCESSOR_TIMEOUT.toSeconds() * 6,
+      ReceiveMessageWaitTimeSeconds: 20,
       RedrivePolicy: {
         maxReceiveCount: 3,
         deadLetterTargetArn: Match.anyValue(),
@@ -74,6 +75,7 @@ describe('LogisticsCopilotStack', () => {
     template.hasResourceProperties('AWS::SQS::Queue', {
       QueueName: 'logistics-copilot-gmail-message-ids-dlq-staging',
       MessageRetentionPeriod: 14 * 24 * 60 * 60,
+      ReceiveMessageWaitTimeSeconds: 20,
     });
   });
 
