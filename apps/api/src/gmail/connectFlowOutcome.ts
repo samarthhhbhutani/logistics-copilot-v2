@@ -7,7 +7,11 @@ export type ConnectFlowErrorCode =
   | 'google_client_not_configured'
   | 'exchange_failed'
   | 'email_mismatch'
-  | 'scope_not_granted';
+  | 'scope_not_granted'
+  /** The tenant has no Pub/Sub topic or push service account on file (docs/clientOnboarding, part C). */
+  | 'pubsub_not_configured'
+  /** users.watch refused the tenant's topic: wrong project or missing Publisher grant. */
+  | 'watch_failed';
 
 export type ConnectFlowOutcome =
   { connected: true } | { connected: false; error: ConnectFlowErrorCode; expectedEmail?: string };

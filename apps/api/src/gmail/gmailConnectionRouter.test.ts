@@ -1,6 +1,7 @@
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { testTenantBody } from '../tenantFixture.test-helper.js';
+import { fakeWatchExpiresAt, fakeWatchHistoryId } from '../fakeGmailWatch.test-helper.js';
 import { createTestApp, testMailboxEmail } from '../testAppInstance.test-helper.js';
 import type { TestApp } from '../testAppInstance.test-helper.js';
 
@@ -43,6 +44,7 @@ describe('GET /v1/mailbox', () => {
       emailAddress: testMailboxEmail,
       gmailConnectionStatus: 'not_connected',
       gmailConnectedAt: null,
+      watchExpiresAt: null,
     });
     expect((await request(testApp.app).get('/v1/mailbox')).status).toBe(401);
   });
@@ -86,6 +88,59 @@ describe('Gmail connect flow', () => {
     const view = await request(testApp.app).get('/v1/mailbox').set('Cookie', cookie);
     expect(view.body.gmailConnectionStatus).toBe('connected');
     expect(view.body.gmailConnectedAt).toEqual(expect.any(String));
+  });
+
+  it('starts the Gmail watch on the tenant topic and stores the cursor and expiry it returns', async () => {
+    const testApp = createTestApp();
+    const { cookie, mailboxId, tenantId } = await signedInMailbox(testApp);
+    const connect = await request(testApp.app)
+      .post('/v1/mailbox/gmail/connect')
+      .set('Cookie', cookie);
+    await request(testApp.app)
+      .get('/v1/mailbox/gmail/callback')
+      .query({ code: 'code-7', state: stateFromConsentUrl(connect.body.url) });
+
+    expect(testApp.gmailWatch.startedWatches).toEqual([
+      { refreshToken: 'refresh-token-for:code-7', topicName: testTenantBody.pubsubTopicName },
+    ]);
+    const stored = await testApp.repositories.mailboxConnectionRepository.findMailboxConnection({
+      mailboxId,
+      tenantId,
+    });
+    expect(stored?.watchExpiresAt).toEqual(fakeWatchExpiresAt);
+    const view = await request(testApp.app).get('/v1/mailbox').set('Cookie', cookie);
+    expect(view.body.watchExpiresAt).toBe(fakeWatchExpiresAt.toISOString());
+    expect(fakeWatchHistoryId).toBe(4242n);
+  });
+
+  it('a watch Gmail refuses (topic in another project) revokes the token and reports watch_failed', async () => {
+    const testApp = createTestApp();
+    const { cookie } = await signedInMailbox(testApp);
+    const connect = await request(testApp.app)
+      .post('/v1/mailbox/gmail/connect')
+      .set('Cookie', cookie);
+    testApp.gmailWatch.failNextWatchWith = 'topic_rejected';
+
+    const callback = await request(testApp.app)
+      .get('/v1/mailbox/gmail/callback')
+      .query({ code: 'code-8', state: stateFromConsentUrl(connect.body.url) });
+    expect(callback.status).toBe(400);
+    expect(callback.body).toEqual({ connected: false, error: 'watch_failed' });
+    expect(testApp.gmailOAuth.revokedRefreshTokens).toEqual(['refresh-token-for:code-8']);
+    const view = await request(testApp.app).get('/v1/mailbox').set('Cookie', cookie);
+    expect(view.body.gmailConnectionStatus).toBe('not_connected');
+  });
+
+  it('refuses to start a connect for a tenant without Pub/Sub on file', async () => {
+    const testApp = createTestApp();
+    const { cookie, tenantId } = await signedInMailbox(testApp);
+    testApp.repositories.tenantRepository.findTenantPubsubPush = async () => undefined;
+    const connect = await request(testApp.app)
+      .post('/v1/mailbox/gmail/connect')
+      .set('Cookie', cookie);
+    expect(connect.status).toBe(409);
+    expect(connect.body.error).toBe('pubsub_not_configured');
+    expect(tenantId).toEqual(expect.any(String));
   });
 
   it('redirects to the portal with the outcome when PORTAL_URL is set', async () => {
@@ -176,7 +231,7 @@ describe('Gmail connect flow', () => {
     expect(failed.body).toEqual({ connected: false, error: 'exchange_failed' });
   });
 
-  it('DELETE /gmail revokes at Google and resets the mailbox to not connected', async () => {
+  it('DELETE /gmail stops the watch, revokes at Google and resets the mailbox to not connected', async () => {
     const testApp = createTestApp();
     const { cookie } = await signedInMailbox(testApp);
     const connect = await request(testApp.app)
@@ -188,6 +243,9 @@ describe('Gmail connect flow', () => {
 
     const disconnect = await request(testApp.app).delete('/v1/mailbox/gmail').set('Cookie', cookie);
     expect(disconnect.status).toBe(204);
+    expect(testApp.gmailWatch.stoppedWatches).toEqual([
+      { refreshToken: 'refresh-token-for:code-5' },
+    ]);
     expect(testApp.gmailOAuth.revokedRefreshTokens).toEqual(['refresh-token-for:code-5']);
     const view = await request(testApp.app).get('/v1/mailbox').set('Cookie', cookie);
     expect(view.body).toMatchObject({

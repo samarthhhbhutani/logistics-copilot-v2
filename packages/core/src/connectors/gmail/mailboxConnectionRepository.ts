@@ -11,6 +11,16 @@ export interface MailboxConnection {
   gmailConnectionStatus: GmailConnectionStatus;
   gmailConnectedAt: Date | null;
   encryptedRefreshToken: string | null;
+  /** When the current Gmail watch lapses; null when not connected. */
+  watchExpiresAt: Date | null;
+}
+
+/** Everything a successful connect produces: the token and the watch it started. */
+export interface GmailConnectionToSave {
+  encryptedRefreshToken: string;
+  /** Cursor for the first history.list, from the users.watch response. */
+  lastHistoryId: bigint;
+  watchExpiresAt: Date;
 }
 
 /** Every lookup carries the session's tenantId: a mailbox outside the tenant is simply not found. */
@@ -21,7 +31,9 @@ export interface MailboxScope {
 
 export interface MailboxConnectionRepository {
   findMailboxConnection(scope: MailboxScope): Promise<MailboxConnection | undefined>;
-  saveGmailConnection(scope: MailboxScope, encryptedRefreshToken: string): Promise<void>;
+  saveGmailConnection(scope: MailboxScope, connection: GmailConnectionToSave): Promise<void>;
+  /** The refresh token stopped working (invalid_grant): keep the row, ask the owner to reconnect. */
+  markGmailNeedsReconnect(scope: MailboxScope): Promise<void>;
   clearGmailConnection(scope: MailboxScope): Promise<void>;
 }
 
@@ -47,6 +59,7 @@ export function createPrismaMailboxConnectionRepository(
           gmailConnectionStatus: true,
           gmailConnectedAt: true,
           encryptedRefreshToken: true,
+          watchExpiresAt: true,
         },
       });
       if (!mailbox) return undefined;
@@ -57,19 +70,32 @@ export function createPrismaMailboxConnectionRepository(
         gmailConnectionStatus: statusFromPrisma[mailbox.gmailConnectionStatus],
         gmailConnectedAt: mailbox.gmailConnectedAt,
         encryptedRefreshToken: mailbox.encryptedRefreshToken,
+        watchExpiresAt: mailbox.watchExpiresAt,
       };
     },
 
     // updateMany (not update) so tenantId can sit in the where clause: a mailbox outside the
     // tenant matches zero rows instead of throwing, the same "not found" shape as the lookup.
-    async saveGmailConnection({ mailboxId, tenantId }, encryptedRefreshToken) {
+    async saveGmailConnection(
+      { mailboxId, tenantId },
+      { encryptedRefreshToken, lastHistoryId, watchExpiresAt },
+    ) {
       await prismaClient.mailbox.updateMany({
         where: { id: mailboxId, tenantId },
         data: {
           encryptedRefreshToken,
           gmailConnectionStatus: 'CONNECTED',
           gmailConnectedAt: new Date(),
+          lastHistoryId,
+          watchExpiresAt,
         },
+      });
+    },
+
+    async markGmailNeedsReconnect({ mailboxId, tenantId }) {
+      await prismaClient.mailbox.updateMany({
+        where: { id: mailboxId, tenantId },
+        data: { gmailConnectionStatus: 'NEEDS_RECONNECT' },
       });
     },
 

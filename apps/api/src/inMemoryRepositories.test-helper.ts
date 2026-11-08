@@ -65,6 +65,7 @@ export function createInMemoryRepositories(): {
           gmailConnectionStatus: 'not_connected',
           gmailConnectedAt: null,
           encryptedRefreshToken: null,
+          watchExpiresAt: null,
         });
         return credentials;
       },
@@ -73,12 +74,17 @@ export function createInMemoryRepositories(): {
       async findMailboxConnection(scope) {
         return findInTenant(scope);
       },
-      async saveGmailConnection(scope, encryptedRefreshToken) {
+      async saveGmailConnection(scope, { encryptedRefreshToken, watchExpiresAt }) {
         const connection = findInTenant(scope);
         if (!connection) return;
         connection.encryptedRefreshToken = encryptedRefreshToken;
         connection.gmailConnectionStatus = 'connected';
         connection.gmailConnectedAt = new Date();
+        connection.watchExpiresAt = watchExpiresAt;
+      },
+      async markGmailNeedsReconnect(scope) {
+        const connection = findInTenant(scope);
+        if (connection) connection.gmailConnectionStatus = 'needs_reconnect';
       },
       async clearGmailConnection(scope) {
         const connection = findInTenant(scope);
@@ -86,6 +92,7 @@ export function createInMemoryRepositories(): {
         connection.encryptedRefreshToken = null;
         connection.gmailConnectionStatus = 'not_connected';
         connection.gmailConnectedAt = null;
+        connection.watchExpiresAt = null;
       },
     },
   };

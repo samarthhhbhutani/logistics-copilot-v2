@@ -3,12 +3,14 @@ import type { RequestHandler, Router } from 'express';
 import createHttpError from 'http-errors';
 import { z } from 'zod';
 import {
+  GmailApiError,
   createGmailConnectStateToken,
   missingGmailScopes,
   verifyGmailConnectStateToken,
 } from '@lc/core';
 import type {
   GmailOAuth,
+  GmailWatch,
   GoogleOAuthClientCredentials,
   MailboxConnection,
   MailboxConnectionRepository,
@@ -23,6 +25,7 @@ export interface GmailConnectionRouterDependencies {
   mailboxConnectionRepository: MailboxConnectionRepository;
   tenantRepository: TenantRepository;
   gmailOAuth: GmailOAuth;
+  gmailWatch: GmailWatch;
   encryptionUtil: EncryptionUtil;
   requireSession: RequestHandler;
   /** Signs the OAuth state; the session secret, shared so there is one key to rotate. */
@@ -40,13 +43,15 @@ const callbackQuerySchema = z.object({
  * The signed-in person's own mailbox (singular: one login is one mailbox).
  *   GET    /               what the portal shows: address and Gmail connection status
  *   POST   /gmail/connect  returns the Google consent URL for a full-page redirect
- *   GET    /gmail/callback Google returns here; no session cookie, the signed `state` names the mailbox
- *   DELETE /gmail          revoke at Google and forget the token
+ *   GET    /gmail/callback Google returns here; no session cookie, the signed `state` names the mailbox.
+ *                          Stores the token and starts the Gmail watch on the tenant's Pub/Sub topic
+ *   DELETE /gmail          stop the watch, revoke at Google and forget the token
  */
 export function createGmailConnectionRouter({
   mailboxConnectionRepository,
   tenantRepository,
   gmailOAuth,
+  gmailWatch,
   encryptionUtil,
   requireSession,
   sessionSecret,
@@ -81,6 +86,11 @@ export function createGmailConnectionRouter({
     if (!connection) throw createHttpError(404, 'mailbox_not_found');
     const credentials = await loadTenantCredentials(session.tenantId);
     if (!credentials) throw createHttpError(409, 'google_client_not_configured');
+    // Checked before sending the user to Google: a consent that cannot be followed by a watch
+    // would only have to be revoked again in the callback.
+    if (!(await tenantRepository.findTenantPubsubPush(session.tenantId))) {
+      throw createHttpError(409, 'pubsub_not_configured');
+    }
     const state = await createGmailConnectStateToken(session, sessionSecret);
     response.json({
       url: gmailOAuth.buildConsentUrl({ credentials, state, loginHint: connection.emailAddress }),
@@ -127,17 +137,41 @@ export function createGmailConnectionRouter({
 
     // A token without mail access would show "connected" and then fail at the first fetch; better
     // to revoke it now and ask the user to tick the Gmail box on a second attempt.
-    if (missingGmailScopes(consent.grantedScopes).length > 0) {
+    const missingScopes = missingGmailScopes(consent.grantedScopes);
+    if (missingScopes.length > 0) {
+      console.warn('gmail scopes missing from consent', missingScopes);
       await gmailOAuth.revokeRefreshToken({ credentials, refreshToken: consent.refreshToken });
       return finish({ connected: false, error: 'scope_not_granted' });
     }
 
+    // Start the watch before saving: a token we cannot watch with is a connection that would never
+    // receive mail, so it is revoked and the onboarding mistake reported instead of a false
+    // "connected". The watch response also hands us the history cursor ingestion starts from.
+    const pubsubPush = await tenantRepository.findTenantPubsubPush(scope.tenantId);
+    if (!pubsubPush) {
+      await gmailOAuth.revokeRefreshToken({ credentials, refreshToken: consent.refreshToken });
+      return finish({ connected: false, error: 'pubsub_not_configured' });
+    }
+    let watch;
+    try {
+      watch = await gmailWatch.startWatch({
+        credentials,
+        refreshToken: consent.refreshToken,
+        topicName: pubsubPush.topicName,
+      });
+    } catch (error) {
+      console.error('gmail watch failed', error instanceof GmailApiError ? error.code : error);
+      await gmailOAuth.revokeRefreshToken({ credentials, refreshToken: consent.refreshToken });
+      return finish({ connected: false, error: 'watch_failed' });
+    }
+
     // The refresh token is the long-lived key to the inbox: only its AES-GCM ciphertext reaches
     // the database, decrypted again just before each Google call.
-    await mailboxConnectionRepository.saveGmailConnection(
-      scope,
-      encryptionUtil.encryptSecret(consent.refreshToken),
-    );
+    await mailboxConnectionRepository.saveGmailConnection(scope, {
+      encryptedRefreshToken: encryptionUtil.encryptSecret(consent.refreshToken),
+      lastHistoryId: watch.historyId,
+      watchExpiresAt: watch.expiresAt,
+    });
     return finish({ connected: true });
   });
 
@@ -148,11 +182,16 @@ export function createGmailConnectionRouter({
     if (connection.encryptedRefreshToken) {
       const credentials = await loadTenantCredentials(session.tenantId);
       if (credentials) {
+        const refreshToken = encryptionUtil.decryptSecret(connection.encryptedRefreshToken);
+        // Stop first: revoking would leave the watch publishing to the topic until it expires, and
+        // every push would then fail at the token refresh for up to 7 days.
         try {
-          await gmailOAuth.revokeRefreshToken({
-            credentials,
-            refreshToken: encryptionUtil.decryptSecret(connection.encryptedRefreshToken),
-          });
+          await gmailWatch.stopWatch({ credentials, refreshToken });
+        } catch (error) {
+          console.error('gmail watch stop failed, revoking anyway', error);
+        }
+        try {
+          await gmailOAuth.revokeRefreshToken({ credentials, refreshToken });
         } catch (error) {
           // Already revoked by the user, or Google unreachable: forgetting the token is still right.
           console.error('gmail revoke failed, clearing anyway', error);
@@ -173,5 +212,6 @@ function toMailboxView(connection: MailboxConnection) {
     emailAddress: connection.emailAddress,
     gmailConnectionStatus: connection.gmailConnectionStatus,
     gmailConnectedAt: connection.gmailConnectedAt?.toISOString() ?? null,
+    watchExpiresAt: connection.watchExpiresAt?.toISOString() ?? null,
   };
 }

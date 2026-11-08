@@ -5,6 +5,8 @@ import type { Express } from 'express';
 import { createAppInstance } from './createAppInstance.js';
 import { createFakeGmailOAuth } from './fakeGmailOAuth.test-helper.js';
 import type { FakeGmailOAuth } from './fakeGmailOAuth.test-helper.js';
+import { createFakeGmailWatch } from './fakeGmailWatch.test-helper.js';
+import type { FakeGmailWatch } from './fakeGmailWatch.test-helper.js';
 import { createInMemoryRepositories } from './inMemoryRepositories.test-helper.js';
 
 export const testSessionSecret = 'test-session-secret-that-is-at-least-32-chars';
@@ -21,6 +23,7 @@ export interface TestAppOptions {
 export interface TestApp {
   app: Express;
   gmailOAuth: FakeGmailOAuth;
+  gmailWatch: FakeGmailWatch;
   encryptionUtil: EncryptionUtil;
   repositories: ReturnType<typeof createInMemoryRepositories>;
 }
@@ -41,15 +44,17 @@ export function createTestApp({
   });
   const repositories = createInMemoryRepositories();
   const gmailOAuth = createFakeGmailOAuth(consentingAccountEmail);
+  const gmailWatch = createFakeGmailWatch();
   const encryptionUtil = createEncryptionUtil(randomBytes(32).toString('base64'));
   const app = createAppInstance({
     config,
     ...repositories,
     gmailOAuth,
+    gmailWatch,
     encryptionUtil,
     sessionSecret: testSessionSecret,
   });
-  return { app, gmailOAuth, encryptionUtil, repositories };
+  return { app, gmailOAuth, gmailWatch, encryptionUtil, repositories };
 }
 
 /** Backwards-compatible shorthand for tests that only need the Express app. */
