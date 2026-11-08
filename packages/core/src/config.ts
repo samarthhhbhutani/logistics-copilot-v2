@@ -10,10 +10,10 @@ const envSchema = z.object({
   GOOGLE_REDIRECT_URI: z.url().optional(),
   /** Frontend origin the Gmail callback redirects back to. Unset in local dev: the callback answers JSON instead. */
   PORTAL_URL: z.url().optional(),
-  GOOGLE_PUBSUB_TOPIC: z.string().min(1).optional(),
   AWS_REGION: z.string().default('ap-south-1'),
   S3_BUCKET: z.string().optional(),
-  SQS_MESSAGES_QUEUE_URL: z.url().optional(),
+  /** Where the push receiver enqueues Gmail message ids for emailProcessor. */
+  GMAIL_MESSAGE_ID_QUEUE_URL: z.url().optional(),
   OPENAI_API_KEY: z.string().min(1).optional(),
   MODEL_CLASSIFY: z.string().default('gpt-6-luna'),
   MODEL_AGENT: z.string().default('gpt-6.1-sol'),

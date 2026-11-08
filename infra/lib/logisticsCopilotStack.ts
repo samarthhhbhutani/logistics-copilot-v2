@@ -8,8 +8,9 @@ import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import type { Construct } from 'constructs';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { PipelineLambda } from './pipelineLambda.js';
-import { EMAIL_PROCESSOR_TIMEOUT } from './stageConfig.js';
+import { EMAIL_PROCESSOR_TIMEOUT, lambdaEnvSecretName } from './stageConfig.js';
 import type { Stage } from './stageConfig.js';
 
 export interface LogisticsCopilotStackProps extends StackProps {
@@ -92,16 +93,34 @@ export class LogisticsCopilotStack extends Stack {
 
     // Pub/Sub push target. Auth NONE at the URL: Google signs each push with an OIDC token that the
     // handler verifies itself (roadmap 1.2); IAM auth is not an option for Pub/Sub.
+    // DATABASE_URL and TOKEN_ENCRYPTION_KEY stay out of the function configuration: each Lambda
+    // fetches this secret once per container (apps/lambdas/src/lambdaConfig.ts).
+    const lambdaEnvSecret = secretsmanager.Secret.fromSecretNameV2(
+      this,
+      'LambdaEnvSecret',
+      lambdaEnvSecretName(stage),
+    );
+
     this.gmailPushReceiver = new PipelineLambda(this, 'GmailPushReceiver', {
       stage,
       name: 'gmailPushReceiver',
-      timeout: Duration.seconds(30),
+      // history.list pages plus up to a few SQS batches; a push is otherwise sub-second.
+      timeout: Duration.seconds(60),
       memorySize: 512,
+      // TODO(quota): reservedConcurrentExecutions: 5 once the account's Lambda concurrency quota is
+      // above the new-account default of 10; Lambda refuses any reservation that leaves fewer than
+      // 10 unreserved. Until then the Supabase pooler is the connection ceiling.
+      environment: {
+        LAMBDA_ENV_SECRET_NAME: lambdaEnvSecret.secretName,
+        GMAIL_MESSAGE_ID_QUEUE_URL: this.gmailMessageIdQueue.queueUrl,
+      },
     });
+    // No AWS auth on the URL: the Google OIDC token on each push is the authentication.
     this.gmailPushReceiverUrl = this.gmailPushReceiver.addFunctionUrl({
       authType: lambda.FunctionUrlAuthType.NONE,
     });
     this.gmailMessageIdQueue.grantSendMessages(this.gmailPushReceiver);
+    lambdaEnvSecret.grantRead(this.gmailPushReceiver);
 
     this.emailProcessor = new PipelineLambda(this, 'EmailProcessor', {
       stage,
