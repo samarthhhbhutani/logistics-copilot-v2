@@ -1,5 +1,6 @@
 import {
   createGoogleGmailOAuth,
+  createGoogleGmailWatch,
   createPrismaMailboxConnectionRepository,
   createPrismaMailboxCredentialsRepository,
   createPrismaTenantRepository,
@@ -24,6 +25,7 @@ const expressApp = createAppInstance({
   mailboxCredentialsRepository: createPrismaMailboxCredentialsRepository(prismaClient),
   mailboxConnectionRepository: createPrismaMailboxConnectionRepository(prismaClient),
   gmailOAuth: createGoogleGmailOAuth({ redirectUri: config.GOOGLE_REDIRECT_URI }),
+  gmailWatch: createGoogleGmailWatch(),
   encryptionUtil: createEncryptionUtil(config.TOKEN_ENCRYPTION_KEY),
   sessionSecret: config.SESSION_SECRET,
 });

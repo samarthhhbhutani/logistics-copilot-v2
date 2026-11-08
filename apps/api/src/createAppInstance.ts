@@ -4,6 +4,7 @@ import cookieParser from 'cookie-parser';
 import type {
   Config,
   GmailOAuth,
+  GmailWatch,
   MailboxConnectionRepository,
   MailboxCredentialsRepository,
   EncryptionUtil,
@@ -21,6 +22,8 @@ export interface AppDependencies {
   mailboxConnectionRepository: MailboxConnectionRepository;
   /** Google OAuth operations; the real one in index.ts, an in-memory fake in tests. */
   gmailOAuth: GmailOAuth;
+  /** Gmail users.watch / users.stop; same real-or-fake split as gmailOAuth. */
+  gmailWatch: GmailWatch;
   /** Encrypts refresh tokens and tenant client secrets before they reach the database. */
   encryptionUtil: EncryptionUtil;
   /** HMAC key for session cookies; required here rather than optional on Config so index.ts fails fast. */
@@ -40,6 +43,7 @@ export function createAppInstance({
   mailboxCredentialsRepository,
   mailboxConnectionRepository,
   gmailOAuth,
+  gmailWatch,
   encryptionUtil,
   sessionSecret,
 }: AppDependencies): Express {
@@ -72,6 +76,7 @@ export function createAppInstance({
       mailboxConnectionRepository,
       tenantRepository,
       gmailOAuth,
+      gmailWatch,
       encryptionUtil,
       requireSession,
       sessionSecret,
