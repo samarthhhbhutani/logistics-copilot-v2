@@ -3,6 +3,7 @@ import type { Express, NextFunction, Request, Response } from 'express';
 import cookieParser from 'cookie-parser';
 import type {
   Config,
+  EmailRepository,
   GmailOAuth,
   GmailWatch,
   MailboxConnectionRepository,
@@ -12,6 +13,7 @@ import type {
 } from '@lc/core';
 import { createAuthRouter } from './auth/authRouter.js';
 import { createRequireSession, getSession } from './auth/requireSession.js';
+import { createEmailsRouter } from './emails/emailsRouter.js';
 import { createGmailConnectionRouter } from './gmail/gmailConnectionRouter.js';
 import { createTenantsRouter } from './tenants/tenantsRouter.js';
 
@@ -20,6 +22,7 @@ export interface AppDependencies {
   tenantRepository: TenantRepository;
   mailboxCredentialsRepository: MailboxCredentialsRepository;
   mailboxConnectionRepository: MailboxConnectionRepository;
+  emailRepository: EmailRepository;
   /** Google OAuth operations; the real one in index.ts, an in-memory fake in tests. */
   gmailOAuth: GmailOAuth;
   /** Gmail users.watch / users.stop; same real-or-fake split as gmailOAuth. */
@@ -42,6 +45,7 @@ export function createAppInstance({
   tenantRepository,
   mailboxCredentialsRepository,
   mailboxConnectionRepository,
+  emailRepository,
   gmailOAuth,
   gmailWatch,
   encryptionUtil,
@@ -83,7 +87,8 @@ export function createAppInstance({
       portalUrl: config.PORTAL_URL,
     }),
   );
-  // Feature routers mount here as they land: emails, rfqs, agent.
+  v1Router.use('/mailbox/emails', createEmailsRouter({ emailRepository, requireSession }));
+  // Feature routers mount here as they land: rfqs, agent.
   expressApp.use('/v1', v1Router);
 
   expressApp.use((request, response) => {
