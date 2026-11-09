@@ -31,7 +31,7 @@ export interface GmailConnectionRouterDependencies {
   requireSession: RequestHandler;
   /** Signs the OAuth state; the session secret, shared so there is one key to rotate. */
   sessionSecret: string;
-  portalUrl: string | undefined;
+  frontendUrl: string | undefined;
 }
 
 const callbackQuerySchema = z.object({
@@ -42,7 +42,7 @@ const callbackQuerySchema = z.object({
 
 /**
  * The signed-in person's own mailbox (singular: one login is one mailbox).
- *   GET    /               what the portal shows: address and Gmail connection status
+ *   GET    /               what the frontend shows: address and Gmail connection status
  *   POST   /gmail/connect  returns the Google consent URL for a full-page redirect
  *   GET    /gmail/callback Google returns here; no session cookie, the signed `state` names the mailbox.
  *                          Stores the token and starts the Gmail watch on the tenant's Pub/Sub topic
@@ -56,7 +56,7 @@ export function createGmailConnectionRouter({
   encryptionUtil,
   requireSession,
   sessionSecret,
-  portalUrl,
+  frontendUrl,
 }: GmailConnectionRouterDependencies): Router {
   const router = express.Router();
 
@@ -79,7 +79,7 @@ export function createGmailConnectionRouter({
     response.json(toMailboxView(connection));
   });
 
-  // Returns the consent URL instead of redirecting: the portal calls this with fetch(), which
+  // Returns the consent URL instead of redirecting: the frontend calls this with fetch(), which
   // cannot follow a cross-origin redirect to Google, so the SPA sets window.location itself.
   router.post('/gmail/connect', requireSession, async (_request, response) => {
     const session = getSession(response);
@@ -101,7 +101,7 @@ export function createGmailConnectionRouter({
   router.get('/gmail/callback', async (request, response) => {
     const query = parseRequestBody(callbackQuerySchema, request.query);
     const finish = (outcome: Parameters<typeof sendConnectFlowOutcome>[1]) =>
-      sendConnectFlowOutcome(response, outcome, portalUrl);
+      sendConnectFlowOutcome(response, outcome, frontendUrl);
 
     // Verify the signed state first: it is the only proof this callback belongs to a connect we
     // started, so a forged or expired request is turned away before any lookup or Google call.
@@ -121,7 +121,7 @@ export function createGmailConnectionRouter({
       consent = await gmailOAuth.exchangeAuthorizationCode({ credentials, code: query.code });
     } catch (error) {
       // Codes are single-use and expire within minutes (back button, double callback): nothing to
-      // repair server-side, the portal just offers "try again".
+      // repair server-side, the frontend just offers "try again".
       console.error('gmail code exchange failed', error);
       return finish({ connected: false, error: 'exchange_failed' });
     }

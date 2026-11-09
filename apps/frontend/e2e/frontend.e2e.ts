@@ -5,7 +5,7 @@ import AxeBuilder from '@axe-core/playwright';
 async function signIn(page: Page, email = 'ops@example.com') {
   await page.goto('/login');
   await page.getByLabel('Work email').fill(email);
-  await page.getByLabel('Password', { exact: true }).fill('portal-test-password');
+  await page.getByLabel('Password', { exact: true }).fill('frontend-test-password');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'All mail', exact: true })).toBeVisible();
 }
@@ -20,7 +20,7 @@ test('password login, cookie session, paging, folder reset, browser back and acc
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('do not match');
   await expect(page.getByLabel('Password', { exact: true })).toBeFocused();
-  await page.getByLabel('Password', { exact: true }).fill('portal-test-password');
+  await page.getByLabel('Password', { exact: true }).fill('frontend-test-password');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(page.getByText('RFQ: Mumbai to Rotterdam')).toBeVisible();
   await expect(page.getByText('Sales mailbox private conversation')).toHaveCount(0);

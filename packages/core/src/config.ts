@@ -9,7 +9,7 @@ const envSchema = z.object({
   /** Our Gmail OAuth callback, registered on every tenant's own Google client (clients are per tenant, in the DB). */
   GOOGLE_REDIRECT_URI: z.url().optional(),
   /** Frontend origin the Gmail callback redirects back to. Unset in local dev: the callback answers JSON instead. */
-  PORTAL_URL: z.url().optional(),
+  FRONTEND_URL: z.url().optional(),
   AWS_REGION: z.string().default('ap-south-1'),
   /** Where emailProcessor stores every fetched message as .eml (infra RawMailBucket). */
   RAW_MAIL_BUCKET_NAME: z.string().min(1).optional(),

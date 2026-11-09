@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import type { SessionResponse } from '@lc/contract';
-import { errorMessage, portalApi } from './portalApi.js';
+import { errorMessage, frontendApi } from './frontendApi.js';
 import { LoginPage } from './loginPage.js';
 import { MailboxPage } from './mailboxPage.js';
 
@@ -13,7 +13,7 @@ function SessionPage() {
   const session = useQuery({
     queryKey: ['session'],
     staleTime: 0,
-    queryFn: ({ signal }) => portalApi.session(signal),
+    queryFn: ({ signal }) => frontendApi.session(signal),
   });
   const signedOut = useCallback(() => {
     // Cancel in-flight reads before dropping every account's cache. No old mailbox can flash at next login.
@@ -57,7 +57,7 @@ function SessionPage() {
   );
 }
 
-export function PortalApp() {
+export function FrontendApp() {
   return (
     <Routes>
       <Route path="/" element={<SessionPage />} />

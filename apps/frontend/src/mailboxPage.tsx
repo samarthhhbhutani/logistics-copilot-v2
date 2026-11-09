@@ -15,7 +15,7 @@ import {
 import type { GmailLabel, SessionResponse } from '@lc/contract';
 import { Brand } from './brand.js';
 import { ConnectionPanel } from './connectionPanel.js';
-import { errorMessage, isUnauthenticated, portalApi } from './portalApi.js';
+import { errorMessage, isUnauthenticated, frontendApi } from './frontendApi.js';
 
 const folders = [
   { label: undefined, title: 'All mail', Icon: Archive },
@@ -53,22 +53,22 @@ export function MailboxPage({
   const isSetupPage = searchParams.get('setup') === '1';
   const mailbox = useQuery({
     queryKey: ['mailbox', session.tenantId, session.mailboxId],
-    queryFn: ({ signal }) => portalApi.mailbox(session, signal),
+    queryFn: ({ signal }) => frontendApi.mailbox(session, signal),
   });
   const emails = useQuery({
     queryKey: ['emails', session.tenantId, session.mailboxId, label, cursor],
-    queryFn: ({ signal }) => portalApi.emails(session, label, cursor, signal),
+    queryFn: ({ signal }) => frontendApi.emails(session, label, cursor, signal),
     enabled: Boolean(mailbox.data) && !isOutcomePage && !isSetupPage,
   });
   const connect = useMutation({
-    mutationFn: portalApi.connect,
+    mutationFn: frontendApi.connect,
     onSuccess: ({ url }) => {
       setRedirecting(true);
       window.location.assign(url);
     },
   });
   const connecting = connect.isPending || redirecting;
-  const logout = useMutation({ mutationFn: portalApi.logout, onSuccess: onSignedOut });
+  const logout = useMutation({ mutationFn: frontendApi.logout, onSuccess: onSignedOut });
   const expired = [mailbox.error, emails.error, connect.error, logout.error].some(
     isUnauthenticated,
   );

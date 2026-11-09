@@ -143,8 +143,8 @@ describe('Gmail connect flow', () => {
     expect(tenantId).toEqual(expect.any(String));
   });
 
-  it('redirects to the portal with the outcome when PORTAL_URL is set', async () => {
-    const testApp = createTestApp({ portalUrl: 'https://portal.example' });
+  it('redirects to the frontend with the outcome when FRONTEND_URL is set', async () => {
+    const testApp = createTestApp({ frontendUrl: 'https://frontend.example' });
     const { cookie } = await signedInMailbox(testApp);
     const connect = await request(testApp.app)
       .post('/v1/mailbox/gmail/connect')
@@ -155,13 +155,13 @@ describe('Gmail connect flow', () => {
       .get('/v1/mailbox/gmail/callback')
       .query({ code: 'code-1', state });
     expect(success.status).toBe(302);
-    expect(success.headers.location).toBe('https://portal.example/mailbox?connected=1');
+    expect(success.headers.location).toBe('https://frontend.example/mailbox?connected=1');
 
     const denied = await request(testApp.app)
       .get('/v1/mailbox/gmail/callback')
       .query({ error: 'access_denied', state });
     expect(denied.status).toBe(302);
-    expect(denied.headers.location).toBe('https://portal.example/mailbox?error=denied');
+    expect(denied.headers.location).toBe('https://frontend.example/mailbox?error=denied');
   });
 
   it('rejects a wrong Google account: token revoked, nothing stored, expected address reported', async () => {

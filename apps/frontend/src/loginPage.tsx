@@ -5,7 +5,7 @@ import { useMutation } from '@tanstack/react-query';
 import { loginRequestSchema } from '@lc/contract';
 import type { SessionResponse } from '@lc/contract';
 import { Brand } from './brand.js';
-import { errorMessage, portalApi } from './portalApi.js';
+import { errorMessage, frontendApi } from './frontendApi.js';
 
 export function LoginPage({ onSignedIn }: { onSignedIn: (session: SessionResponse) => void }) {
   const passwordInput = useRef<HTMLInputElement>(null);
@@ -13,7 +13,7 @@ export function LoginPage({ onSignedIn }: { onSignedIn: (session: SessionRespons
   const [password, setPassword] = useState('');
   const [validationError, setValidationError] = useState<string>();
   const login = useMutation({
-    mutationFn: () => portalApi.login(email.trim(), password),
+    mutationFn: () => frontendApi.login(email.trim(), password),
     onSuccess: (session) => {
       setPassword('');
       onSignedIn(session);

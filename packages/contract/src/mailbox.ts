@@ -21,7 +21,7 @@ export type MailboxResponse = z.infer<typeof mailboxResponseSchema>;
 const GOOGLE_OAUTH_URL_PREFIX = 'https://accounts.google.com/o/oauth2/';
 
 /**
- * POST /v1/mailbox/gmail/connect. The portal assigns this to window.location, so anything other
+ * POST /v1/mailbox/gmail/connect. The frontend assigns this to window.location, so anything other
  * than Google's consent screen is refused rather than followed.
  */
 export const gmailConnectResponseSchema = z.object({
@@ -31,7 +31,7 @@ export const gmailConnectResponseSchema = z.object({
 });
 export type GmailConnectResponse = z.infer<typeof gmailConnectResponseSchema>;
 
-/** Why a connect attempt did not end in a saved token; the portal's failed screen keys on it. */
+/** Why a connect attempt did not end in a saved token; the frontend's failed screen keys on it. */
 export const connectFlowErrorSchema = z.enum([
   'denied',
   'invalid_state',
