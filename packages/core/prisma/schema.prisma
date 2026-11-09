@@ -32,6 +32,7 @@ model Tenant {
   createdAt                   DateTime       @default(now()) @map("created_at") @db.Timestamptz
   mailboxes                   Mailbox[]
   logins                      MailboxLogin[]
+  emails                      Email[]
 
   @@map("tenants")
 }
@@ -66,6 +67,7 @@ model Mailbox {
   createdAt             DateTime              @default(now()) @map("created_at") @db.Timestamptz
   updatedAt             DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
   login                 MailboxLogin?
+  emails                Email[]
 
   @@index([tenantId])
   @@map("mailboxes")
@@ -86,4 +88,53 @@ model MailboxLogin {
 
   @@index([tenantId])
   @@map("mailbox_logins")
+}
+
+/// Which Gmail folder the message was in when it arrived: inbox = received by the mailbox owner,
+/// sent = written by them (Gmail UI or our send path). The ingest watch covers only these two.
+/// A snapshot at ingest; later label changes (read, archived, user labels) are not followed.
+enum GmailLabel {
+  INBOX @map("inbox")
+  SENT  @map("sent")
+
+  @@map("gmail_label")
+}
+
+/// One RFC 822 message as it arrived in one mailbox: what the portal lists and the classifier reads.
+/// The same mail reaching two mailboxes of a tenant is two rows (display is per mailbox) with the
+/// same rfc_message_id. gmail_message_id is Gmail's id for this mailbox's copy, so
+/// (mailbox_id, gmail_message_id) is the idempotency key the processor inserts on. The full raw
+/// message lives in S3 at raw_email_s3_key; headers not stored here can be re-read from it.
+/// to_recipients / cc_recipients are EmailAddress[] ({ name, address }, address lowercased).
+model Email {
+  id             String     @id @default(uuid()) @db.Uuid
+  tenantId       String     @map("tenant_id") @db.Uuid
+  tenant         Tenant     @relation(fields: [tenantId], references: [id])
+  mailboxId      String     @map("mailbox_id") @db.Uuid
+  mailbox        Mailbox    @relation(fields: [mailboxId], references: [id])
+  gmailMessageId String     @map("gmail_message_id")
+  gmailThreadId  String     @map("gmail_thread_id")
+  gmailLabel     GmailLabel @map("gmail_label")
+  /// The Message-ID header; how our own sent RFQs are recognised when their SENT copy arrives.
+  rfcMessageId   String?    @map("rfc_message_id")
+  /// Empty string when the From header had only an address; null address when From was missing.
+  senderName     String     @map("sender_name")
+  senderEmail    String?    @map("sender_email")
+  toRecipients   Json       @map("to_recipients")
+  ccRecipients   Json       @map("cc_recipients")
+  subject        String
+  /// Gmail's own short plain-text preview, for list views that must not load body_text.
+  snippet        String
+  bodyText       String     @map("body_text")
+  bodyHtml       String?    @map("body_html")
+  rawEmailS3Key  String     @map("raw_email_s3_key")
+  /// The Date header, or Gmail's internalDate when the header is missing or unparseable.
+  receivedAt     DateTime   @map("received_at") @db.Timestamptz
+  createdAt      DateTime   @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([mailboxId, gmailMessageId])
+  @@index([mailboxId, receivedAt])
+  @@index([mailboxId, gmailThreadId])
+  @@index([tenantId])
+  @@map("emails")
 }
