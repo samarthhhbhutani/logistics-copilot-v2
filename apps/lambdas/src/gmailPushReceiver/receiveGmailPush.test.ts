@@ -74,6 +74,9 @@ function createTestReceiver(overrides: { mailbox?: Partial<MailboxForPush> | nul
       if (overrides.mailbox === null || emailAddress !== 'ops@acme.com') return undefined;
       return { ...mailbox, lastHistoryId: state.cursor };
     },
+    async findMailboxForProcessing() {
+      throw new Error('not used by the receiver');
+    },
     async advanceHistoryCursor(_scope, historyId) {
       if (state.cursor !== null && state.cursor >= historyId) return false;
       state.cursor = historyId;

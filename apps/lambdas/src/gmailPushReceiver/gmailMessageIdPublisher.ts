@@ -1,11 +1,7 @@
 import { SendMessageBatchCommand } from '@aws-sdk/client-sqs';
 import type { SQSClient } from '@aws-sdk/client-sqs';
 import type { MailboxScope } from '@lc/core';
-
-/** One queue message = one Gmail message to fetch; the body emailProcessor reads. */
-export interface GmailMessageIdQueueMessage extends MailboxScope {
-  gmailMessageId: string;
-}
+import type { GmailMessageIdQueueMessage } from '../gmailMessageIdQueueMessage.js';
 
 export interface GmailMessageIdPublisher {
   /** Sends every id or throws; a partial batch failure is a failure (the cursor must not move). */

@@ -11,12 +11,20 @@ export interface MailboxForPush extends MailboxScope {
   pushServiceAccountEmail: string | null;
 }
 
+/** What the processor needs to fetch one message for a mailbox named by id in a queue message. */
+export interface MailboxForProcessing {
+  gmailConnectionStatus: GmailConnectionStatus;
+  encryptedRefreshToken: string | null;
+}
+
 /**
- * Cursor side of ingestion. Lookups are by Gmail address because a push names the mailbox that
- * way, not by session; the tenant comes out of the row and scopes every write.
+ * Ingestion side of the mailbox row. The receiver looks up by Gmail address because a push names
+ * the mailbox that way; the processor by id because the queue message carries the scope. The
+ * tenant comes out of (or is checked against) the row and scopes every write.
  */
 export interface MailboxSyncRepository {
   findMailboxForPush(emailAddress: string): Promise<MailboxForPush | undefined>;
+  findMailboxForProcessing(scope: MailboxScope): Promise<MailboxForProcessing | undefined>;
   /**
    * Moves the cursor forward only: concurrent receivers for one mailbox both succeed and the
    * higher id wins. Returns false when the stored cursor was already at or past historyId.
@@ -50,6 +58,18 @@ export function createPrismaMailboxSyncRepository(
         encryptedRefreshToken: mailbox.encryptedRefreshToken,
         lastHistoryId: mailbox.lastHistoryId,
         pushServiceAccountEmail: mailbox.tenant.pushServiceAccountEmail,
+      };
+    },
+
+    async findMailboxForProcessing({ mailboxId, tenantId }) {
+      const mailbox = await prismaClient.mailbox.findFirst({
+        where: { id: mailboxId, tenantId },
+        select: { gmailConnectionStatus: true, encryptedRefreshToken: true },
+      });
+      if (!mailbox) return undefined;
+      return {
+        gmailConnectionStatus: mapToSnakeCaseStatus(mailbox.gmailConnectionStatus),
+        encryptedRefreshToken: mailbox.encryptedRefreshToken,
       };
     },
 

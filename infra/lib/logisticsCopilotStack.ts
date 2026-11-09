@@ -127,6 +127,10 @@ export class LogisticsCopilotStack extends Stack {
       name: 'emailProcessor',
       timeout: EMAIL_PROCESSOR_TIMEOUT,
       memorySize: 1024,
+      environment: {
+        LAMBDA_ENV_SECRET_NAME: lambdaEnvSecret.secretName,
+        RAW_MAIL_BUCKET_NAME: this.rawMailBucket.bucketName,
+      },
     });
     this.emailProcessor.addEventSource(
       new SqsEventSource(this.gmailMessageIdQueue, {
@@ -139,6 +143,7 @@ export class LogisticsCopilotStack extends Stack {
     );
     this.rawMailBucket.grantRead(this.emailProcessor);
     this.rawMailBucket.grantPut(this.emailProcessor);
+    lambdaEnvSecret.grantRead(this.emailProcessor);
 
     this.gmailWatchRenewer = new PipelineLambda(this, 'GmailWatchRenewer', {
       stage,
