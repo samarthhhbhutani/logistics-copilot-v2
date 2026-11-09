@@ -1,6 +1,8 @@
+import { S3Client } from '@aws-sdk/client-s3';
 import {
   createGoogleGmailOAuth,
   createGoogleGmailWatch,
+  createPrismaAttachmentRepository,
   createPrismaEmailRepository,
   createPrismaMailboxConnectionRepository,
   createPrismaMailboxCredentialsRepository,
@@ -10,6 +12,7 @@ import {
   loadConfig,
 } from '@lc/core';
 import { createAppInstance } from './createAppInstance.js';
+import { createS3AttachmentDownloadUrlSigner } from './emails/attachmentDownloadUrlSigner.js';
 import { shutdownTelemetry } from './instrumentation.js';
 
 // Composition root: the only place in the API that reads process.env and builds singletons.
@@ -20,12 +23,24 @@ if (!config.SESSION_SECRET) throw new Error('SESSION_SECRET is required for the 
 if (!config.TOKEN_ENCRYPTION_KEY) throw new Error('TOKEN_ENCRYPTION_KEY is required for the API');
 if (!config.GOOGLE_REDIRECT_URI) throw new Error('GOOGLE_REDIRECT_URI is required for the API');
 const prismaClient = initializePrismaClient(config, { maxConnections: 4 });
+// Optional: without a bucket the API still lists attachments, and download links answer 503.
+// Credentials come from the standard AWS_* variables (the infra RailwayApiUser's access key).
+const attachmentDownloadUrlSigner = config.RAW_MAIL_BUCKET_NAME
+  ? createS3AttachmentDownloadUrlSigner({
+      s3Client: new S3Client({ region: config.AWS_REGION }),
+      bucketName: config.RAW_MAIL_BUCKET_NAME,
+    })
+  : undefined;
+if (!attachmentDownloadUrlSigner)
+  console.warn('RAW_MAIL_BUCKET_NAME unset: attachment downloads disabled');
 const expressApp = createAppInstance({
   config,
   tenantRepository: createPrismaTenantRepository(prismaClient),
   mailboxCredentialsRepository: createPrismaMailboxCredentialsRepository(prismaClient),
   mailboxConnectionRepository: createPrismaMailboxConnectionRepository(prismaClient),
   emailRepository: createPrismaEmailRepository(prismaClient),
+  attachmentRepository: createPrismaAttachmentRepository(prismaClient),
+  attachmentDownloadUrlSigner,
   gmailOAuth: createGoogleGmailOAuth({ redirectUri: config.GOOGLE_REDIRECT_URI }),
   gmailWatch: createGoogleGmailWatch(),
   encryptionUtil: createEncryptionUtil(config.TOKEN_ENCRYPTION_KEY),

@@ -33,6 +33,7 @@ model Tenant {
   mailboxes                   Mailbox[]
   logins                      MailboxLogin[]
   emails                      Email[]
+  attachments                 Attachment[]
 
   @@map("tenants")
 }
@@ -107,34 +108,60 @@ enum GmailLabel {
 /// message lives in S3 at raw_email_s3_key; headers not stored here can be re-read from it.
 /// to_recipients / cc_recipients are EmailAddress[] ({ name, address }, address lowercased).
 model Email {
-  id             String     @id @default(uuid()) @db.Uuid
-  tenantId       String     @map("tenant_id") @db.Uuid
-  tenant         Tenant     @relation(fields: [tenantId], references: [id])
-  mailboxId      String     @map("mailbox_id") @db.Uuid
-  mailbox        Mailbox    @relation(fields: [mailboxId], references: [id])
-  gmailMessageId String     @map("gmail_message_id")
-  gmailThreadId  String     @map("gmail_thread_id")
-  gmailLabel     GmailLabel @map("gmail_label")
+  id             String       @id @default(uuid()) @db.Uuid
+  tenantId       String       @map("tenant_id") @db.Uuid
+  tenant         Tenant       @relation(fields: [tenantId], references: [id])
+  mailboxId      String       @map("mailbox_id") @db.Uuid
+  mailbox        Mailbox      @relation(fields: [mailboxId], references: [id])
+  gmailMessageId String       @map("gmail_message_id")
+  gmailThreadId  String       @map("gmail_thread_id")
+  gmailLabel     GmailLabel   @map("gmail_label")
   /// The Message-ID header; how our own sent RFQs are recognised when their SENT copy arrives.
-  rfcMessageId   String?    @map("rfc_message_id")
+  rfcMessageId   String?      @map("rfc_message_id")
   /// Empty string when the From header had only an address; null address when From was missing.
-  senderName     String     @map("sender_name")
-  senderEmail    String?    @map("sender_email")
-  toRecipients   Json       @map("to_recipients")
-  ccRecipients   Json       @map("cc_recipients")
+  senderName     String       @map("sender_name")
+  senderEmail    String?      @map("sender_email")
+  toRecipients   Json         @map("to_recipients")
+  ccRecipients   Json         @map("cc_recipients")
   subject        String
   /// Gmail's own short plain-text preview, for list views that must not load body_text.
   snippet        String
-  bodyText       String     @map("body_text")
-  bodyHtml       String?    @map("body_html")
-  rawEmailS3Key  String     @map("raw_email_s3_key")
+  bodyText       String       @map("body_text")
+  bodyHtml       String?      @map("body_html")
+  rawEmailS3Key  String       @map("raw_email_s3_key")
   /// The Date header, or Gmail's internalDate when the header is missing or unparseable.
-  receivedAt     DateTime   @map("received_at") @db.Timestamptz
-  createdAt      DateTime   @default(now()) @map("created_at") @db.Timestamptz
+  receivedAt     DateTime     @map("received_at") @db.Timestamptz
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  attachments    Attachment[]
 
   @@unique([mailboxId, gmailMessageId])
   @@index([mailboxId, receivedAt])
   @@index([mailboxId, gmailThreadId])
   @@index([tenantId])
   @@map("emails")
+}
+
+/// One MIME part of an email stored as a file. Content lives in S3 under the tenant, addressed by
+/// its sha256, so the same file sent many times is stored once; rows are per email. Inline parts
+/// (cid: images referenced from the HTML body) are kept too, flagged, so a thread view can render
+/// them and a file list can hide them.
+model Attachment {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  emailId     String   @map("email_id") @db.Uuid
+  email       Email    @relation(fields: [emailId], references: [id])
+  fileName    String   @map("file_name")
+  contentType String   @map("content_type")
+  sizeBytes   Int      @map("size_bytes")
+  /// Lowercase hex of the content; also the last path segment of s3_key.
+  sha256      String
+  s3Key       String   @map("s3_key")
+  contentId   String?  @map("content_id")
+  isInline    Boolean  @map("is_inline")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([emailId])
+  @@index([tenantId, sha256])
+  @@map("attachments")
 }

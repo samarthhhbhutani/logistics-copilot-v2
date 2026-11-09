@@ -112,6 +112,28 @@ ever needed). `requireSession` guards every session-scoped route and exposes the
 `getSession(response)`. Persistence goes through `TenantRepository` and `MailboxCredentialsRepository`
 (`packages/core/src/{tenants,auth}`), so route tests run in memory and `index.ts` wires Prisma.
 
+## Attachments
+
+`emailProcessor` stores every MIME part of a message as a file: bytes go to the raw-mail bucket under
+`<tenantId>/attachments/<sha256>` (content-addressed, so a rate card sent ten times is one object; per
+tenant, so tenants never share or probe each other's objects) and one `attachments` row per email
+records name, type, size, hash, key, `content_id` and `is_inline`. Inline means part of the body: a
+`multipart/related` part or a `cid:` image the HTML references (logos, signatures). It is flagged so a
+thread view can render it and a file list can hide it; `Content-Disposition: inline` alone does not
+count, because some mail clients send real PDFs that way. Malformed Content-Types become
+`application/octet-stream` so one odd part cannot send the whole mail to the dead-letter queue. The
+email and its attachment rows are inserted in one transaction, so a duplicate delivery adds nothing.
+
+| Route                                                                    | Does                                                                                 |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| `GET /v1/mailbox/emails/:emailId/attachments`                            | metadata, inline included; 404 unless the email is the session mailbox's             |
+| `GET /v1/mailbox/emails/:emailId/attachments/:attachmentId/download-url` | `{ url, expiresAt }`: presigned S3 GET, 5 minutes, `Content-Disposition: attachment` |
+
+The API presigns with the standard `AWS_*` credentials of the infra `RailwayApiUser` (read on the
+bucket) and `RAW_MAIL_BUCKET_NAME`. Without the bucket variable, listing works and download links
+answer `503 attachments_unavailable`; local dev and tests need no AWS. Attachments are not sent to
+the LLM for classification (token cost); when that changes it will be a config switch, off by default.
+
 ## Database
 
 Supabase Postgres via Prisma 7 (engine-less client + `@prisma/adapter-pg`). Two projects,

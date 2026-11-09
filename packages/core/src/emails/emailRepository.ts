@@ -3,6 +3,7 @@ import type { GmailLabel as PrismaGmailLabel } from '../db/generated/client.js';
 import type { MailboxScope } from '../connectors/gmail/mailboxConnectionRepository.js';
 import type { EmailAddress } from '../utils/mime/parsedEmail.js';
 import type { EmailListPosition } from './emailListCursor.js';
+import type { StoredAttachment } from './attachmentRepository.js';
 
 /** Which Gmail folder the message arrived in; snake_case like every other enum the API speaks. */
 export type GmailLabel = 'inbox' | 'sent';
@@ -53,10 +54,11 @@ export interface EmailRepository {
   /** Cheap check before fetching from Gmail: SQS redelivers, and a push can list an id twice. */
   emailExists(scope: MailboxScope, gmailMessageId: string): Promise<boolean>;
   /**
-   * Inserts unless (mailbox_id, gmail_message_id) already exists; two processors racing on the
-   * same id both succeed and exactly one row results. Returns false when the row was already there.
+   * Inserts the email and its attachment rows in one transaction, unless (mailbox_id,
+   * gmail_message_id) already exists; two processors racing on the same id both succeed and
+   * exactly one email with one set of attachments results. Returns false when the row was there.
    */
-  insertEmailIfAbsent(newEmail: NewEmail): Promise<boolean>;
+  insertEmailIfAbsent(newEmail: NewEmail, attachments: StoredAttachment[]): Promise<boolean>;
 }
 
 // Prisma generates UPPER_CASE enum members; the API and the column speak snake_case.
@@ -148,29 +150,53 @@ export function createPrismaEmailRepository(prismaClient: PrismaClient): EmailRe
       return email !== null;
     },
 
-    async insertEmailIfAbsent(newEmail) {
-      const result = await prismaClient.email.createMany({
-        data: {
-          tenantId: newEmail.tenantId,
-          mailboxId: newEmail.mailboxId,
-          gmailMessageId: newEmail.gmailMessageId,
-          gmailThreadId: newEmail.gmailThreadId,
-          gmailLabel: PRISMA_ENUM_BY_SNAKE_CASE_LABEL[newEmail.gmailLabel],
-          rfcMessageId: newEmail.rfcMessageId ? withoutNulCharacters(newEmail.rfcMessageId) : null,
-          senderName: withoutNulCharacters(newEmail.senderName),
-          senderEmail: newEmail.senderEmail ? withoutNulCharacters(newEmail.senderEmail) : null,
-          toRecipients: toJsonAddresses(newEmail.toRecipients),
-          ccRecipients: toJsonAddresses(newEmail.ccRecipients),
-          subject: withoutNulCharacters(newEmail.subject),
-          snippet: withoutNulCharacters(newEmail.snippet),
-          bodyText: withoutNulCharacters(newEmail.bodyText),
-          bodyHtml: newEmail.bodyHtml ? withoutNulCharacters(newEmail.bodyHtml) : null,
-          rawEmailS3Key: newEmail.rawEmailS3Key,
-          receivedAt: newEmail.receivedAt,
-        },
-        skipDuplicates: true,
+    async insertEmailIfAbsent(newEmail, attachments) {
+      return prismaClient.$transaction(async (transaction) => {
+        // ON CONFLICT DO NOTHING RETURNING id: an empty result means the row was already there.
+        const inserted = await transaction.email.createManyAndReturn({
+          data: {
+            tenantId: newEmail.tenantId,
+            mailboxId: newEmail.mailboxId,
+            gmailMessageId: newEmail.gmailMessageId,
+            gmailThreadId: newEmail.gmailThreadId,
+            gmailLabel: PRISMA_ENUM_BY_SNAKE_CASE_LABEL[newEmail.gmailLabel],
+            rfcMessageId: newEmail.rfcMessageId
+              ? withoutNulCharacters(newEmail.rfcMessageId)
+              : null,
+            senderName: withoutNulCharacters(newEmail.senderName),
+            senderEmail: newEmail.senderEmail ? withoutNulCharacters(newEmail.senderEmail) : null,
+            toRecipients: toJsonAddresses(newEmail.toRecipients),
+            ccRecipients: toJsonAddresses(newEmail.ccRecipients),
+            subject: withoutNulCharacters(newEmail.subject),
+            snippet: withoutNulCharacters(newEmail.snippet),
+            bodyText: withoutNulCharacters(newEmail.bodyText),
+            bodyHtml: newEmail.bodyHtml ? withoutNulCharacters(newEmail.bodyHtml) : null,
+            rawEmailS3Key: newEmail.rawEmailS3Key,
+            receivedAt: newEmail.receivedAt,
+          },
+          skipDuplicates: true,
+          select: { id: true },
+        });
+        const insertedEmail = inserted[0];
+        if (inserted.length !== 1 || !insertedEmail) return false;
+        const emailId = insertedEmail.id;
+        if (attachments.length > 0) {
+          await transaction.attachment.createMany({
+            data: attachments.map((attachment) => ({
+              tenantId: newEmail.tenantId,
+              emailId,
+              fileName: withoutNulCharacters(attachment.fileName),
+              contentType: withoutNulCharacters(attachment.contentType),
+              sizeBytes: attachment.sizeBytes,
+              sha256: attachment.sha256,
+              s3Key: attachment.s3Key,
+              contentId: attachment.contentId ? withoutNulCharacters(attachment.contentId) : null,
+              isInline: attachment.isInline,
+            })),
+          });
+        }
+        return true;
       });
-      return result.count === 1;
     },
   };
 }

@@ -2,6 +2,7 @@ import express from 'express';
 import type { Express, NextFunction, Request, Response } from 'express';
 import cookieParser from 'cookie-parser';
 import type {
+  AttachmentRepository,
   Config,
   EmailRepository,
   GmailOAuth,
@@ -13,6 +14,8 @@ import type {
 } from '@lc/core';
 import { createAuthRouter } from './auth/authRouter.js';
 import { createRequireSession, getSession } from './auth/requireSession.js';
+import type { AttachmentDownloadUrlSigner } from './emails/attachmentDownloadUrlSigner.js';
+import { createAttachmentsRouter } from './emails/attachmentsRouter.js';
 import { createEmailsRouter } from './emails/emailsRouter.js';
 import { createGmailConnectionRouter } from './gmail/gmailConnectionRouter.js';
 import { createTenantsRouter } from './tenants/tenantsRouter.js';
@@ -23,6 +26,9 @@ export interface AppDependencies {
   mailboxCredentialsRepository: MailboxCredentialsRepository;
   mailboxConnectionRepository: MailboxConnectionRepository;
   emailRepository: EmailRepository;
+  attachmentRepository: AttachmentRepository;
+  /** Presigns S3 download links; undefined when no bucket is configured, so download links answer 503. */
+  attachmentDownloadUrlSigner: AttachmentDownloadUrlSigner | undefined;
   /** Google OAuth operations; the real one in index.ts, an in-memory fake in tests. */
   gmailOAuth: GmailOAuth;
   /** Gmail users.watch / users.stop; same real-or-fake split as gmailOAuth. */
@@ -46,6 +52,8 @@ export function createAppInstance({
   mailboxCredentialsRepository,
   mailboxConnectionRepository,
   emailRepository,
+  attachmentRepository,
+  attachmentDownloadUrlSigner,
   gmailOAuth,
   gmailWatch,
   encryptionUtil,
@@ -88,6 +96,10 @@ export function createAppInstance({
     }),
   );
   v1Router.use('/mailbox/emails', createEmailsRouter({ emailRepository, requireSession }));
+  v1Router.use(
+    '/mailbox/emails',
+    createAttachmentsRouter({ attachmentRepository, attachmentDownloadUrlSigner, requireSession }),
+  );
   // Feature routers mount here as they land: rfqs, agent.
   expressApp.use('/v1', v1Router);
 

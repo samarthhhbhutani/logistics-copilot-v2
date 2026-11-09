@@ -9,11 +9,13 @@ import type {
   MailboxConnectionRepository,
   MailboxScope,
   MailboxSyncRepository,
+  StoredAttachment,
   TenantRepository,
 } from '@lc/core';
 import { parseGmailMessageIdQueueMessage } from '../gmailMessageIdQueueMessage.js';
 import type { GmailMessageIdQueueMessage } from '../gmailMessageIdQueueMessage.js';
 import { log } from '../structuredLog.js';
+import type { AttachmentStore } from './attachmentStore.js';
 import type { RawMailStore } from './rawMailStore.js';
 
 export interface GmailMessageProcessorDependencies {
@@ -23,6 +25,7 @@ export interface GmailMessageProcessorDependencies {
   encryptionUtil: EncryptionUtil;
   gmailMessages: GmailMessages;
   rawMailStore: RawMailStore;
+  attachmentStore: AttachmentStore;
   emailRepository: EmailRepository;
 }
 
@@ -39,8 +42,9 @@ const GMAIL_SENT_LABEL_ID = 'SENT';
 
 /**
  * One SQS record = one Gmail message to ingest: check it is not already stored, fetch it raw,
- * keep the bytes in S3, parse, insert. The unique (mailbox_id, gmail_message_id) index makes a
- * duplicate or a racing twin a no-op, so every step before the insert may safely run twice.
+ * keep the bytes in S3, parse, store each attachment, insert. The unique (mailbox_id,
+ * gmail_message_id) index makes a duplicate or a racing twin a no-op, and attachment objects are
+ * content-addressed, so every step before the insert may safely run twice.
  */
 export function createGmailMessageProcessor(
   dependencies: GmailMessageProcessorDependencies,
@@ -52,6 +56,7 @@ export function createGmailMessageProcessor(
     encryptionUtil,
     gmailMessages,
     rawMailStore,
+    attachmentStore,
     emailRepository,
   } = dependencies;
 
@@ -142,28 +147,37 @@ export function createGmailMessageProcessor(
 
     const rawEmailS3Key = await rawMailStore.putRawEmail(scope, gmailMessageId, fetched.raw);
     const parsedEmail = await parseRawEmail(fetched.raw);
-    const inserted = await emailRepository.insertEmailIfAbsent({
-      tenantId,
-      mailboxId,
-      gmailMessageId,
-      gmailThreadId: fetched.threadId,
-      gmailLabel: toGmailLabel(fetched.labelIds),
-      rfcMessageId: parsedEmail.messageId,
-      senderName: parsedEmail.from?.name ?? '',
-      senderEmail: parsedEmail.from?.address,
-      toRecipients: parsedEmail.to,
-      ccRecipients: parsedEmail.cc,
-      subject: parsedEmail.subject,
-      snippet: fetched.snippet,
-      bodyText: parsedEmail.text,
-      bodyHtml: parsedEmail.html,
-      rawEmailS3Key,
-      receivedAt: parsedEmail.date ?? fetched.internalDate,
-    });
+    // Sequential: the parts are already in memory (postal-mime buffers them); this only bounds in-flight uploads.
+    const storedAttachments: StoredAttachment[] = [];
+    for (const attachment of parsedEmail.attachments) {
+      storedAttachments.push(await attachmentStore.uploadAttachmentToS3(scope, attachment));
+    }
+    const inserted = await emailRepository.insertEmailIfAbsent(
+      {
+        tenantId,
+        mailboxId,
+        gmailMessageId,
+        gmailThreadId: fetched.threadId,
+        gmailLabel: toGmailLabel(fetched.labelIds),
+        rfcMessageId: parsedEmail.messageId,
+        senderName: parsedEmail.from?.name ?? '',
+        senderEmail: parsedEmail.from?.address,
+        toRecipients: parsedEmail.to,
+        ccRecipients: parsedEmail.cc,
+        subject: parsedEmail.subject,
+        snippet: fetched.snippet,
+        bodyText: parsedEmail.text,
+        bodyHtml: parsedEmail.html,
+        rawEmailS3Key,
+        receivedAt: parsedEmail.date ?? fetched.internalDate,
+      },
+      storedAttachments,
+    );
     log('info', inserted ? 'message stored' : 'message skipped: stored by a concurrent run', {
       ...context,
       rawEmailS3Key,
       sizeBytes: fetched.raw.byteLength,
+      attachmentCount: storedAttachments.length,
     });
     return 'done';
   }
