@@ -228,6 +228,29 @@ describe('LogisticsCopilotStack', () => {
       State: 'ENABLED',
     });
   });
+
+  it('Gmail watch renewer knows the secret name, can read it, and has time for many mailboxes', () => {
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      FunctionName: 'logistics-copilot-gmail-watch-renewer-staging',
+      Timeout: 300,
+      Environment: {
+        Variables: Match.objectLike({
+          LAMBDA_ENV_SECRET_NAME: 'logistics-copilot/staging/lambda-env',
+        }),
+      },
+    });
+    const renewer = template.findResources('AWS::Lambda::Function', {
+      Properties: { FunctionName: 'logistics-copilot-gmail-watch-renewer-staging' },
+    });
+    expect(JSON.stringify(renewer)).not.toMatch(/DATABASE_URL|TOKEN_ENCRYPTION_KEY/);
+    const renewerPolicies = template.findResources('AWS::IAM::Policy', {
+      Properties: { PolicyName: Match.stringLikeRegexp('^GmailWatchRenewer') },
+    });
+    const policyJson = JSON.stringify(renewerPolicies);
+    expect(policyJson).toContain('secretsmanager:GetSecretValue');
+    expect(policyJson).not.toContain('sqs:');
+    expect(policyJson).not.toContain('s3:');
+  });
 });
 
 describe('resolveStage', () => {
