@@ -26,6 +26,10 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - name: Install browser for portal tests
+        run: npm exec -w @lc/portal -- playwright install --with-deps chromium
+      - name: Portal browser tests
+        run: npm run test:e2e
 
   guard-direct-push:
     # Belt and braces: fails the run when a commit lands on main without a merged PR.

@@ -1,9 +1,10 @@
 import express from 'express';
 import type { RequestHandler, Router } from 'express';
 import createHttpError from 'http-errors';
-import { z } from 'zod';
 import { decodeEmailListCursor, encodeEmailListCursor } from '@lc/core';
 import type { EmailRepository, EmailSummary } from '@lc/core';
+import { listEmailsQuerySchema } from '@lc/contract';
+import type { EmailSummaryResponse, ListEmailsResponse } from '@lc/contract';
 import { getSession } from '../auth/requireSession.js';
 import { parseRequestQuery } from '../http/parseRequestQuery.js';
 
@@ -12,32 +13,7 @@ export interface EmailsRouterDependencies {
   requireSession: RequestHandler;
 }
 
-export const DEFAULT_EMAIL_PAGE_SIZE = 50;
-export const MAX_EMAIL_PAGE_SIZE = 100;
-
-const listEmailsQuerySchema = z.object({
-  limit: z.coerce.number().int().min(1).max(MAX_EMAIL_PAGE_SIZE).default(DEFAULT_EMAIL_PAGE_SIZE),
-  cursor: z.string().min(1).optional(),
-  label: z.enum(['inbox', 'sent']).optional(),
-});
-
-/** The list row as the portal receives it; dates as ISO strings, sender folded into one object. */
-export interface EmailSummaryResponse {
-  id: string;
-  gmailThreadId: string;
-  gmailLabel: 'inbox' | 'sent';
-  sender: { name: string; email: string | null };
-  toRecipients: { name: string; address: string }[];
-  subject: string;
-  snippet: string;
-  receivedAt: string;
-}
-
-export interface ListEmailsResponse {
-  emails: EmailSummaryResponse[];
-  /** Pass back as ?cursor= for the next page; null when this was the last page. */
-  nextCursor: string | null;
-}
+export { DEFAULT_EMAIL_PAGE_SIZE, MAX_EMAIL_PAGE_SIZE } from '@lc/contract';
 
 /**
  * The signed-in person's mail, newest first, mounted at /v1/mailbox/emails.
@@ -56,7 +32,8 @@ export function createEmailsRouter({
     const before = cursor ? decodeEmailListCursor(cursor) : undefined;
     if (cursor && !before) throw createHttpError(400, 'invalid_cursor');
 
-    const rows = await emailRepository.listEmails(getSession(response), {
+    const session = getSession(response);
+    const rows = await emailRepository.listEmails(session, {
       limit: limit + 1,
       gmailLabel: label,
       before,
@@ -64,6 +41,8 @@ export function createEmailsRouter({
     const page = rows.slice(0, limit);
     const lastRow = page.at(-1);
     const body: ListEmailsResponse = {
+      mailboxId: session.mailboxId,
+      tenantId: session.tenantId,
       emails: page.map(toEmailSummaryResponse),
       nextCursor:
         rows.length > limit && lastRow

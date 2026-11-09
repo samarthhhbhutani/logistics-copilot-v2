@@ -79,6 +79,8 @@ describe('GET /v1/mailbox/emails', () => {
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual({
+      mailboxId: scope.mailboxId,
+      tenantId: scope.tenantId,
       emails: [
         {
           id: emailId(0),

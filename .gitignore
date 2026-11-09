@@ -10,3 +10,6 @@ coverage/
 .idea/
 .vscode/
 packages/core/src/db/generated/
+
+playwright-report/
+test-results/

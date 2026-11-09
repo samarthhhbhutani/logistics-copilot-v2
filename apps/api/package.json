@@ -10,6 +10,7 @@
     "start": "node --import ./dist/instrumentation.js dist/index.js"
   },
   "dependencies": {
+    "@lc/contract": "*",
     "@lc/core": "*",
     "@opentelemetry/api": "^1.10.0",
     "@opentelemetry/exporter-metrics-otlp-proto": "^0.301.0",

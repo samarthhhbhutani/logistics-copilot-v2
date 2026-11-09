@@ -17,6 +17,7 @@ import type {
   EncryptionUtil,
   TenantRepository,
 } from '@lc/core';
+import type { GmailConnectResponse, MailboxResponse } from '@lc/contract';
 import { getSession } from '../auth/requireSession.js';
 import { parseRequestBody } from '../http/parseRequestBody.js';
 import { sendConnectFlowOutcome } from './connectFlowOutcome.js';
@@ -94,7 +95,7 @@ export function createGmailConnectionRouter({
     const state = await createGmailConnectStateToken(session, sessionSecret);
     response.json({
       url: gmailOAuth.buildConsentUrl({ credentials, state, loginHint: connection.emailAddress }),
-    });
+    } satisfies GmailConnectResponse);
   });
 
   router.get('/gmail/callback', async (request, response) => {
@@ -205,7 +206,7 @@ export function createGmailConnectionRouter({
   return router;
 }
 
-function toMailboxView(connection: MailboxConnection) {
+function toMailboxView(connection: MailboxConnection): MailboxResponse {
   return {
     mailboxId: connection.mailboxId,
     tenantId: connection.tenantId,
