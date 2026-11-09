@@ -37,13 +37,19 @@ export interface MailboxConnectionRepository {
   clearGmailConnection(scope: MailboxScope): Promise<void>;
 }
 
-// Prisma generates UPPER_CASE members for the enum; the API speaks the snake_case values the
-// database column actually holds, so the mapping is explicit rather than a toLowerCase() guess.
-const statusFromPrisma: Record<PrismaGmailConnectionStatus, GmailConnectionStatus> = {
-  NOT_CONNECTED: 'not_connected',
-  CONNECTED: 'connected',
-  NEEDS_RECONNECT: 'needs_reconnect',
-};
+// Prisma generates UPPER_CASE enum members; the API and the column speak snake_case.
+const SNAKE_CASE_STATUS_BY_PRISMA_ENUM: Record<PrismaGmailConnectionStatus, GmailConnectionStatus> =
+  {
+    NOT_CONNECTED: 'not_connected',
+    CONNECTED: 'connected',
+    NEEDS_RECONNECT: 'needs_reconnect',
+  };
+
+export function mapToSnakeCaseStatus(
+  prismaStatus: PrismaGmailConnectionStatus,
+): GmailConnectionStatus {
+  return SNAKE_CASE_STATUS_BY_PRISMA_ENUM[prismaStatus];
+}
 
 export function createPrismaMailboxConnectionRepository(
   prismaClient: PrismaClient,
@@ -67,7 +73,7 @@ export function createPrismaMailboxConnectionRepository(
         mailboxId: mailbox.id,
         tenantId: mailbox.tenantId,
         emailAddress: mailbox.emailAddress,
-        gmailConnectionStatus: statusFromPrisma[mailbox.gmailConnectionStatus],
+        gmailConnectionStatus: mapToSnakeCaseStatus(mailbox.gmailConnectionStatus),
         gmailConnectedAt: mailbox.gmailConnectedAt,
         encryptedRefreshToken: mailbox.encryptedRefreshToken,
         watchExpiresAt: mailbox.watchExpiresAt,

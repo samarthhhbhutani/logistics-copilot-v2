@@ -45,3 +45,11 @@ export function resolveStage(app: App): Stage {
 function isStage(value: unknown): value is Stage {
   return typeof value === 'string' && (STAGES as readonly string[]).includes(value);
 }
+
+/**
+ * Secrets Manager secret the pipeline Lambdas read at cold start (JSON: DATABASE_URL,
+ * TOKEN_ENCRYPTION_KEY). Created by hand per stage, never by CDK: the template holds only the name.
+ */
+export function lambdaEnvSecretName(stage: Stage): string {
+  return `logistics-copilot/${stage}/lambda-env`;
+}

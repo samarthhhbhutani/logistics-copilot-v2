@@ -20,6 +20,9 @@ export interface PipelineLambdaProps {
   name: PipelineLambdaName;
   timeout: Duration;
   memorySize: number;
+  /** Per-function additions to the shared environment (queue URLs, secret names; never secret values). */
+  environment?: Record<string, string>;
+  reservedConcurrentExecutions?: number;
 }
 
 /**
@@ -29,7 +32,14 @@ export interface PipelineLambdaProps {
  */
 export class PipelineLambda extends NodejsFunction {
   constructor(scope: Construct, id: string, props: PipelineLambdaProps) {
-    const { stage, name, timeout, memorySize } = props;
+    const {
+      stage,
+      name,
+      timeout,
+      memorySize,
+      environment = {},
+      reservedConcurrentExecutions,
+    } = props;
     const kebabName = toKebabCase(name);
     const otelExporterHeaders = ssm.StringParameter.valueForStringParameter(
       scope,
@@ -42,6 +52,7 @@ export class PipelineLambda extends NodejsFunction {
       architecture: lambda.Architecture.ARM_64,
       timeout,
       memorySize,
+      reservedConcurrentExecutions,
       bundling: {
         // CommonJS so the OTel layer's require hook can patch modules; ESM would bypass it.
         format: OutputFormat.CJS,
@@ -50,6 +61,19 @@ export class PipelineLambda extends NodejsFunction {
         // instrumentation cannot wrap ("Cannot redefine property: handler"). Re-export it as a
         // plain property.
         footer: 'module.exports = { handler: module.exports.handler };',
+        // Prisma's generated client computes __dirname from import.meta.url, which is empty in
+        // CommonJS output; give it the bundle's own path instead.
+        banner: "const import_meta_url = require('node:url').pathToFileURL(__filename).href;",
+        define: { 'import.meta.url': 'import_meta_url' },
+        // Native addon behind the API's password hashing; @lc/core only imports it lazily and no
+        // Lambda hashes passwords, so it stays out of the bundle.
+        externalModules: ['@aws-sdk/*', 'argon2'],
+        // The layer registers the global tracer with @opentelemetry/api 1.9.1, and a newer api copy
+        // (ours is 1.10) rejects an older global: runInsideSpan would get a no-op tracer and our
+        // spans would vanish while the layer's auto-instrumentation still shows. Bundle a 1.9 api
+        // instead (apps/lambdas devDependency `@opentelemetry/api-layer`). Drop when the layer
+        // ships api 1.10.
+        esbuildArgs: { '--alias:@opentelemetry/api': '@opentelemetry/api-layer' },
       },
       layers: [
         lambda.LayerVersion.fromLayerVersionArn(scope, `${id}OtelLayer`, OTEL_LAMBDA_LAYER_ARN),
@@ -66,6 +90,7 @@ export class PipelineLambda extends NodejsFunction {
         OTEL_EXPORTER_OTLP_HEADERS: otelExporterHeaders,
         OTEL_NODE_ENABLED_INSTRUMENTATIONS: 'aws-lambda,aws-sdk,http,undici,pg',
         OTEL_LOGS_EXPORTER: 'none',
+        ...environment,
       },
       logGroup: new logs.LogGroup(scope, `${id}LogGroup`, {
         logGroupName: `/aws/lambda/logistics-copilot-${kebabName}-${stage}`,

@@ -7,6 +7,14 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
-    "@types/aws-lambda": "^8.10.145"
+    "@opentelemetry/api-layer": "npm:@opentelemetry/api@1.9.0",
+    "@types/aws-lambda": "^8.10.145",
+    "aws-sdk-client-mock": "^4.1.0"
+  },
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.900.0",
+    "@aws-sdk/client-sqs": "^3.900.0",
+    "@lc/core": "*",
+    "google-auth-library": "^10.9.1"
   }
 }

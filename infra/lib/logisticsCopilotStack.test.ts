@@ -177,7 +177,25 @@ describe('LogisticsCopilotStack', () => {
       Properties: { PolicyName: Match.stringLikeRegexp('^GmailPushReceiver') },
     });
     expect(JSON.stringify(pushReceiverPolicies)).toContain('sqs:SendMessage');
+    expect(JSON.stringify(pushReceiverPolicies)).toContain('secretsmanager:GetSecretValue');
     expect(JSON.stringify(pushReceiverPolicies)).not.toContain('s3:');
+  });
+
+  it('Gmail push receiver knows the queue and the secret name, never a secret value', () => {
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      FunctionName: 'logistics-copilot-gmail-push-receiver-staging',
+      Timeout: 60,
+      Environment: {
+        Variables: Match.objectLike({
+          LAMBDA_ENV_SECRET_NAME: 'logistics-copilot/staging/lambda-env',
+          GMAIL_MESSAGE_ID_QUEUE_URL: Match.anyValue(),
+        }),
+      },
+    });
+    const receiver = template.findResources('AWS::Lambda::Function', {
+      Properties: { FunctionName: 'logistics-copilot-gmail-push-receiver-staging' },
+    });
+    expect(JSON.stringify(receiver)).not.toMatch(/DATABASE_URL|TOKEN_ENCRYPTION_KEY/);
   });
 
   it('Gmail watch renewer runs every 12 hours', () => {
