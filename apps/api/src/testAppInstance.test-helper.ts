@@ -7,6 +7,7 @@ import { createFakeGmailOAuth } from './fakeGmailOAuth.test-helper.js';
 import type { FakeGmailOAuth } from './fakeGmailOAuth.test-helper.js';
 import { createFakeGmailWatch } from './fakeGmailWatch.test-helper.js';
 import type { FakeGmailWatch } from './fakeGmailWatch.test-helper.js';
+import { createFakeAttachmentDownloadUrlSigner } from './fakeAttachmentDownloadUrlSigner.test-helper.js';
 import { createInMemoryRepositories } from './inMemoryRepositories.test-helper.js';
 
 export const testSessionSecret = 'test-session-secret-that-is-at-least-32-chars';
@@ -18,6 +19,8 @@ export interface TestAppOptions {
   frontendUrl?: string;
   /** The Google account the fake lets consent; defaults to the test mailbox address. */
   consentingAccountEmail?: string;
+  /** Default on: a fake signer that returns a recognisable URL. Off exercises the 503 path. */
+  attachmentDownloadsEnabled?: boolean;
 }
 
 export interface TestApp {
@@ -35,6 +38,7 @@ export function createTestApp({
   stage = 'dev',
   frontendUrl,
   consentingAccountEmail = testMailboxEmail,
+  attachmentDownloadsEnabled = true,
 }: TestAppOptions = {}): TestApp {
   const config = loadConfig({
     STAGE: stage,
@@ -49,6 +53,9 @@ export function createTestApp({
   const app = createAppInstance({
     config,
     ...repositories,
+    attachmentDownloadUrlSigner: attachmentDownloadsEnabled
+      ? createFakeAttachmentDownloadUrlSigner()
+      : undefined,
     gmailOAuth,
     gmailWatch,
     encryptionUtil,

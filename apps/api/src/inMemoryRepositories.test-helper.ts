@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type {
+  AttachmentRepository,
+  AttachmentSummary,
   EmailRepository,
   EmailSummary,
   MailboxConnection,
@@ -17,14 +19,32 @@ export function createInMemoryRepositories(): {
   mailboxCredentialsRepository: MailboxCredentialsRepository;
   mailboxConnectionRepository: MailboxConnectionRepository;
   emailRepository: EmailRepository;
+  attachmentRepository: AttachmentRepository;
   /** Seeds the inbox list directly; the processor's insert path is not part of the API. */
   addEmail(email: EmailSummary & { mailboxId: string; tenantId: string }): void;
+  /** Seeds a stored file on a seeded email; tenantId is the row's own isolation column. */
+  addAttachment(attachment: AttachmentSummary & { tenantId: string }): void;
 } {
   const googleClientByTenantId = new Map<string, TenantGoogleClient>();
   const pubsubPushByTenantId = new Map<string, TenantPubsubPush>();
   const credentialsByEmail = new Map<string, MailboxCredentials>();
   const connectionByMailboxId = new Map<string, MailboxConnection>();
   const emails: (EmailSummary & { mailboxId: string; tenantId: string })[] = [];
+  const attachments: (AttachmentSummary & { tenantId: string })[] = [];
+
+  /** The email must be in the scope's mailbox and tenant, and the attachment row in the same tenant. */
+  function attachmentsOf(scope: { mailboxId: string; tenantId: string }, emailId: string) {
+    const email = emails.find(
+      (candidate) =>
+        candidate.id === emailId &&
+        candidate.mailboxId === scope.mailboxId &&
+        candidate.tenantId === scope.tenantId,
+    );
+    if (!email) return undefined;
+    return attachments.filter(
+      (attachment) => attachment.emailId === emailId && attachment.tenantId === scope.tenantId,
+    );
+  }
 
   function findInTenant(scope: { mailboxId: string; tenantId: string }) {
     const connection = connectionByMailboxId.get(scope.mailboxId);
@@ -101,8 +121,23 @@ export function createInMemoryRepositories(): {
         throw new Error('not used by the API');
       },
     },
+    attachmentRepository: {
+      async listAttachments(scope, emailId) {
+        return attachmentsOf(scope, emailId)?.sort(
+          (left, right) =>
+            Number(left.isInline) - Number(right.isInline) ||
+            left.fileName.localeCompare(right.fileName),
+        );
+      },
+      async findAttachment(scope, emailId, attachmentId) {
+        return attachmentsOf(scope, emailId)?.find((attachment) => attachment.id === attachmentId);
+      },
+    },
     addEmail(email) {
       emails.push(email);
+    },
+    addAttachment(attachment) {
+      attachments.push(attachment);
     },
     mailboxConnectionRepository: {
       async findMailboxConnection(scope) {

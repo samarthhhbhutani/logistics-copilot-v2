@@ -28,7 +28,9 @@ export async function parseRawEmail(rawEmail: Uint8Array | string): Promise<Pars
     date: parseDate(parsedMessage.date),
     text,
     html,
-    attachments: parsedMessage.attachments.map(toParsedAttachment),
+    attachments: parsedMessage.attachments.map((attachment) =>
+      toParsedAttachment(attachment, html),
+    ),
     headers: Object.fromEntries(
       // Headers arrive in reverse order of appearance; keep the first occurrence as written.
       [...parsedMessage.headers]
@@ -56,16 +58,51 @@ function parseDate(dateHeader: string | undefined): Date | undefined {
   return Number.isNaN(date.getTime()) ? undefined : date;
 }
 
-function toParsedAttachment(attachment: PostalMimeAttachment): ParsedAttachment {
+function toParsedAttachment(
+  attachment: PostalMimeAttachment,
+  html: string | undefined,
+): ParsedAttachment {
   const content = toUint8Array(attachment.content);
+  const contentType = normalizeContentType(attachment.mimeType);
+  const contentId = attachment.contentId?.replace(/^<|>$/g, '').trim() || undefined;
   return {
-    fileName: attachment.filename?.trim() || defaultFileName(attachment.mimeType),
-    contentType: attachment.mimeType,
+    fileName: attachment.filename?.trim() || defaultFileName(contentType),
+    contentType,
     sizeBytes: content.byteLength,
     content,
-    contentId: attachment.contentId?.replace(/^<|>$/g, ''),
-    isInline: attachment.disposition === 'inline' || attachment.related === true,
+    contentId,
+    isInline: isInlinePart(attachment, contentId, html),
   };
+}
+
+/**
+ * Inline means "part of the body", not "a file": a multipart/related part, or a cid: image the HTML
+ * actually references. Content-Disposition: inline alone does not count: Apple Mail and some
+ * Outlook builds send real PDFs that way, and hiding them would lose files.
+ */
+function isInlinePart(
+  attachment: PostalMimeAttachment,
+  contentId: string | undefined,
+  html: string | undefined,
+): boolean {
+  if (attachment.related === true) return true;
+  return (
+    attachment.disposition === 'inline' &&
+    contentId !== undefined &&
+    html !== undefined &&
+    html.includes(`cid:${contentId}`)
+  );
+}
+
+const MEDIA_TYPE_PATTERN = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/i;
+
+/**
+ * postal-mime passes the Content-Type through unvalidated. S3 refuses a non-token value, which
+ * would send the whole mail to the dead-letter queue, so anything malformed becomes octet-stream.
+ */
+function normalizeContentType(mimeType: string): string {
+  const mediaType = mimeType.split(';')[0]?.trim().toLowerCase() ?? '';
+  return MEDIA_TYPE_PATTERN.test(mediaType) ? mediaType : 'application/octet-stream';
 }
 
 function toUint8Array(content: ArrayBuffer | Uint8Array | string): Uint8Array {
@@ -75,6 +112,6 @@ function toUint8Array(content: ArrayBuffer | Uint8Array | string): Uint8Array {
 
 /** Inline images and calendar parts often come without a filename; give them a stable one. */
 function defaultFileName(contentType: string): string {
-  const subtype = contentType.split('/')[1]?.split(';')[0]?.trim() || 'bin';
+  const subtype = contentType.split('/')[1] || 'bin';
   return `attachment.${subtype}`;
 }

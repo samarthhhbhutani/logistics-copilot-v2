@@ -8,11 +8,14 @@ import type {
   MailboxForProcessing,
   MailboxSyncRepository,
   NewEmail,
+  StoredAttachment,
   TenantRepository,
 } from '@lc/core';
 import { randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { createGmailMessageProcessor } from './processGmailMessage.js';
+import { attachmentS3Key, sha256Hex } from './attachmentStore.js';
+import type { AttachmentStore } from './attachmentStore.js';
 import type { RawMailStore } from './rawMailStore.js';
 
 const encryptionUtil = createEncryptionUtil(randomBytes(32).toString('base64'));
@@ -35,6 +38,44 @@ const DATELESS_RAW = Buffer.from(
   ['To: vendor@sea.com', 'Subject: Re: RFQ', 'Content-Type: text/plain', '', 'Our offer.'].join(
     '\r\n',
   ),
+);
+
+const PDF_BYTES = Buffer.from('%PDF-1.4 fake rate card');
+const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+/** A file attachment plus a cid: image referenced from the HTML body. */
+const MULTIPART_RAW = Buffer.from(
+  [
+    'From: Ravi Kumar <ravi@acme.com>',
+    'To: ops@desk.com',
+    'Subject: Rate card',
+    'Date: Mon, 09 Nov 2026 10:00:00 +0530',
+    'Content-Type: multipart/mixed; boundary="outer"',
+    '',
+    '--outer',
+    'Content-Type: multipart/related; boundary="inner"',
+    '',
+    '--inner',
+    'Content-Type: text/html; charset=utf-8',
+    '',
+    '<p>Rates attached.</p><img src="cid:logo@acme.com">',
+    '--inner',
+    'Content-Type: image/png',
+    'Content-ID: <logo@acme.com>',
+    'Content-Disposition: inline; filename="logo.png"',
+    'Content-Transfer-Encoding: base64',
+    '',
+    PNG_BYTES.toString('base64'),
+    '--inner--',
+    '--outer',
+    'Content-Type: application/pdf; name="rate-card.pdf"',
+    'Content-Disposition: attachment; filename="rate-card.pdf"',
+    'Content-Transfer-Encoding: base64',
+    '',
+    PDF_BYTES.toString('base64'),
+    '--outer--',
+    '',
+  ].join('\r\n'),
 );
 
 function sqsEvent(...bodies: (string | object)[]): SQSEvent {
@@ -74,6 +115,9 @@ function createTestProcessor(overrides: { mailbox?: Partial<MailboxForProcessing
     fetchErrorsById: {} as Record<string, Error>,
     puts: [] as { key: string; bytes: number }[],
     putError: undefined as Error | undefined,
+    insertedAttachments: [] as StoredAttachment[][],
+    attachmentPuts: [] as { key: string; bytes: number }[],
+    attachmentPutError: undefined as Error | undefined,
     tenantHasClient: true,
   };
   const mailboxSyncRepository: MailboxSyncRepository = {
@@ -132,9 +176,27 @@ function createTestProcessor(overrides: { mailbox?: Partial<MailboxForProcessing
     async emailExists(_scope, gmailMessageId) {
       return state.storedIds.has(gmailMessageId);
     },
-    async insertEmailIfAbsent(newEmail) {
+    async insertEmailIfAbsent(newEmail, attachments) {
       state.inserted.push(newEmail);
+      state.insertedAttachments.push(attachments);
       return state.insertResult;
+    },
+  };
+  const attachmentStore: AttachmentStore = {
+    async uploadAttachmentToS3(scope, attachment) {
+      if (state.attachmentPutError) throw state.attachmentPutError;
+      const sha256 = sha256Hex(attachment.content);
+      const s3Key = attachmentS3Key(scope.tenantId, sha256);
+      state.attachmentPuts.push({ key: s3Key, bytes: attachment.sizeBytes });
+      return {
+        fileName: attachment.fileName,
+        contentType: attachment.contentType,
+        sizeBytes: attachment.sizeBytes,
+        sha256,
+        s3Key,
+        contentId: attachment.contentId,
+        isInline: attachment.isInline,
+      };
     },
   };
   const process = createGmailMessageProcessor({
@@ -144,6 +206,7 @@ function createTestProcessor(overrides: { mailbox?: Partial<MailboxForProcessing
     encryptionUtil,
     gmailMessages,
     rawMailStore,
+    attachmentStore,
     emailRepository,
   });
   return { process, state };
@@ -201,6 +264,66 @@ describe('emailProcessor', () => {
       toRecipients: [{ name: '', address: 'vendor@sea.com' }],
       receivedAt: new Date('2026-11-09T04:31:00Z'),
     });
+  });
+
+  it('stores every attachment under the tenant by sha256 and inserts the rows with the email', async () => {
+    const { process, state } = createTestProcessor();
+    state.fetchResult = { ...state.fetchResult, raw: new Uint8Array(MULTIPART_RAW) };
+
+    expect(await process(sqsEvent(queueMessage))).toEqual({ batchItemFailures: [] });
+
+    const pdfSha256 = sha256Hex(PDF_BYTES);
+    const pngSha256 = sha256Hex(PNG_BYTES);
+    expect(state.attachmentPuts).toEqual([
+      { key: `tenant-1/attachments/${pngSha256}`, bytes: PNG_BYTES.length },
+      { key: `tenant-1/attachments/${pdfSha256}`, bytes: PDF_BYTES.length },
+    ]);
+    expect(state.insertedAttachments).toEqual([
+      [
+        {
+          fileName: 'logo.png',
+          contentType: 'image/png',
+          sizeBytes: PNG_BYTES.length,
+          sha256: pngSha256,
+          s3Key: `tenant-1/attachments/${pngSha256}`,
+          contentId: 'logo@acme.com',
+          isInline: true,
+        },
+        {
+          fileName: 'rate-card.pdf',
+          contentType: 'application/pdf',
+          sizeBytes: PDF_BYTES.length,
+          sha256: pdfSha256,
+          s3Key: `tenant-1/attachments/${pdfSha256}`,
+          contentId: undefined,
+          isInline: false,
+        },
+      ],
+    ]);
+    expect(state.inserted[0]).toMatchObject({
+      subject: 'Rate card',
+      bodyHtml: expect.stringContaining('cid:logo'),
+    });
+  });
+
+  it('passes an empty attachment list for a plain text mail', async () => {
+    const { process, state } = createTestProcessor();
+
+    await process(sqsEvent(queueMessage));
+
+    expect(state.attachmentPuts).toEqual([]);
+    expect(state.insertedAttachments).toEqual([[]]);
+  });
+
+  it('returns the record to the queue when S3 refuses an attachment, without inserting', async () => {
+    const { process, state } = createTestProcessor();
+    state.fetchResult = { ...state.fetchResult, raw: new Uint8Array(MULTIPART_RAW) };
+    state.attachmentPutError = new Error('SlowDown');
+
+    expect(await process(sqsEvent(queueMessage))).toEqual({
+      batchItemFailures: [{ itemIdentifier: 'sqs-1' }],
+    });
+    expect(state.inserted).toEqual([]);
   });
 
   it('acks an id that is already stored without calling Gmail', async () => {

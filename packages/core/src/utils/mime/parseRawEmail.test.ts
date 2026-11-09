@@ -48,6 +48,47 @@ describe('parseRawEmail', () => {
     expect(email.text).toContain('12 pallets, 1,500 kg');
   });
 
+  it('does not treat Content-Disposition: inline alone as inline, and normalizes a malformed Content-Type', async () => {
+    const raw = [
+      'From: a@example.com',
+      'Subject: inline pdf',
+      'Content-Type: multipart/mixed; boundary="b"',
+      '',
+      '--b',
+      'Content-Type: text/plain',
+      '',
+      'See attached.',
+      '--b',
+      'Content-Type: application/pdf; name="quote.pdf"',
+      'Content-Disposition: inline; filename="quote.pdf"',
+      'Content-Transfer-Encoding: base64',
+      '',
+      Buffer.from('%PDF-1.4').toString('base64'),
+      '--b',
+      'Content-Type: image/png "broken"',
+      'Content-Disposition: inline',
+      'Content-ID: <unreferenced@example.com>',
+      'Content-Transfer-Encoding: base64',
+      '',
+      Buffer.from([1, 2, 3]).toString('base64'),
+      '--b--',
+      '',
+    ].join('\r\n');
+
+    const email = await parseRawEmail(raw);
+
+    expect(
+      email.attachments.map((attachment) => [
+        attachment.fileName,
+        attachment.contentType,
+        attachment.isInline,
+      ]),
+    ).toEqual([
+      ['quote.pdf', 'application/pdf', false],
+      ['attachment.octet-stream', 'application/octet-stream', false],
+    ]);
+  });
+
   it('marks a cid-referenced logo as inline and strips the angle brackets from its Content-ID', async () => {
     const email = await parseRawEmail(readEmailFixture('inlineLogoSignature.eml'));
     expect(email.attachments).toHaveLength(1);

@@ -10,6 +10,8 @@
     "start": "node --import ./dist/instrumentation.js dist/index.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.900.0",
+    "@aws-sdk/s3-request-presigner": "^3.900.0",
     "@lc/contract": "*",
     "@lc/core": "*",
     "@opentelemetry/api": "^1.10.0",
