@@ -11,8 +11,8 @@ Public repository: no real mail, vendor or customer data is ever committed; fixt
 | ------------------- | ------------------------------------------------------------------------------------ |
 | `packages/*`        | Shared libraries (`core` lands first)                                                |
 | `apps/api`          | Express API (Railway): `createAppInstance({ config })` + `index.ts` composition root |
-| `apps/portal`       | React/Vite mailbox portal (local development first)                                  |
-| `packages/contract` | Browser-safe API schemas shared with the portal                                      |
+| `apps/frontend`     | React/Vite mailbox frontend (local development first)                                |
+| `packages/contract` | Browser-safe API schemas shared with the frontend                                    |
 | `apps/*`            | Other deployables: Lambda handlers                                                   |
 | `infra`             | CDK                                                                                  |
 
@@ -139,9 +139,9 @@ at an 8.0 release candidate that does not match `@prisma/client`.
 Small PRs, one concern each. `main` is protected: every change goes through a pull request and must
 pass CI; merges are squash-only. A local `pre-push` hook refuses direct pushes to `main`.
 
-## Portal (1.5b)
+## Frontend (1.5b)
 
-The portal reads only `/v1` endpoints. Mail data comes from Postgres through the API, never
+The frontend reads only `/v1` endpoints. Mail data comes from Postgres through the API, never
 from Gmail or Supabase directly in the browser. Browser code imports `@lc/contract`, not
 `@lc/core` (which contains Prisma and token decryption). No credentials are in a `VITE_*` variable;
 `lc_session` remains httpOnly and no mail/session data is written to localStorage.
@@ -152,20 +152,20 @@ From the repository root, with Node 22 on PATH:
 npm ci
 npm run build
 # Terminal 1: real API, local .env points to staging. No automatic migrations or seeds.
-PORTAL_URL=http://localhost:5173 npm run dev -w @lc/api
-# Terminal 2: portal proxies /v1 to localhost:8080.
-npm run dev -w @lc/portal
+FRONTEND_URL=http://localhost:5173 npm run dev -w @lc/api
+# Terminal 2: frontend proxies /v1 to localhost:8080.
+npm run dev -w @lc/frontend
 ```
 
 Open `http://localhost:5173` and sign in with your existing mailbox credentials. Use `localhost`
-consistently for API callback and portal so the host-only session cookie is shared. Keep the
+consistently for API callback and frontend so the host-only session cookie is shared. Keep the
 existing registered `GOOGLE_REDIRECT_URI=http://localhost:8080/v1/mailbox/gmail/callback`.
-Google returns to that API callback; `PORTAL_URL` sends the browser back to the portal's
+Google returns to that API callback; `FRONTEND_URL` sends the browser back to the frontend's
 success/failure screen. Do not register/change Google clients to run UI tests.
 
 For an API on another **local** port, start Vite with
-`PORTAL_API_TARGET=http://127.0.0.1:8089 npm run dev -w @lc/portal`. This is a server-only
-Vite proxy setting, not bundled frontend configuration. `PORTAL_URL` belongs on the API process.
+`FRONTEND_API_TARGET=http://127.0.0.1:8089 npm run dev -w @lc/frontend`. This is a server-only
+Vite proxy setting, not bundled frontend configuration. `FRONTEND_URL` belongs on the API process.
 Production hosting must serve SPA paths (including `/mailbox`) and proxy `/v1` or configure
 same-site API hosting with a matching frontend base URL; that deployment and the admin gate are 1.7, not part of this change.
 
@@ -173,7 +173,7 @@ Implemented: password login/logout, All mail / Inbox / Sent, 30-row cursor pages
 empty/loading/error states, Gmail connect/reconnect, and explicit success/failure screens.
 Mail rows are summaries, not clickable: message bodies, search, RFQs and classification need
 later endpoints. The query string retains folder and cursor for browser back/reload. No polling
-or Gmail resync is triggered by the portal; Refresh reads already-ingested rows.
+or Gmail resync is triggered by the frontend; Refresh reads already-ingested rows.
 The list response includes the cookie's mailboxId and tenantId. The browser rejects a response
 for a different session before caching it, including when another tab switches the account.
 Failed background refreshes keep cached mail visible with an inline warning.
@@ -181,7 +181,7 @@ Failed background refreshes keep cached mail visible with an inline warning.
 ### Browser tests and synthetic preview
 
 ```sh
-npm exec -w @lc/portal -- playwright install chromium
+npm exec -w @lc/frontend -- playwright install chromium
 npm run build # Required first: the synthetic API imports built workspace packages.
 npm run test:e2e
 ```
@@ -197,11 +197,11 @@ For an isolated visual preview using the same synthetic data:
 
 ```sh
 # Terminal 1
-npm run test:serve -w @lc/portal
+npm run test:serve -w @lc/frontend
 # Terminal 2
-PORTAL_API_TARGET=http://127.0.0.1:4181 npm run dev -w @lc/portal -- --port 4180
+FRONTEND_API_TARGET=http://127.0.0.1:4181 npm run dev -w @lc/frontend -- --port 4180
 ```
 
 Open `http://127.0.0.1:4180`. Synthetic accounts: `ops@example.com`, `sales@example.com`,
-`new@example.com`; password `portal-test-password`. These are in-memory fixtures, never real
+`new@example.com`; password `frontend-test-password`. These are in-memory fixtures, never real
 accounts. Google connect needs the Playwright interception to finish in this synthetic preview.

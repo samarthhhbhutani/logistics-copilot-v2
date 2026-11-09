@@ -6,13 +6,13 @@ import {
 } from '@lc/contract';
 import type { GmailLabel, SessionResponse } from '@lc/contract';
 
-export class PortalApiError extends Error {
+export class FrontendApiError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
   ) {
     super(code);
-    this.name = 'PortalApiError';
+    this.name = 'FrontendApiError';
   }
 }
 
@@ -41,7 +41,7 @@ async function requestJson<ResponseBody>(
     } catch {
       /* A proxy outage can return HTML rather than JSON. */
     }
-    throw new PortalApiError(response.status, code);
+    throw new FrontendApiError(response.status, code);
   }
   const body: unknown = response.status === 204 ? undefined : await response.json();
   return schema.parse(body);
@@ -54,12 +54,12 @@ function requireMatchingSession<ResponseBody extends SessionResponse>(
   if (body.mailboxId !== session.mailboxId || body.tenantId !== session.tenantId) {
     // A different tab can replace the shared cookie between any two requests.
     // Reject before React Query can cache another account's response under this session.
-    throw new PortalApiError(401, 'session_changed');
+    throw new FrontendApiError(401, 'session_changed');
   }
   return body;
 }
 
-export const portalApi = {
+export const frontendApi = {
   async session(signal?: AbortSignal) {
     try {
       return await requestJson('/me', sessionResponseSchema, { signal });
@@ -103,11 +103,11 @@ export const portalApi = {
 };
 
 export function isUnauthenticated(error: unknown): boolean {
-  return error instanceof PortalApiError && error.status === 401;
+  return error instanceof FrontendApiError && error.status === 401;
 }
 
 export function errorMessage(error: unknown): string {
-  if (error instanceof PortalApiError) {
+  if (error instanceof FrontendApiError) {
     if (error.code === 'invalid_credentials')
       return 'That email and password do not match. Please try again.';
     if (error.status === 401) return 'Your session has expired. Sign in again to continue.';

@@ -84,7 +84,7 @@ export function createAppInstance({
       encryptionUtil,
       requireSession,
       sessionSecret,
-      portalUrl: config.PORTAL_URL,
+      frontendUrl: config.FRONTEND_URL,
     }),
   );
   v1Router.use('/mailbox/emails', createEmailsRouter({ emailRepository, requireSession }));

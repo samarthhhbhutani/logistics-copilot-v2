@@ -2,9 +2,9 @@
 import { hashPassword } from '@lc/core';
 import { createTestApp } from '../../api/src/testAppInstance.test-helper.js';
 
-const port = Number(process.env.PORTAL_TEST_PORT ?? 4181);
+const port = Number(process.env.FRONTEND_TEST_PORT ?? 4181);
 const testApp = createTestApp({
-  portalUrl: process.env.PORTAL_TEST_ORIGIN ?? 'http://127.0.0.1:4180',
+  frontendUrl: process.env.FRONTEND_TEST_ORIGIN ?? 'http://127.0.0.1:4180',
 });
 const { repositories, encryptionUtil, gmailOAuth } = testApp;
 const { tenantId } = await repositories.tenantRepository.createTenant({
@@ -14,7 +14,7 @@ const { tenantId } = await repositories.tenantRepository.createTenant({
   pubsubTopicName: 'projects/synthetic/topics/mail',
   pushServiceAccountEmail: 'push@synthetic.iam.gserviceaccount.com',
 });
-const passwordHash = await hashPassword('portal-test-password');
+const passwordHash = await hashPassword('frontend-test-password');
 for (const [accountIndex, emailAddress] of [
   'ops@example.com',
   'sales@example.com',
@@ -71,6 +71,6 @@ gmailOAuth.buildConsentUrl = ({ state, loginHint }) => {
   return url.toString();
 };
 const server = testApp.app.listen(port, '127.0.0.1', () =>
-  console.log(`Synthetic portal API on ${port}`),
+  console.log(`Synthetic frontend API on ${port}`),
 );
 process.on('SIGTERM', () => server.close());

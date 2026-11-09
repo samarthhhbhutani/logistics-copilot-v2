@@ -26,9 +26,9 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      - name: Install browser for portal tests
-        run: npm exec -w @lc/portal -- playwright install --with-deps chromium
-      - name: Portal browser tests
+      - name: Install browser for frontend tests
+        run: npm exec -w @lc/frontend -- playwright install --with-deps chromium
+      - name: Frontend browser tests
         run: npm run test:e2e
 
   guard-direct-push:

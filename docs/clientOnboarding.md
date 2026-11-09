@@ -182,11 +182,11 @@ PUSH_ENDPOINT=https://t3x6leuzhskn32hfhaw3f7u5wm0azded.lambda-url.ap-south-1.on.
 
 ## Part E: connect each mailbox (client operator)
 
-1. Log in to the portal with the mailbox address and the initial password.
+1. Log in to the frontend with the mailbox address and the initial password.
 2. Click **Connect Gmail**. Google shows the consent screen for that project.
 3. Sign in as the mailbox owner and **tick both boxes**: read mail and send mail. Leaving one unticked
    returns `scope_not_granted` and the connection is refused; redo the step.
-4. The portal shows `connected`. Behind the scenes we stored an encrypted refresh token and registered
+4. The frontend shows `connected`. Behind the scenes we stored an encrypted refresh token and registered
    a Gmail watch on the client's topic; the watch is renewed automatically every 12 hours.
 
 ## Part F: verification (both)
@@ -199,7 +199,7 @@ PUSH_ENDPOINT=https://t3x6leuzhskn32hfhaw3f7u5wm0azded.lambda-url.ap-south-1.on.
 
    We confirm from the `logistics-copilot-gmail-push-receiver-<stage>` logs.
 
-2. Client sends any email to the connected mailbox. Within a few seconds it appears in the portal's
+2. Client sends any email to the connected mailbox. Within a few seconds it appears in the frontend's
    inbox; that is the whole pipeline (push, fetch, store, classify) working.
 
 3. If step 1 works and step 2 does not, the usual cause is the watch: `users.watch` fails with
@@ -208,6 +208,6 @@ PUSH_ENDPOINT=https://t3x6leuzhskn32hfhaw3f7u5wm0azded.lambda-url.ap-south-1.on.
 
 ## Disconnecting
 
-The operator clicks **Disconnect** in the portal (revokes the token at Google and stops the watch), or
+The operator clicks **Disconnect** in the frontend (revokes the token at Google and stops the watch), or
 removes the app under <https://myaccount.google.com/permissions>. Deleting the push subscription in
 the client's project stops notifications without touching stored mail.

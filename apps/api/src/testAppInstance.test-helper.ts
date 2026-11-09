@@ -15,7 +15,7 @@ export interface TestAppOptions {
   /** Exercises the secure-cookie path. */
   stage?: 'dev' | 'staging';
   /** Set to get redirects from the Gmail callback instead of JSON. */
-  portalUrl?: string;
+  frontendUrl?: string;
   /** The Google account the fake lets consent; defaults to the test mailbox address. */
   consentingAccountEmail?: string;
 }
@@ -33,14 +33,14 @@ export const testMailboxEmail = 'ops@bhatia.example';
 /** An app wired with in-memory repositories and a fake Google. */
 export function createTestApp({
   stage = 'dev',
-  portalUrl,
+  frontendUrl,
   consentingAccountEmail = testMailboxEmail,
 }: TestAppOptions = {}): TestApp {
   const config = loadConfig({
     STAGE: stage,
     DATABASE_URL: 'postgresql://user:pw@localhost:6543/db',
     SESSION_SECRET: testSessionSecret,
-    ...(portalUrl ? { PORTAL_URL: portalUrl } : {}),
+    ...(frontendUrl ? { FRONTEND_URL: frontendUrl } : {}),
   });
   const repositories = createInMemoryRepositories();
   const gmailOAuth = createFakeGmailOAuth(consentingAccountEmail);

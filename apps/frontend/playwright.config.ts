@@ -21,14 +21,14 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: '../../node_modules/.bin/tsx e2e/portalApiServer.ts',
+      command: '../../node_modules/.bin/tsx e2e/frontendApiServer.ts',
       url: 'http://127.0.0.1:4181/health',
       reuseExistingServer: false,
     },
     {
       command: 'npm run dev -- --port 4180',
       url: 'http://127.0.0.1:4180',
-      env: { PORTAL_API_TARGET: 'http://127.0.0.1:4181' },
+      env: { FRONTEND_API_TARGET: 'http://127.0.0.1:4181' },
       reuseExistingServer: false,
     },
   ],
