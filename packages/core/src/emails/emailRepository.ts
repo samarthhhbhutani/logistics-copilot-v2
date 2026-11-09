@@ -2,6 +2,7 @@ import type { PrismaClient } from '../db/prismaClient.js';
 import type { GmailLabel as PrismaGmailLabel } from '../db/generated/client.js';
 import type { MailboxScope } from '../connectors/gmail/mailboxConnectionRepository.js';
 import type { EmailAddress } from '../utils/mime/parsedEmail.js';
+import type { EmailListPosition } from './emailListCursor.js';
 
 /** Which Gmail folder the message arrived in; snake_case like every other enum the API speaks. */
 export type GmailLabel = 'inbox' | 'sent';
@@ -25,7 +26,30 @@ export interface NewEmail extends MailboxScope {
   receivedAt: Date;
 }
 
+/** One row of the inbox list: everything the list view shows, no bodies. */
+export interface EmailSummary {
+  id: string;
+  gmailThreadId: string;
+  gmailLabel: GmailLabel;
+  senderName: string;
+  senderEmail: string | null;
+  toRecipients: EmailAddress[];
+  subject: string;
+  snippet: string;
+  receivedAt: Date;
+}
+
+export interface ListEmailsQuery {
+  /** How many rows to return; the caller asks for one more than the page to learn whether a next page exists. */
+  limit: number;
+  gmailLabel?: GmailLabel;
+  /** Rows strictly older than this position in (received_at desc, id desc) order. */
+  before?: EmailListPosition;
+}
+
 export interface EmailRepository {
+  /** The mailbox's mail, newest first. The tenant in the scope is the isolation check, the mailbox the display scope. */
+  listEmails(scope: MailboxScope, query: ListEmailsQuery): Promise<EmailSummary[]>;
   /** Cheap check before fetching from Gmail: SQS redelivers, and a push can list an id twice. */
   emailExists(scope: MailboxScope, gmailMessageId: string): Promise<boolean>;
   /**
@@ -40,6 +64,20 @@ const PRISMA_ENUM_BY_SNAKE_CASE_LABEL: Record<GmailLabel, PrismaGmailLabel> = {
   inbox: 'INBOX',
   sent: 'SENT',
 };
+const SNAKE_CASE_LABEL_BY_PRISMA_ENUM: Record<PrismaGmailLabel, GmailLabel> = {
+  INBOX: 'inbox',
+  SENT: 'sent',
+};
+
+/** The jsonb column holds what toJsonAddresses wrote; anything else is treated as no recipients. */
+function fromJsonAddresses(value: unknown): EmailAddress[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (typeof entry !== 'object' || entry === null) return [];
+    const { name, address } = entry as Record<string, unknown>;
+    return typeof name === 'string' && typeof address === 'string' ? [{ name, address }] : [];
+  });
+}
 
 /**
  * Postgres refuses the NUL character in text and jsonb columns; malformed mail (a mislabelled
@@ -59,6 +97,49 @@ function toJsonAddresses(addresses: EmailAddress[]): { name: string; address: st
 
 export function createPrismaEmailRepository(prismaClient: PrismaClient): EmailRepository {
   return {
+    async listEmails({ mailboxId, tenantId }, { limit, gmailLabel, before }) {
+      const emails = await prismaClient.email.findMany({
+        where: {
+          mailboxId,
+          tenantId,
+          ...(gmailLabel ? { gmailLabel: PRISMA_ENUM_BY_SNAKE_CASE_LABEL[gmailLabel] } : {}),
+          // (received_at, id) < (before.receivedAt, before.id), spelled out for Prisma.
+          ...(before
+            ? {
+                OR: [
+                  { receivedAt: { lt: before.receivedAt } },
+                  { receivedAt: before.receivedAt, id: { lt: before.id } },
+                ],
+              }
+            : {}),
+        },
+        orderBy: [{ receivedAt: 'desc' }, { id: 'desc' }],
+        take: limit,
+        select: {
+          id: true,
+          gmailThreadId: true,
+          gmailLabel: true,
+          senderName: true,
+          senderEmail: true,
+          toRecipients: true,
+          subject: true,
+          snippet: true,
+          receivedAt: true,
+        },
+      });
+      return emails.map((email) => ({
+        id: email.id,
+        gmailThreadId: email.gmailThreadId,
+        gmailLabel: SNAKE_CASE_LABEL_BY_PRISMA_ENUM[email.gmailLabel],
+        senderName: email.senderName,
+        senderEmail: email.senderEmail,
+        toRecipients: fromJsonAddresses(email.toRecipients),
+        subject: email.subject,
+        snippet: email.snippet,
+        receivedAt: email.receivedAt,
+      }));
+    },
+
     async emailExists({ mailboxId, tenantId }, gmailMessageId) {
       const email = await prismaClient.email.findFirst({
         where: { mailboxId, tenantId, gmailMessageId },

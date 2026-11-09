@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type {
+  EmailRepository,
+  EmailSummary,
   MailboxConnection,
   MailboxConnectionRepository,
   MailboxCredentials,
@@ -14,11 +16,15 @@ export function createInMemoryRepositories(): {
   tenantRepository: TenantRepository;
   mailboxCredentialsRepository: MailboxCredentialsRepository;
   mailboxConnectionRepository: MailboxConnectionRepository;
+  emailRepository: EmailRepository;
+  /** Seeds the inbox list directly; the processor's insert path is not part of the API. */
+  addEmail(email: EmailSummary & { mailboxId: string; tenantId: string }): void;
 } {
   const googleClientByTenantId = new Map<string, TenantGoogleClient>();
   const pubsubPushByTenantId = new Map<string, TenantPubsubPush>();
   const credentialsByEmail = new Map<string, MailboxCredentials>();
   const connectionByMailboxId = new Map<string, MailboxConnection>();
+  const emails: (EmailSummary & { mailboxId: string; tenantId: string })[] = [];
 
   function findInTenant(scope: { mailboxId: string; tenantId: string }) {
     const connection = connectionByMailboxId.get(scope.mailboxId);
@@ -69,6 +75,34 @@ export function createInMemoryRepositories(): {
         });
         return credentials;
       },
+    },
+    emailRepository: {
+      async listEmails({ mailboxId, tenantId }, { limit, gmailLabel, before }) {
+        return emails
+          .filter((email) => email.mailboxId === mailboxId && email.tenantId === tenantId)
+          .filter((email) => !gmailLabel || email.gmailLabel === gmailLabel)
+          .filter(
+            (email) =>
+              !before ||
+              email.receivedAt < before.receivedAt ||
+              (email.receivedAt.getTime() === before.receivedAt.getTime() && email.id < before.id),
+          )
+          .sort(
+            (left, right) =>
+              right.receivedAt.getTime() - left.receivedAt.getTime() ||
+              (right.id > left.id ? 1 : -1),
+          )
+          .slice(0, limit);
+      },
+      async emailExists() {
+        throw new Error('not used by the API');
+      },
+      async insertEmailIfAbsent() {
+        throw new Error('not used by the API');
+      },
+    },
+    addEmail(email) {
+      emails.push(email);
     },
     mailboxConnectionRepository: {
       async findMailboxConnection(scope) {
