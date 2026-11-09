@@ -1,17 +1,5 @@
 import type { Response } from 'express';
-
-/** Why a connect attempt did not end in a saved token. Shown verbatim by the portal's failed screen. */
-export type ConnectFlowErrorCode =
-  | 'denied'
-  | 'invalid_state'
-  | 'google_client_not_configured'
-  | 'exchange_failed'
-  | 'email_mismatch'
-  | 'scope_not_granted'
-  /** The tenant has no Pub/Sub topic or push service account on file (docs/clientOnboarding, part C). */
-  | 'pubsub_not_configured'
-  /** users.watch refused the tenant's topic: wrong project or missing Publisher grant. */
-  | 'watch_failed';
+import type { ConnectFlowErrorCode } from '@lc/contract';
 
 export type ConnectFlowOutcome =
   { connected: true } | { connected: false; error: ConnectFlowErrorCode; expectedEmail?: string };
