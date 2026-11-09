@@ -17,6 +17,13 @@ export interface MailboxForProcessing {
   encryptedRefreshToken: string | null;
 }
 
+/** A connected mailbox whose Gmail watch is about to lapse (or already has, or was never recorded). */
+export interface MailboxForWatchRenewal extends MailboxScope {
+  emailAddress: string;
+  encryptedRefreshToken: string;
+  watchExpiresAt: Date | null;
+}
+
 /**
  * Ingestion side of the mailbox row. The receiver looks up by Gmail address because a push names
  * the mailbox that way; the processor by id because the queue message carries the scope. The
@@ -25,6 +32,13 @@ export interface MailboxForProcessing {
 export interface MailboxSyncRepository {
   findMailboxForPush(emailAddress: string): Promise<MailboxForPush | undefined>;
   findMailboxForProcessing(scope: MailboxScope): Promise<MailboxForProcessing | undefined>;
+  /** Connected mailboxes with a token whose watch expires before the deadline, is past, or is null. */
+  findMailboxesWithWatchExpiringBefore(deadline: Date): Promise<MailboxForWatchRenewal[]>;
+  /**
+   * Records a renewed watch: only the expiry. The watch response's historyId is "now", and writing
+   * it over the cursor would skip whatever a pending push has not listed yet.
+   */
+  saveWatchExpiry(scope: MailboxScope, expiresAt: Date): Promise<void>;
   /**
    * Moves the cursor forward only: concurrent receivers for one mailbox both succeed and the
    * higher id wins. Returns false when the stored cursor was already at or past historyId.
@@ -71,6 +85,44 @@ export function createPrismaMailboxSyncRepository(
         gmailConnectionStatus: mapToSnakeCaseStatus(mailbox.gmailConnectionStatus),
         encryptedRefreshToken: mailbox.encryptedRefreshToken,
       };
+    },
+
+    async findMailboxesWithWatchExpiringBefore(deadline) {
+      const mailboxes = await prismaClient.mailbox.findMany({
+        where: {
+          gmailConnectionStatus: 'CONNECTED',
+          encryptedRefreshToken: { not: null },
+          OR: [{ watchExpiresAt: { lt: deadline } }, { watchExpiresAt: null }],
+        },
+        select: {
+          id: true,
+          tenantId: true,
+          emailAddress: true,
+          encryptedRefreshToken: true,
+          watchExpiresAt: true,
+        },
+        orderBy: { watchExpiresAt: 'asc' },
+      });
+      return mailboxes.flatMap((mailbox) =>
+        mailbox.encryptedRefreshToken === null
+          ? []
+          : [
+              {
+                mailboxId: mailbox.id,
+                tenantId: mailbox.tenantId,
+                emailAddress: mailbox.emailAddress,
+                encryptedRefreshToken: mailbox.encryptedRefreshToken,
+                watchExpiresAt: mailbox.watchExpiresAt,
+              },
+            ],
+      );
+    },
+
+    async saveWatchExpiry({ mailboxId, tenantId }, expiresAt) {
+      await prismaClient.mailbox.updateMany({
+        where: { id: mailboxId, tenantId },
+        data: { watchExpiresAt: expiresAt },
+      });
     },
 
     async advanceHistoryCursor({ mailboxId, tenantId }, historyId) {

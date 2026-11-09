@@ -77,6 +77,12 @@ function createTestReceiver(overrides: { mailbox?: Partial<MailboxForPush> | nul
     async findMailboxForProcessing() {
       throw new Error('not used by the receiver');
     },
+    async findMailboxesWithWatchExpiringBefore() {
+      throw new Error('not used here');
+    },
+    async saveWatchExpiry() {
+      throw new Error('not used here');
+    },
     async advanceHistoryCursor(_scope, historyId) {
       if (state.cursor !== null && state.cursor >= historyId) return false;
       state.cursor = historyId;

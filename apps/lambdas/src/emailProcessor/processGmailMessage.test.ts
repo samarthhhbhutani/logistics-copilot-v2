@@ -85,6 +85,12 @@ function createTestProcessor(overrides: { mailbox?: Partial<MailboxForProcessing
       if (scope.mailboxId !== 'mailbox-1' || scope.tenantId !== 'tenant-1') return undefined;
       return mailbox;
     },
+    async findMailboxesWithWatchExpiringBefore() {
+      throw new Error('not used here');
+    },
+    async saveWatchExpiry() {
+      throw new Error('not used here');
+    },
     async advanceHistoryCursor() {
       throw new Error('not used by the processor');
     },

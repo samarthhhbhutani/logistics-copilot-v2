@@ -148,11 +148,14 @@ export class LogisticsCopilotStack extends Stack {
     this.gmailWatchRenewer = new PipelineLambda(this, 'GmailWatchRenewer', {
       stage,
       name: 'gmailWatchRenewer',
-      timeout: Duration.minutes(1),
+      // Renewals run one mailbox at a time, about a second each; room for a few hundred mailboxes.
+      timeout: Duration.minutes(5),
       memorySize: 512,
+      environment: { LAMBDA_ENV_SECRET_NAME: lambdaEnvSecret.secretName },
     });
+    lambdaEnvSecret.grantRead(this.gmailWatchRenewer);
     new events.Rule(this, 'GmailWatchRenewerSchedule', {
-      // Gmail watches last 7 days and are renewed when under 24 h remain; twice a day leaves slack.
+      // Gmail watches last 7 days and are renewed when under 36 h remain; twice a day gives three tries.
       schedule: events.Schedule.rate(Duration.hours(12)),
       targets: [new eventsTargets.LambdaFunction(this.gmailWatchRenewer)],
     });
