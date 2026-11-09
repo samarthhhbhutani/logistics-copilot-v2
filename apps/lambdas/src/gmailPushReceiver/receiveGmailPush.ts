@@ -14,6 +14,7 @@ import type {
 import type { GmailMessageIdPublisher } from './gmailMessageIdPublisher.js';
 import { parseGmailPushNotification } from './gmailPushNotification.js';
 import type { PushTokenVerifier } from './pushTokenVerifier.js';
+import { log } from '../structuredLog.js';
 
 export interface GmailPushReceiverDependencies {
   pushTokenVerifier: PushTokenVerifier;
@@ -205,12 +206,4 @@ export function createGmailPushReceiver(
     });
     return NO_CONTENT;
   };
-}
-
-function log(
-  level: 'info' | 'warn' | 'error',
-  message: string,
-  fields: Record<string, unknown> = {},
-): void {
-  console[level](JSON.stringify({ message, ...fields }));
 }

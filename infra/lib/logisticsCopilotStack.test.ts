@@ -171,6 +171,30 @@ describe('LogisticsCopilotStack', () => {
     });
   });
 
+  it('email processor knows the bucket and the secret name, can read the secret and write the bucket', () => {
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      FunctionName: 'logistics-copilot-email-processor-staging',
+      Environment: {
+        Variables: Match.objectLike({
+          LAMBDA_ENV_SECRET_NAME: 'logistics-copilot/staging/lambda-env',
+          RAW_MAIL_BUCKET_NAME: Match.anyValue(),
+        }),
+      },
+    });
+    const processor = template.findResources('AWS::Lambda::Function', {
+      Properties: { FunctionName: 'logistics-copilot-email-processor-staging' },
+    });
+    expect(JSON.stringify(processor)).not.toMatch(/DATABASE_URL|TOKEN_ENCRYPTION_KEY/);
+    const processorPolicies = template.findResources('AWS::IAM::Policy', {
+      Properties: { PolicyName: Match.stringLikeRegexp('^EmailProcessor') },
+    });
+    const policyJson = JSON.stringify(processorPolicies);
+    expect(policyJson).toContain('secretsmanager:GetSecretValue');
+    expect(policyJson).toContain('s3:PutObject');
+    expect(policyJson).toContain('s3:GetObject');
+    expect(policyJson).not.toContain('s3:DeleteObject');
+  });
+
   it('Gmail push receiver has a public Function URL (Google OIDC is verified in code) and can enqueue', () => {
     template.hasResourceProperties('AWS::Lambda::Url', { AuthType: 'NONE' });
     const pushReceiverPolicies = template.findResources('AWS::IAM::Policy', {

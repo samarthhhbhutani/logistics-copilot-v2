@@ -11,7 +11,8 @@ const envSchema = z.object({
   /** Frontend origin the Gmail callback redirects back to. Unset in local dev: the callback answers JSON instead. */
   PORTAL_URL: z.url().optional(),
   AWS_REGION: z.string().default('ap-south-1'),
-  S3_BUCKET: z.string().optional(),
+  /** Where emailProcessor stores every fetched message as .eml (infra RawMailBucket). */
+  RAW_MAIL_BUCKET_NAME: z.string().min(1).optional(),
   /** Where the push receiver enqueues Gmail message ids for emailProcessor. */
   GMAIL_MESSAGE_ID_QUEUE_URL: z.url().optional(),
   OPENAI_API_KEY: z.string().min(1).optional(),

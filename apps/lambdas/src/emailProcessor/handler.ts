@@ -1,17 +1,50 @@
+import { S3Client } from '@aws-sdk/client-s3';
 import type { SQSBatchResponse, SQSEvent } from 'aws-lambda';
+import {
+  createEncryptionUtil,
+  createGoogleGmailMessages,
+  createPrismaEmailRepository,
+  createPrismaMailboxConnectionRepository,
+  createPrismaMailboxSyncRepository,
+  createPrismaTenantRepository,
+  initializePrismaClient,
+} from '@lc/core';
+import { loadLambdaConfig } from '../lambdaConfig.js';
+import { createGmailMessageProcessor } from './processGmailMessage.js';
+import type { GmailMessageProcessor } from './processGmailMessage.js';
+import { createS3RawMailStore } from './rawMailStore.js';
 
 /**
- * Drains the Gmail message-id queue. Shell: logs the ids and reports no failures so the messages
- * are deleted. The real handler (roadmap 1.4) fetches each message raw, stores the .eml in S3,
- * parses and classifies it, and reports per-message failures so only those return to the queue.
+ * Drains the Gmail message-id queue (one record per invocation, see infra). Composition root:
+ * built once per container, on the first invocation, so a failing secret fetch fails that
+ * invocation and is retried on the next.
  */
-export async function handler(event: SQSEvent): Promise<SQSBatchResponse> {
-  console.info(
-    JSON.stringify({
-      message: 'emailProcessor shell invoked',
-      messageIds: event.Records.map((record) => record.messageId),
-      bodies: event.Records.map((record) => record.body),
+let processorPromise: Promise<GmailMessageProcessor> | undefined;
+
+async function buildProcessor(): Promise<GmailMessageProcessor> {
+  const config = await loadLambdaConfig();
+  if (!config.TOKEN_ENCRYPTION_KEY) throw new Error('TOKEN_ENCRYPTION_KEY is required');
+  if (!config.RAW_MAIL_BUCKET_NAME) throw new Error('RAW_MAIL_BUCKET_NAME is required');
+  const prismaClient = initializePrismaClient(config, { maxConnections: 1 });
+  return createGmailMessageProcessor({
+    mailboxSyncRepository: createPrismaMailboxSyncRepository(prismaClient),
+    mailboxConnectionRepository: createPrismaMailboxConnectionRepository(prismaClient),
+    tenantRepository: createPrismaTenantRepository(prismaClient),
+    encryptionUtil: createEncryptionUtil(config.TOKEN_ENCRYPTION_KEY),
+    gmailMessages: createGoogleGmailMessages(),
+    rawMailStore: createS3RawMailStore({
+      s3Client: new S3Client({}),
+      bucketName: config.RAW_MAIL_BUCKET_NAME,
     }),
-  );
-  return { batchItemFailures: [] };
+    emailRepository: createPrismaEmailRepository(prismaClient),
+  });
+}
+
+export async function handler(event: SQSEvent): Promise<SQSBatchResponse> {
+  processorPromise ??= buildProcessor().catch((error: unknown) => {
+    processorPromise = undefined;
+    throw error;
+  });
+  const processor = await processorPromise;
+  return processor(event);
 }

@@ -41,9 +41,20 @@ const PRISMA_ENUM_BY_SNAKE_CASE_LABEL: Record<GmailLabel, PrismaGmailLabel> = {
   sent: 'SENT',
 };
 
+/**
+ * Postgres refuses the NUL character in text and jsonb columns; malformed mail (a mislabelled
+ * UTF-16 part, say) can carry one. Dropping it keeps the row insertable; the raw .eml is intact.
+ */
+function withoutNulCharacters(text: string): string {
+  return text.replaceAll('\u0000', '');
+}
+
 /** Prisma's Json input wants plain object literals; an interface type without an index signature is refused. */
 function toJsonAddresses(addresses: EmailAddress[]): { name: string; address: string }[] {
-  return addresses.map(({ name, address }) => ({ name, address }));
+  return addresses.map(({ name, address }) => ({
+    name: withoutNulCharacters(name),
+    address: withoutNulCharacters(address),
+  }));
 }
 
 export function createPrismaEmailRepository(prismaClient: PrismaClient): EmailRepository {
@@ -64,15 +75,15 @@ export function createPrismaEmailRepository(prismaClient: PrismaClient): EmailRe
           gmailMessageId: newEmail.gmailMessageId,
           gmailThreadId: newEmail.gmailThreadId,
           gmailLabel: PRISMA_ENUM_BY_SNAKE_CASE_LABEL[newEmail.gmailLabel],
-          rfcMessageId: newEmail.rfcMessageId ?? null,
-          senderName: newEmail.senderName,
-          senderEmail: newEmail.senderEmail ?? null,
+          rfcMessageId: newEmail.rfcMessageId ? withoutNulCharacters(newEmail.rfcMessageId) : null,
+          senderName: withoutNulCharacters(newEmail.senderName),
+          senderEmail: newEmail.senderEmail ? withoutNulCharacters(newEmail.senderEmail) : null,
           toRecipients: toJsonAddresses(newEmail.toRecipients),
           ccRecipients: toJsonAddresses(newEmail.ccRecipients),
-          subject: newEmail.subject,
-          snippet: newEmail.snippet,
-          bodyText: newEmail.bodyText,
-          bodyHtml: newEmail.bodyHtml ?? null,
+          subject: withoutNulCharacters(newEmail.subject),
+          snippet: withoutNulCharacters(newEmail.snippet),
+          bodyText: withoutNulCharacters(newEmail.bodyText),
+          bodyHtml: newEmail.bodyHtml ? withoutNulCharacters(newEmail.bodyHtml) : null,
           rawEmailS3Key: newEmail.rawEmailS3Key,
           receivedAt: newEmail.receivedAt,
         },
