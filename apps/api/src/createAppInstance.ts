@@ -3,6 +3,7 @@ import type { Express, NextFunction, Request, Response } from 'express';
 import cookieParser from 'cookie-parser';
 import type {
   AttachmentRepository,
+  ClassificationRuleRepository,
   Config,
   EmailRepository,
   GmailOAuth,
@@ -15,6 +16,7 @@ import type {
 import { createAuthRouter } from './auth/authRouter.js';
 import { createRequireSession, getSession } from './auth/requireSession.js';
 import type { AttachmentDownloadUrlSigner } from './emails/attachmentDownloadUrlSigner.js';
+import { createClassificationRulesRouter } from './classification/classificationRulesRouter.js';
 import { createAttachmentsRouter } from './emails/attachmentsRouter.js';
 import { createEmailsRouter } from './emails/emailsRouter.js';
 import { createGmailConnectionRouter } from './gmail/gmailConnectionRouter.js';
@@ -27,6 +29,7 @@ export interface AppDependencies {
   mailboxConnectionRepository: MailboxConnectionRepository;
   emailRepository: EmailRepository;
   attachmentRepository: AttachmentRepository;
+  classificationRuleRepository: ClassificationRuleRepository;
   /** Presigns S3 download links; undefined when no bucket is configured, so download links answer 503. */
   attachmentDownloadUrlSigner: AttachmentDownloadUrlSigner | undefined;
   /** Google OAuth operations; the real one in index.ts, an in-memory fake in tests. */
@@ -53,6 +56,7 @@ export function createAppInstance({
   mailboxConnectionRepository,
   emailRepository,
   attachmentRepository,
+  classificationRuleRepository,
   attachmentDownloadUrlSigner,
   gmailOAuth,
   gmailWatch,
@@ -99,6 +103,10 @@ export function createAppInstance({
   v1Router.use(
     '/mailbox/emails',
     createAttachmentsRouter({ attachmentRepository, attachmentDownloadUrlSigner, requireSession }),
+  );
+  v1Router.use(
+    '/mailbox/classification-rules',
+    createClassificationRulesRouter({ classificationRuleRepository, requireSession }),
   );
   // Feature routers mount here as they land: rfqs, agent.
   expressApp.use('/v1', v1Router);

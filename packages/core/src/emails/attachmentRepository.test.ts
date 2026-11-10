@@ -134,6 +134,12 @@ function createTransactionStub(emailAlreadyExists: boolean, attachmentError?: Er
         return { count: 1 };
       },
     },
+    classification: {
+      create: async (args: { data: unknown }) => {
+        calls.push({ model: 'classification', args });
+        return args.data;
+      },
+    },
   };
   const prismaClient = {
     $transaction: async (callback: (client: typeof transactionClient) => Promise<unknown>) =>
@@ -185,6 +191,39 @@ describe('createPrismaEmailRepository.insertEmailIfAbsent', () => {
     expect(await createPrismaEmailRepository(prismaClient).insertEmailIfAbsent(newEmail, [])).toBe(
       true,
     );
+    expect(calls.map((call) => call.model)).toEqual(['email']);
+  });
+
+  it('writes the rule classification in the same transaction, after the email and attachments', async () => {
+    const { prismaClient, calls } = createTransactionStub(false);
+
+    const inserted = await createPrismaEmailRepository(prismaClient).insertEmailIfAbsent(
+      newEmail,
+      [storedAttachment],
+      { label: 'customer_request', ruleId: 'rule-1' },
+    );
+
+    expect(inserted).toBe(true);
+    expect(calls.map((call) => call.model)).toEqual(['email', 'attachment', 'classification']);
+    expect(calls[2]!.args.data).toEqual({
+      tenantId: 'tenant-1',
+      emailId: DATABASE_GENERATED_EMAIL_ID,
+      label: 'CUSTOMER_REQUEST',
+      source: 'RULE',
+      ruleId: 'rule-1',
+    });
+  });
+
+  it('writes no classification when the email already existed, even if a rule matched', async () => {
+    const { prismaClient, calls } = createTransactionStub(true);
+
+    const inserted = await createPrismaEmailRepository(prismaClient).insertEmailIfAbsent(
+      newEmail,
+      [],
+      { label: 'customer_request', ruleId: 'rule-1' },
+    );
+
+    expect(inserted).toBe(false);
     expect(calls.map((call) => call.model)).toEqual(['email']);
   });
 

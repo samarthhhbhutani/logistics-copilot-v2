@@ -6,3 +6,4 @@ export * from './tenants/index.js';
 export * from './utils/index.js';
 export * from './connectors/index.js';
 export * from './emails/index.js';
+export * from './classification/index.js';

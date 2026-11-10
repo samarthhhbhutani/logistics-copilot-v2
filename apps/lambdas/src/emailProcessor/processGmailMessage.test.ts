@@ -1,6 +1,7 @@
 import type { SQSEvent, SQSRecord } from 'aws-lambda';
 import { GmailApiError, createEncryptionUtil } from '@lc/core';
 import type {
+  ClassificationRuleRepository,
   EmailRepository,
   GmailMessages,
   GmailRawMessage,
@@ -8,6 +9,8 @@ import type {
   MailboxForProcessing,
   MailboxSyncRepository,
   NewEmail,
+  ClassificationRule,
+  RuleClassification,
   StoredAttachment,
   TenantRepository,
 } from '@lc/core';
@@ -19,6 +22,7 @@ import type { AttachmentStore } from './attachmentStore.js';
 import type { RawMailStore } from './rawMailStore.js';
 
 const encryptionUtil = createEncryptionUtil(randomBytes(32).toString('base64'));
+const ruleState = { enabled: true, createdAt: new Date('2026-11-01T00:00:00Z') };
 
 const INBOUND_RAW = Buffer.from(
   [
@@ -116,6 +120,9 @@ function createTestProcessor(overrides: { mailbox?: Partial<MailboxForProcessing
     puts: [] as { key: string; bytes: number }[],
     putError: undefined as Error | undefined,
     insertedAttachments: [] as StoredAttachment[][],
+    insertedClassifications: [] as (RuleClassification | undefined)[],
+    classificationRules: [] as ClassificationRule[],
+    ruleLookups: [] as string[],
     attachmentPuts: [] as { key: string; bytes: number }[],
     attachmentPutError: undefined as Error | undefined,
     tenantHasClient: true,
@@ -176,10 +183,17 @@ function createTestProcessor(overrides: { mailbox?: Partial<MailboxForProcessing
     async emailExists(_scope, gmailMessageId) {
       return state.storedIds.has(gmailMessageId);
     },
-    async insertEmailIfAbsent(newEmail, attachments) {
+    async insertEmailIfAbsent(newEmail, attachments, ruleClassification) {
       state.inserted.push(newEmail);
       state.insertedAttachments.push(attachments);
+      state.insertedClassifications.push(ruleClassification);
       return state.insertResult;
+    },
+  };
+  const classificationRuleRepository: ClassificationRuleRepository = {
+    async listEnabledRules(tenantId) {
+      state.ruleLookups.push(tenantId);
+      return state.classificationRules;
     },
   };
   const attachmentStore: AttachmentStore = {
@@ -208,6 +222,7 @@ function createTestProcessor(overrides: { mailbox?: Partial<MailboxForProcessing
     rawMailStore,
     attachmentStore,
     emailRepository,
+    classificationRuleRepository,
   });
   return { process, state };
 }
@@ -264,6 +279,68 @@ describe('emailProcessor', () => {
       toRecipients: [{ name: '', address: 'vendor@sea.com' }],
       receivedAt: new Date('2026-11-09T04:31:00Z'),
     });
+  });
+
+  it('classifies inbound mail by the first tenant rule matching the sender, inside the insert', async () => {
+    const { process, state } = createTestProcessor();
+    state.classificationRules = [
+      {
+        id: 'rule-domain',
+        priority: 20,
+        senderPattern: 'acme.com',
+        label: 'general',
+        ...ruleState,
+      },
+      {
+        id: 'rule-address',
+        priority: 10,
+        senderPattern: 'ravi@acme.com',
+        label: 'customer_request',
+      },
+    ];
+
+    await process(sqsEvent(queueMessage));
+
+    expect(state.ruleLookups).toEqual(['tenant-1']);
+    expect(state.insertedClassifications).toEqual([
+      { ruleId: 'rule-address', label: 'customer_request' },
+    ]);
+  });
+
+  it('inserts without a classification when no rule matches the sender', async () => {
+    const { process, state } = createTestProcessor();
+    state.classificationRules = [
+      {
+        id: 'rule-other',
+        priority: 1,
+        senderPattern: 'other.com',
+        label: 'rate_card',
+        ...ruleState,
+      },
+    ];
+
+    await process(sqsEvent(queueMessage));
+
+    expect(state.insertedClassifications).toEqual([undefined]);
+  });
+
+  it('never runs rules for a SENT message', async () => {
+    const { process, state } = createTestProcessor();
+    state.fetchResult = { ...state.fetchResult, labelIds: ['SENT'] };
+    state.classificationRules = [
+      {
+        id: 'rule-domain',
+        priority: 1,
+        senderPattern: 'acme.com',
+        label: 'customer_request',
+        ...ruleState,
+      },
+    ];
+
+    await process(sqsEvent(queueMessage));
+
+    expect(state.ruleLookups).toEqual([]);
+    expect(state.insertedClassifications).toEqual([undefined]);
   });
 
   it('stores every attachment under the tenant by sha256 and inserts the rows with the email', async () => {

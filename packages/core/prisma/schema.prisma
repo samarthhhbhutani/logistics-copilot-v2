@@ -15,25 +15,27 @@ datasource db {
 /// A customer organisation: one logistics desk. The unit of data isolation; every row a desk
 /// owns carries its tenant_id and every query is scoped by it. Created once, with its first mailbox.
 model Tenant {
-  id                          String         @id @default(uuid()) @db.Uuid
+  id                          String               @id @default(uuid()) @db.Uuid
   name                        String
   /// The desk's own Google OAuth client, created in its Workspace project with an Internal consent
   /// screen (no verification, no 7-day token expiry). One per tenant; every mailbox consents
   /// through it. Secret encrypted with createSecretCipher. Null only for tenants created before
   /// this column existed; connect refuses them until an operator sets the client.
-  googleClientId              String?        @map("google_client_id")
-  encryptedGoogleClientSecret String?        @map("encrypted_google_client_secret")
+  googleClientId              String?              @map("google_client_id")
+  encryptedGoogleClientSecret String?              @map("encrypted_google_client_secret")
   /// Pub/Sub topic in the SAME Google project as the OAuth client (Gmail rejects any other project),
   /// `projects/<project>/topics/<topic>`; passed to users.watch for every mailbox of the tenant.
-  pubsubTopicName             String?        @map("pubsub_topic_name")
+  pubsubTopicName             String?              @map("pubsub_topic_name")
   /// Service account the tenant's push subscription signs deliveries with; the push receiver accepts
   /// only OIDC tokens whose email matches. Both null for tenants created before Pub/Sub onboarding.
-  pushServiceAccountEmail     String?        @map("push_service_account_email")
-  createdAt                   DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  pushServiceAccountEmail     String?              @map("push_service_account_email")
+  createdAt                   DateTime             @default(now()) @map("created_at") @db.Timestamptz
   mailboxes                   Mailbox[]
   logins                      MailboxLogin[]
   emails                      Email[]
   attachments                 Attachment[]
+  classificationRules         ClassificationRule[]
+  classifications             Classification[]
 
   @@map("tenants")
 }
@@ -108,31 +110,32 @@ enum GmailLabel {
 /// message lives in S3 at raw_email_s3_key; headers not stored here can be re-read from it.
 /// to_recipients / cc_recipients are EmailAddress[] ({ name, address }, address lowercased).
 model Email {
-  id             String       @id @default(uuid()) @db.Uuid
-  tenantId       String       @map("tenant_id") @db.Uuid
-  tenant         Tenant       @relation(fields: [tenantId], references: [id])
-  mailboxId      String       @map("mailbox_id") @db.Uuid
-  mailbox        Mailbox      @relation(fields: [mailboxId], references: [id])
-  gmailMessageId String       @map("gmail_message_id")
-  gmailThreadId  String       @map("gmail_thread_id")
-  gmailLabel     GmailLabel   @map("gmail_label")
+  id              String           @id @default(uuid()) @db.Uuid
+  tenantId        String           @map("tenant_id") @db.Uuid
+  tenant          Tenant           @relation(fields: [tenantId], references: [id])
+  mailboxId       String           @map("mailbox_id") @db.Uuid
+  mailbox         Mailbox          @relation(fields: [mailboxId], references: [id])
+  gmailMessageId  String           @map("gmail_message_id")
+  gmailThreadId   String           @map("gmail_thread_id")
+  gmailLabel      GmailLabel       @map("gmail_label")
   /// The Message-ID header; how our own sent RFQs are recognised when their SENT copy arrives.
-  rfcMessageId   String?      @map("rfc_message_id")
+  rfcMessageId    String?          @map("rfc_message_id")
   /// Empty string when the From header had only an address; null address when From was missing.
-  senderName     String       @map("sender_name")
-  senderEmail    String?      @map("sender_email")
-  toRecipients   Json         @map("to_recipients")
-  ccRecipients   Json         @map("cc_recipients")
-  subject        String
+  senderName      String           @map("sender_name")
+  senderEmail     String?          @map("sender_email")
+  toRecipients    Json             @map("to_recipients")
+  ccRecipients    Json             @map("cc_recipients")
+  subject         String
   /// Gmail's own short plain-text preview, for list views that must not load body_text.
-  snippet        String
-  bodyText       String       @map("body_text")
-  bodyHtml       String?      @map("body_html")
-  rawEmailS3Key  String       @map("raw_email_s3_key")
+  snippet         String
+  bodyText        String           @map("body_text")
+  bodyHtml        String?          @map("body_html")
+  rawEmailS3Key   String           @map("raw_email_s3_key")
   /// The Date header, or Gmail's internalDate when the header is missing or unparseable.
-  receivedAt     DateTime     @map("received_at") @db.Timestamptz
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz
-  attachments    Attachment[]
+  receivedAt      DateTime         @map("received_at") @db.Timestamptz
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  attachments     Attachment[]
+  classifications Classification[]
 
   @@unique([mailboxId, gmailMessageId])
   @@index([mailboxId, receivedAt])
@@ -164,4 +167,69 @@ model Attachment {
   @@index([emailId])
   @@index([tenantId, sha256])
   @@map("attachments")
+}
+
+/// What an inbound mail is for the desk. general = everything else; customer_request = a shipper
+/// asking for a quote (the RFQ entry point); rate_card = an unsolicited price list from a vendor.
+/// Vendor replies to RFQs we sent are linked by thread, not classified.
+enum ClassificationLabel {
+  GENERAL          @map("general")
+  CUSTOMER_REQUEST @map("customer_request")
+  RATE_CARD        @map("rate_card")
+
+  @@map("classification_label")
+}
+
+/// Who decided the label: a tenant rule, the LLM, or an operator correcting it in the portal.
+enum ClassificationSource {
+  RULE @map("rule")
+  LLM  @map("llm")
+  USER @map("user")
+
+  @@map("classification_source")
+}
+
+/// A tenant's deterministic classifier: "mail from this sender is this label". Rules run before
+/// any LLM, lowest priority value first; the first match wins. sender_pattern is compared
+/// case-insensitively against the sender address: a value containing "@" must equal the whole
+/// address, anything else must equal the domain after the "@". Disabled rules are kept, not deleted,
+/// so classifications.rule_id keeps pointing at what decided a label.
+model ClassificationRule {
+  id              String              @id @default(uuid()) @db.Uuid
+  tenantId        String              @map("tenant_id") @db.Uuid
+  tenant          Tenant              @relation(fields: [tenantId], references: [id])
+  priority        Int
+  senderPattern   String              @map("sender_pattern")
+  label           ClassificationLabel
+  enabled         Boolean             @default(true)
+  createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz
+  classifications Classification[]
+
+  @@unique([tenantId, senderPattern])
+  @@index([tenantId, enabled, priority])
+  @@map("classification_rules")
+}
+
+/// One labelling of one email. Append-only: a correction is a new row with source=user, and the
+/// current label is the newest row, so the history of who said what is kept. Rule rows carry
+/// rule_id (a rule with classifications cannot be deleted; disable it); LLM rows will carry
+/// llm_model, prompt_version and confidence.
+model Classification {
+  id            String               @id @default(uuid()) @db.Uuid
+  tenantId      String               @map("tenant_id") @db.Uuid
+  tenant        Tenant               @relation(fields: [tenantId], references: [id])
+  emailId       String               @map("email_id") @db.Uuid
+  email         Email                @relation(fields: [emailId], references: [id])
+  label         ClassificationLabel
+  source        ClassificationSource
+  ruleId        String?              @map("rule_id") @db.Uuid
+  rule          ClassificationRule?  @relation(fields: [ruleId], references: [id], onDelete: Restrict)
+  llmModel      String?              @map("llm_model")
+  promptVersion String?              @map("prompt_version")
+  confidence    Float?
+  classifiedAt  DateTime             @default(now()) @map("classified_at") @db.Timestamptz
+
+  @@index([emailId, classifiedAt(sort: Desc)])
+  @@index([tenantId])
+  @@map("classifications")
 }

@@ -134,6 +134,29 @@ bucket) and `RAW_MAIL_BUCKET_NAME`. Without the bucket variable, listing works a
 answer `503 attachments_unavailable`; local dev and tests need no AWS. Attachments are not sent to
 the LLM for classification (token cost); when that changes it will be a config switch, off by default.
 
+## Classification
+
+Every inbound mail gets a label: `general`, `customer_request` (a shipper asking for a quote, the RFQ
+entry point) or `rate_card` (an unsolicited vendor price list). Labels live in `classifications`,
+append-only: a correction is a new row with `source = user`, and the current label is the newest row,
+so who said what is kept. `sent` mail is never classified.
+
+Tenant rules run first and need no LLM. A `classification_rules` row says "mail from this sender is
+this label": `sender_pattern` is compared case-insensitively against the sender address; a value with
+an `@` must equal the whole address (`ravi@acme.com`), anything else must equal the domain after the
+`@` (`acme.com`; subdomains do not match). Lowest `priority` value wins, disabled rules are kept so
+`classifications.rule_id` stays meaningful. `emailProcessor` loads the tenant's enabled rules per
+mail, matches on the parsed `From` address and writes the classification in the same transaction as
+the email. No match leaves the mail unclassified for now; the LLM step fills that gap.
+
+Rules are tenant-wide; until admin gating lands, any signed-in mailbox of the tenant manages them. A
+tenant has at most one rule per pattern (409 `rule_exists`) and at most 200 rules (409 `too_many_rules`):
+
+| Route                                   | Does                                                                                                   |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `GET /v1/mailbox/classification-rules`  | every rule of the session tenant, disabled included, priority ascending                                |
+| `POST /v1/mailbox/classification-rules` | `{ senderPattern, label, priority? }` (priority defaults to 100); 201 with the stored, normalised rule |
+
 ## Database
 
 Supabase Postgres via Prisma 7 (engine-less client + `@prisma/adapter-pg`). Two projects,
