@@ -57,6 +57,25 @@ const DATELESS_RAW = Buffer.from(
   ),
 );
 
+/** A Gmail-style reply: the new line on top, the sender's name, then the quoted earlier message. */
+const REPLY_RAW = Buffer.from(
+  [
+    'From: Ravi Kumar <ravi@acme.com>',
+    'To: ops@desk.com',
+    'Subject: Re: RFQ Mumbai to Rotterdam',
+    'Date: Tue, 10 Nov 2026 10:00:00 +0530',
+    'Content-Type: text/plain; charset=utf-8',
+    '',
+    'Please share the BL draft.',
+    '',
+    'Ravi',
+    '',
+    'On Mon, 9 Nov 2026 at 10:00, Ops Desk <ops@desk.com> wrote:',
+    '> Need a quote for 2 x 40ft.',
+    '> Rates attached below.',
+  ].join('\r\n'),
+);
+
 const PDF_BYTES = Buffer.from('%PDF-1.4 fake rate card');
 const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -119,6 +138,8 @@ function createTestProcessor(
   };
   const state = {
     storedIds: new Set<string>(),
+    storedThreadIds: new Set<string>(),
+    threadLookups: [] as string[],
     inserted: [] as NewEmail[],
     insertResult: true,
     needsReconnect: false,
@@ -199,6 +220,10 @@ function createTestProcessor(
   const emailRepository: EmailRepository = {
     async emailExists(_scope, gmailMessageId) {
       return state.storedIds.has(gmailMessageId);
+    },
+    async threadHasStoredEmail(_scope, gmailThreadId) {
+      state.threadLookups.push(gmailThreadId);
+      return state.storedThreadIds.has(gmailThreadId);
     },
     async insertEmailIfAbsent(newEmail, attachments, classification) {
       state.inserted.push(newEmail);
@@ -385,6 +410,44 @@ describe('emailProcessor', () => {
       'rate-card.pdf',
     ]);
     expect(state.insertedClassifications).toEqual([LLM_CLASSIFIED.classification]);
+  });
+
+  it('stores and classifies only what the sender typed when the thread is already in the mailbox', async () => {
+    const { process, state } = createTestProcessor({ withClassifier: true });
+    state.fetchResult = { ...state.fetchResult, raw: new Uint8Array(REPLY_RAW) };
+    state.storedThreadIds.add('thread-1');
+
+    await process(sqsEvent(queueMessage));
+
+    expect(state.threadLookups).toEqual(['thread-1']);
+    expect(state.inserted[0]?.bodyText).toBe('Please share the BL draft.\n\nRavi');
+    expect(state.classifyCalls[0]?.bodyText).toBe('Please share the BL draft.\n\nRavi');
+  });
+
+  it('keeps the quoted history when the thread is new to the mailbox', async () => {
+    const { process, state } = createTestProcessor({ withClassifier: true });
+    state.fetchResult = { ...state.fetchResult, raw: new Uint8Array(REPLY_RAW) };
+
+    await process(sqsEvent(queueMessage));
+
+    expect(state.inserted[0]?.bodyText).toContain('Please share the BL draft.');
+    expect(state.inserted[0]?.bodyText).toContain('Need a quote for 2 x 40ft.');
+    expect(state.classifyCalls[0]?.bodyText).toContain('Need a quote for 2 x 40ft.');
+  });
+
+  it('strips a SENT reply the same way, since the desk quotes the customer too', async () => {
+    const { process, state } = createTestProcessor();
+    state.fetchResult = {
+      ...state.fetchResult,
+      raw: new Uint8Array(REPLY_RAW),
+      labelIds: ['SENT'],
+    };
+    state.storedThreadIds.add('thread-1');
+
+    await process(sqsEvent(queueMessage));
+
+    expect(state.threadLookups).toEqual(['thread-1']);
+    expect(state.inserted[0]?.bodyText).toBe('Please share the BL draft.\n\nRavi');
   });
 
   it('does not ask the model when a rule matched', async () => {

@@ -112,6 +112,15 @@ ever needed). `requireSession` guards every session-scoped route and exposes the
 `getSession(response)`. Persistence goes through `TenantRepository` and `MailboxCredentialsRepository`
 (`packages/core/src/{tenants,auth}`), so route tests run in memory and `index.ts` wires Prisma.
 
+## Stored body text
+
+`emails.body_text` is what the sender typed, not the whole message as sent. `emailProcessor` drops
+the signature always and, when the mailbox already holds a message of the same Gmail thread (inbox or
+sent), the quoted history too (`extractNewContent`): that history duplicates rows the thread view
+shows anyway. A thread new to us (started before the mailbox was connected, a reply-all that pulls us
+in) and a forward keep their quoted text, since it is the only copy we have. The classifier reads the
+same text. `body_html` and the `.eml` in S3 stay complete.
+
 ## Attachments
 
 `emailProcessor` stores every MIME part of a message as a file: bytes go to the raw-mail bucket under

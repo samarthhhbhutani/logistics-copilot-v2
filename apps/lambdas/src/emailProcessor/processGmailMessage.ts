@@ -1,5 +1,10 @@
 import type { SQSBatchResponse, SQSEvent, SQSRecord } from 'aws-lambda';
-import { matchClassificationRule, parseRawEmail, toGmailApiError } from '@lc/core';
+import {
+  extractNewContent,
+  matchClassificationRule,
+  parseRawEmail,
+  toGmailApiError,
+} from '@lc/core';
 import type {
   ClassificationRuleRepository,
   EmailClassification,
@@ -160,14 +165,24 @@ export function createGmailMessageProcessor(
     const rawEmailS3Key = await rawMailStore.putRawEmail(scope, gmailMessageId, fetched.raw);
     const parsedEmail = await parseRawEmail(fetched.raw);
     const gmailLabel = toGmailLabel(fetched.labelIds);
+    // What the sender typed is what we store and classify. The signature goes always; the quoted
+    // history goes when the mailbox already holds a message of this Gmail thread, because then it
+    // duplicates rows the thread view shows anyway. A thread new to us (started before the
+    // mailbox was connected, a reply-all pulling us in) and a forward keep their quoted text: it
+    // is the only copy we have. The raw .eml in S3 stays complete either way.
+    const quotedMessageKnown = await emailRepository.threadHasStoredEmail(scope, fetched.threadId);
+    const email: ParsedEmail = {
+      ...parsedEmail,
+      text: extractNewContent(parsedEmail.text, { quotedMessageKnown }),
+    };
     // Sequential: the parts are already in memory (postal-mime buffers them); this only bounds in-flight uploads.
     const storedAttachments: StoredAttachment[] = [];
-    for (const attachment of parsedEmail.attachments) {
+    for (const attachment of email.attachments) {
       storedAttachments.push(await attachmentStore.uploadAttachmentToS3(scope, attachment));
     }
     const classification =
       gmailLabel === 'inbox'
-        ? await classifyInboundEmail(parsedEmail, tenantId, isLastDelivery(record), context)
+        ? await classifyInboundEmail(email, tenantId, isLastDelivery(record), context)
         : undefined;
     if (classification === 'retry') return 'retry';
     const inserted = await emailRepository.insertEmailIfAbsent(
@@ -177,17 +192,17 @@ export function createGmailMessageProcessor(
         gmailMessageId,
         gmailThreadId: fetched.threadId,
         gmailLabel,
-        rfcMessageId: parsedEmail.messageId,
-        senderName: parsedEmail.from?.name ?? '',
-        senderEmail: parsedEmail.from?.address,
-        toRecipients: parsedEmail.to,
-        ccRecipients: parsedEmail.cc,
-        subject: parsedEmail.subject,
+        rfcMessageId: email.messageId,
+        senderName: email.from?.name ?? '',
+        senderEmail: email.from?.address,
+        toRecipients: email.to,
+        ccRecipients: email.cc,
+        subject: email.subject,
         snippet: fetched.snippet,
-        bodyText: parsedEmail.text,
-        bodyHtml: parsedEmail.html,
+        bodyText: email.text,
+        bodyHtml: email.html,
         rawEmailS3Key,
-        receivedAt: parsedEmail.date ?? fetched.internalDate,
+        receivedAt: email.date ?? fetched.internalDate,
       },
       storedAttachments,
       classification,
@@ -210,12 +225,12 @@ export function createGmailMessageProcessor(
    * rejected request also ends in, because a broken prompt must never lose mail.
    */
   async function classifyInboundEmail(
-    parsedEmail: ParsedEmail,
+    email: ParsedEmail,
     tenantId: string,
     lastDelivery: boolean,
     context: Record<string, string>,
   ): Promise<EmailClassification | 'retry' | undefined> {
-    const senderEmail = parsedEmail.from?.address;
+    const senderEmail = email.from?.address;
     const ruleMatch = matchClassificationRule(
       await classificationRuleRepository.listEnabledRules(tenantId),
       senderEmail,
@@ -223,11 +238,11 @@ export function createGmailMessageProcessor(
     if (ruleMatch) return { source: 'rule', label: ruleMatch.label, ruleId: ruleMatch.ruleId };
     if (!emailClassifier) return undefined;
     const result = await emailClassifier.classify({
-      senderName: parsedEmail.from?.name ?? '',
+      senderName: email.from?.name ?? '',
       senderEmail,
-      subject: parsedEmail.subject,
-      bodyText: parsedEmail.text,
-      attachments: parsedEmail.attachments,
+      subject: email.subject,
+      bodyText: email.text,
+      attachments: email.attachments,
     });
     switch (result.outcome) {
       case 'classified':
