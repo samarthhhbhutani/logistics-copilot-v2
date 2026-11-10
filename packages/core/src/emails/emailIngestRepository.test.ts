@@ -73,6 +73,29 @@ describe('findThreadContext', () => {
     });
   });
 
+  it('takes the newest row per message, so an operator correction (source USER) overrides what the model said', async () => {
+    const { prismaClient } = stubFindMany([
+      {
+        receivedAt: earlier,
+        // Prisma applies orderBy desc + take 1 server-side; the stub hands back what that returns: the user row.
+        classifications: [
+          {
+            label: 'CUSTOMER_REQUEST',
+            source: 'USER',
+            confidence: null,
+            classifiedAt: new Date('2026-11-10T11:30:00Z'),
+          },
+        ],
+      },
+    ]);
+    const context = await createPrismaEmailIngestRepository(prismaClient).findThreadContext(
+      scope,
+      '1a1c',
+      newMailReceivedAt,
+    );
+    expect(context.currentLabels).toEqual(['customer_request']);
+  });
+
   it('ignores the label of a message received after the new one, but still counts it as stored', async () => {
     const { prismaClient } = stubFindMany([
       {

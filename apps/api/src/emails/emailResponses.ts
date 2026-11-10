@@ -1,15 +1,19 @@
-import type { EmailDetail, EmailSummary } from '@lc/core';
-import type { EmailDetailResponse, EmailSummaryResponse } from '@lc/contract';
+import type { CurrentClassification, EmailDetail, EmailSummary } from '@lc/core';
+import type {
+  CurrentClassificationResponse,
+  EmailDetailResponse,
+  EmailSummaryResponse,
+} from '@lc/contract';
 
-function toCurrentClassificationResponse(classification: EmailSummary['classification']) {
-  return classification
-    ? {
-        label: classification.label,
-        source: classification.source,
-        confidence: classification.confidence,
-        classifiedAt: classification.classifiedAt.toISOString(),
-      }
-    : null;
+export function toCurrentClassificationResponse(
+  classification: CurrentClassification,
+): CurrentClassificationResponse {
+  return {
+    label: classification.label,
+    source: classification.source,
+    confidence: classification.confidence,
+    classifiedAt: classification.classifiedAt.toISOString(),
+  };
 }
 
 export function toEmailSummaryResponse(email: EmailSummary): EmailSummaryResponse {
@@ -22,7 +26,9 @@ export function toEmailSummaryResponse(email: EmailSummary): EmailSummaryRespons
     subject: email.subject,
     snippet: email.snippet,
     receivedAt: email.receivedAt.toISOString(),
-    classification: toCurrentClassificationResponse(email.classification),
+    classification: email.classification
+      ? toCurrentClassificationResponse(email.classification)
+      : null,
   };
 }
 

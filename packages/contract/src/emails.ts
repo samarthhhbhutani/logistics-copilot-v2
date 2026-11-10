@@ -49,6 +49,13 @@ export const listEmailsResponseSchema = z.object({
 export type ListEmailsResponse = z.infer<typeof listEmailsResponseSchema>;
 
 /**
+ * POST /v1/mailbox/emails/:emailId/classifications: an operator says what the mail is. Any label,
+ * customer_reply included; the "derived only" restriction is on rules and the model, not on people.
+ */
+export const appendClassificationBodySchema = z.object({ label: classificationLabelSchema });
+export type AppendClassificationBody = z.infer<typeof appendClassificationBodySchema>;
+
+/**
  * GET /v1/mailbox/emails/:emailId and each item of a thread. body_text is what the sender typed
  * (signature and, when the thread was already stored, quoted history removed); body_html is as sent.
  */
