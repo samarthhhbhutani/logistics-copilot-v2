@@ -59,6 +59,11 @@ export interface EmailRepository {
   /** Cheap check before fetching from Gmail: SQS redelivers, and a push can list an id twice. */
   emailExists(scope: MailboxScope, gmailMessageId: string): Promise<boolean>;
   /**
+   * True when this mailbox already holds a message of the Gmail thread (inbox or sent). Then the
+   * history a reply quotes duplicates stored rows and is dropped from the stored body.
+   */
+  threadHasStoredEmail(scope: MailboxScope, gmailThreadId: string): Promise<boolean>;
+  /**
    * Inserts the email, its attachment rows and (when a rule or the model decided) its
    * classification in one transaction, unless (mailbox_id, gmail_message_id) already exists; two processors racing on
    * the same id both succeed and exactly one email with one set of rows results. Returns false
@@ -155,6 +160,14 @@ export function createPrismaEmailRepository(prismaClient: PrismaClient): EmailRe
     async emailExists({ mailboxId, tenantId }, gmailMessageId) {
       const email = await prismaClient.email.findFirst({
         where: { mailboxId, tenantId, gmailMessageId },
+        select: { id: true },
+      });
+      return email !== null;
+    },
+
+    async threadHasStoredEmail({ mailboxId, tenantId }, gmailThreadId) {
+      const email = await prismaClient.email.findFirst({
+        where: { mailboxId, tenantId, gmailThreadId },
         select: { id: true },
       });
       return email !== null;

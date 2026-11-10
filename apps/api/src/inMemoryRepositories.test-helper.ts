@@ -122,6 +122,9 @@ export function createInMemoryRepositories(): {
       async emailExists() {
         throw new Error('not used by the API');
       },
+      async threadHasStoredEmail() {
+        throw new Error('not used by the API');
+      },
       async insertEmailIfAbsent() {
         throw new Error('not used by the API');
       },
