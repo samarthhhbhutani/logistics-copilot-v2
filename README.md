@@ -147,7 +147,22 @@ an `@` must equal the whole address (`ravi@acme.com`), anything else must equal 
 `@` (`acme.com`; subdomains do not match). Lowest `priority` value wins, disabled rules are kept so
 `classifications.rule_id` stays meaningful. `emailProcessor` loads the tenant's enabled rules per
 mail, matches on the parsed `From` address and writes the classification in the same transaction as
-the email. No match leaves the mail unclassified for now; the LLM step fills that gap.
+the email.
+
+When no rule matches, the model decides. `emailProcessor` sends the mail (sender, subject, attachment
+names, body truncated to 6000 characters) wrapped in `<email>` tags as untrusted data to OpenAI's
+Responses API (`MODEL_CLASSIFY`, structured output: label, confidence, one-line reason) and stores
+`source = llm` with `llm_model`, `prompt_version` (`classify-email-v1`) and `confidence`. The call
+runs before the attachment uploads; a 429, 5xx, timeout or connection failure returns the SQS record
+to the queue (three attempts, then the dead-letter queue), any other error stores the mail
+unclassified and logs, because a broken prompt must never lose mail. Without `OPENAI_API_KEY` the
+Lambda logs one warning at startup and stores unmatched mail unclassified.
+
+`LLM_CLASSIFY_INCLUDE_ATTACHMENTS` (default `false`) decides what the model sees. Off: the mail
+text only, attachments by name. On: PDF attachments go along as files and PNG/JPEG/GIF/WEBP ones as
+low-detail images, at most 5 files and 8 MiB per mail; inline images (`cid:` body decoration) and
+other types are still named only. The service never extracts attachment text itself. Both settings
+live in the `logistics-copilot/<stage>/lambda-env` secret or the Lambda environment.
 
 Rules are tenant-wide; until admin gating lands, any signed-in mailbox of the tenant manages them. A
 tenant has at most one rule per pattern (409 `rule_exists`) and at most 200 rules (409 `too_many_rules`):

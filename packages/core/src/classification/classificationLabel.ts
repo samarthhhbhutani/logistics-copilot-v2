@@ -4,7 +4,8 @@ import type {
 } from '../db/generated/client.js';
 
 /** What an inbound mail is for the desk; see the ClassificationLabel enum in schema.prisma. */
-export type ClassificationLabel = 'general' | 'customer_request' | 'rate_card';
+export const CLASSIFICATION_LABELS = ['general', 'customer_request', 'rate_card'] as const;
+export type ClassificationLabel = (typeof CLASSIFICATION_LABELS)[number];
 /** Who decided a label: a tenant rule, the LLM, or an operator correcting it. */
 export type ClassificationSource = 'rule' | 'llm' | 'user';
 

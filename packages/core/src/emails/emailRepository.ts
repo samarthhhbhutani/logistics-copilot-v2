@@ -8,7 +8,7 @@ import {
   PRISMA_LABEL_BY_CLASSIFICATION_LABEL,
   PRISMA_SOURCE_BY_CLASSIFICATION_SOURCE,
 } from '../classification/classificationLabel.js';
-import type { ClassificationLabel } from '../classification/classificationLabel.js';
+import type { EmailClassification } from '../classification/emailClassification.js';
 
 /** Which Gmail folder the message arrived in; snake_case like every other enum the API speaks. */
 export type GmailLabel = 'inbox' | 'sent';
@@ -53,27 +53,21 @@ export interface ListEmailsQuery {
   before?: EmailListPosition;
 }
 
-/** The label a tenant rule gave a mail at ingest; stored with the email so the two never disagree. */
-export interface RuleClassification {
-  label: ClassificationLabel;
-  ruleId: string;
-}
-
 export interface EmailRepository {
   /** The mailbox's mail, newest first. The tenant in the scope is the isolation check, the mailbox the display scope. */
   listEmails(scope: MailboxScope, query: ListEmailsQuery): Promise<EmailSummary[]>;
   /** Cheap check before fetching from Gmail: SQS redelivers, and a push can list an id twice. */
   emailExists(scope: MailboxScope, gmailMessageId: string): Promise<boolean>;
   /**
-   * Inserts the email, its attachment rows and (when a rule matched) its classification in one
-   * transaction, unless (mailbox_id, gmail_message_id) already exists; two processors racing on
+   * Inserts the email, its attachment rows and (when a rule or the model decided) its
+   * classification in one transaction, unless (mailbox_id, gmail_message_id) already exists; two processors racing on
    * the same id both succeed and exactly one email with one set of rows results. Returns false
    * when the row was there.
    */
   insertEmailIfAbsent(
     newEmail: NewEmail,
     attachments: StoredAttachment[],
-    ruleClassification?: RuleClassification,
+    classification?: EmailClassification,
   ): Promise<boolean>;
 }
 
@@ -166,7 +160,7 @@ export function createPrismaEmailRepository(prismaClient: PrismaClient): EmailRe
       return email !== null;
     },
 
-    async insertEmailIfAbsent(newEmail, attachments, ruleClassification) {
+    async insertEmailIfAbsent(newEmail, attachments, classification) {
       return prismaClient.$transaction(async (transaction) => {
         // ON CONFLICT DO NOTHING RETURNING id: an empty result means the row was already there.
         const inserted = await transaction.email.createManyAndReturn({
@@ -211,14 +205,20 @@ export function createPrismaEmailRepository(prismaClient: PrismaClient): EmailRe
             })),
           });
         }
-        if (ruleClassification) {
+        if (classification) {
           await transaction.classification.create({
             data: {
               tenantId: newEmail.tenantId,
               emailId,
-              label: PRISMA_LABEL_BY_CLASSIFICATION_LABEL[ruleClassification.label],
-              source: PRISMA_SOURCE_BY_CLASSIFICATION_SOURCE.rule,
-              ruleId: ruleClassification.ruleId,
+              label: PRISMA_LABEL_BY_CLASSIFICATION_LABEL[classification.label],
+              source: PRISMA_SOURCE_BY_CLASSIFICATION_SOURCE[classification.source],
+              ...(classification.source === 'rule'
+                ? { ruleId: classification.ruleId }
+                : {
+                    llmModel: classification.llmModel,
+                    promptVersion: classification.promptVersion,
+                    confidence: classification.confidence,
+                  }),
             },
           });
         }

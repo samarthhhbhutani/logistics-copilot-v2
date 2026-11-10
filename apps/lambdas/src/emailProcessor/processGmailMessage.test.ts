@@ -2,7 +2,11 @@ import type { SQSEvent, SQSRecord } from 'aws-lambda';
 import { GmailApiError, createEncryptionUtil } from '@lc/core';
 import type {
   ClassificationRuleRepository,
+  ClassifierOutcome,
+  EmailClassification,
+  EmailClassifier,
   EmailRepository,
+  EmailToClassify,
   GmailMessages,
   GmailRawMessage,
   MailboxConnectionRepository,
@@ -10,7 +14,6 @@ import type {
   MailboxSyncRepository,
   NewEmail,
   ClassificationRule,
-  RuleClassification,
   StoredAttachment,
   TenantRepository,
 } from '@lc/core';
@@ -23,6 +26,16 @@ import type { RawMailStore } from './rawMailStore.js';
 
 const encryptionUtil = createEncryptionUtil(randomBytes(32).toString('base64'));
 const ruleState = { enabled: true, createdAt: new Date('2026-11-01T00:00:00Z') };
+const LLM_CLASSIFIED: ClassifierOutcome = {
+  outcome: 'classified',
+  classification: {
+    source: 'llm',
+    label: 'rate_card',
+    confidence: 0.91,
+    llmModel: 'gpt-test',
+    promptVersion: 'classify-email-v1',
+  },
+};
 
 const INBOUND_RAW = Buffer.from(
   [
@@ -96,7 +109,9 @@ function sqsEvent(...bodies: (string | object)[]): SQSEvent {
 
 const queueMessage = { tenantId: 'tenant-1', mailboxId: 'mailbox-1', gmailMessageId: 'gm-1' };
 
-function createTestProcessor(overrides: { mailbox?: Partial<MailboxForProcessing> | null } = {}) {
+function createTestProcessor(
+  overrides: { mailbox?: Partial<MailboxForProcessing> | null; withClassifier?: boolean } = {},
+) {
   const mailbox: MailboxForProcessing = {
     gmailConnectionStatus: 'connected',
     encryptedRefreshToken: encryptionUtil.encryptSecret('refresh-token-1'),
@@ -120,9 +135,11 @@ function createTestProcessor(overrides: { mailbox?: Partial<MailboxForProcessing
     puts: [] as { key: string; bytes: number }[],
     putError: undefined as Error | undefined,
     insertedAttachments: [] as StoredAttachment[][],
-    insertedClassifications: [] as (RuleClassification | undefined)[],
+    insertedClassifications: [] as (EmailClassification | undefined)[],
     classificationRules: [] as ClassificationRule[],
     ruleLookups: [] as string[],
+    classifyCalls: [] as EmailToClassify[],
+    classifyOutcome: LLM_CLASSIFIED as ClassifierOutcome,
     attachmentPuts: [] as { key: string; bytes: number }[],
     attachmentPutError: undefined as Error | undefined,
     tenantHasClient: true,
@@ -183,11 +200,17 @@ function createTestProcessor(overrides: { mailbox?: Partial<MailboxForProcessing
     async emailExists(_scope, gmailMessageId) {
       return state.storedIds.has(gmailMessageId);
     },
-    async insertEmailIfAbsent(newEmail, attachments, ruleClassification) {
+    async insertEmailIfAbsent(newEmail, attachments, classification) {
       state.inserted.push(newEmail);
       state.insertedAttachments.push(attachments);
-      state.insertedClassifications.push(ruleClassification);
+      state.insertedClassifications.push(classification);
       return state.insertResult;
+    },
+  };
+  const emailClassifier: EmailClassifier = {
+    async classify(email) {
+      state.classifyCalls.push(email);
+      return state.classifyOutcome;
     },
   };
   const classificationRuleRepository: ClassificationRuleRepository = {
@@ -223,6 +246,7 @@ function createTestProcessor(overrides: { mailbox?: Partial<MailboxForProcessing
     attachmentStore,
     emailRepository,
     classificationRuleRepository,
+    emailClassifier: overrides.withClassifier ? emailClassifier : undefined,
   });
   return { process, state };
 }
@@ -296,6 +320,7 @@ describe('emailProcessor', () => {
         priority: 10,
         senderPattern: 'ravi@acme.com',
         label: 'customer_request',
+        ...ruleState,
       },
     ];
 
@@ -303,11 +328,11 @@ describe('emailProcessor', () => {
 
     expect(state.ruleLookups).toEqual(['tenant-1']);
     expect(state.insertedClassifications).toEqual([
-      { ruleId: 'rule-address', label: 'customer_request' },
+      { source: 'rule', ruleId: 'rule-address', label: 'customer_request' },
     ]);
   });
 
-  it('inserts without a classification when no rule matches the sender', async () => {
+  it('inserts without a classification when no rule matches and no classifier is configured', async () => {
     const { process, state } = createTestProcessor();
     state.classificationRules = [
       {
@@ -340,6 +365,89 @@ describe('emailProcessor', () => {
     await process(sqsEvent(queueMessage));
 
     expect(state.ruleLookups).toEqual([]);
+    expect(state.insertedClassifications).toEqual([undefined]);
+  });
+
+  it('asks the model when no rule matches and stores its label with model and prompt version', async () => {
+    const { process, state } = createTestProcessor({ withClassifier: true });
+    state.fetchResult = { ...state.fetchResult, raw: new Uint8Array(MULTIPART_RAW) };
+
+    expect(await process(sqsEvent(queueMessage))).toEqual({ batchItemFailures: [] });
+
+    expect(state.classifyCalls).toHaveLength(1);
+    expect(state.classifyCalls[0]).toMatchObject({
+      senderName: 'Ravi Kumar',
+      senderEmail: 'ravi@acme.com',
+      subject: 'Rate card',
+    });
+    expect(state.classifyCalls[0]?.attachments.map((attachment) => attachment.fileName)).toEqual([
+      'logo.png',
+      'rate-card.pdf',
+    ]);
+    expect(state.insertedClassifications).toEqual([LLM_CLASSIFIED.classification]);
+  });
+
+  it('does not ask the model when a rule matched', async () => {
+    const { process, state } = createTestProcessor({ withClassifier: true });
+    state.classificationRules = [
+      { id: 'rule-domain', priority: 1, senderPattern: 'acme.com', label: 'general', ...ruleState },
+    ];
+
+    await process(sqsEvent(queueMessage));
+
+    expect(state.classifyCalls).toEqual([]);
+    expect(state.insertedClassifications).toEqual([
+      { source: 'rule', ruleId: 'rule-domain', label: 'general' },
+    ]);
+  });
+
+  it('never asks the model about a SENT message', async () => {
+    const { process, state } = createTestProcessor({ withClassifier: true });
+    state.fetchResult = { ...state.fetchResult, labelIds: ['SENT'] };
+
+    await process(sqsEvent(queueMessage));
+
+    expect(state.classifyCalls).toEqual([]);
+    expect(state.insertedClassifications).toEqual([undefined]);
+  });
+
+  it('returns the record to the queue when the model is unavailable, without inserting', async () => {
+    const { process, state } = createTestProcessor({ withClassifier: true });
+    state.classifyOutcome = { outcome: 'retry', detail: '429 rate limited' };
+
+    expect(await process(sqsEvent(queueMessage))).toEqual({
+      batchItemFailures: [{ itemIdentifier: 'sqs-1' }],
+    });
+    expect(state.inserted).toEqual([]);
+  });
+
+  it('stores the mail unclassified instead of dead-lettering it when the model is unavailable on the last delivery', async () => {
+    const { process, state } = createTestProcessor({ withClassifier: true });
+    state.classifyOutcome = { outcome: 'retry', detail: '503 overloaded' };
+    const event = sqsEvent(queueMessage);
+    event.Records[0]!.attributes = { ApproximateReceiveCount: '3' } as SQSRecord['attributes'];
+
+    expect(await process(event)).toEqual({ batchItemFailures: [] });
+    expect(state.inserted).toHaveLength(1);
+    expect(state.insertedClassifications).toEqual([undefined]);
+  });
+
+  it('still retries on the second delivery', async () => {
+    const { process, state } = createTestProcessor({ withClassifier: true });
+    state.classifyOutcome = { outcome: 'retry', detail: '503 overloaded' };
+    const event = sqsEvent(queueMessage);
+    event.Records[0]!.attributes = { ApproximateReceiveCount: '2' } as SQSRecord['attributes'];
+
+    expect(await process(event)).toEqual({ batchItemFailures: [{ itemIdentifier: 'sqs-1' }] });
+    expect(state.inserted).toEqual([]);
+  });
+
+  it('stores the mail unclassified when the model rejects the request', async () => {
+    const { process, state } = createTestProcessor({ withClassifier: true });
+    state.classifyOutcome = { outcome: 'failed', detail: '400 invalid schema' };
+
+    expect(await process(sqsEvent(queueMessage))).toEqual({ batchItemFailures: [] });
+    expect(state.inserted).toHaveLength(1);
     expect(state.insertedClassifications).toEqual([undefined]);
   });
 
