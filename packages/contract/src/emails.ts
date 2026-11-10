@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { classificationLabelSchema, classificationSourceSchema } from './classificationRules.js';
 
 export const DEFAULT_EMAIL_PAGE_SIZE = 50;
 export const MAX_EMAIL_PAGE_SIZE = 100;
@@ -35,3 +36,33 @@ export const listEmailsResponseSchema = z.object({
   nextCursor: z.string().nullable(),
 });
 export type ListEmailsResponse = z.infer<typeof listEmailsResponseSchema>;
+
+/** The newest label of a mail and who decided it; null when nothing has classified it yet. */
+export const currentClassificationSchema = z.object({
+  label: classificationLabelSchema,
+  source: classificationSourceSchema,
+  /** The model's own estimate for llm rows; null for every other source. */
+  confidence: z.number().min(0).max(1).nullable(),
+  classifiedAt: z.iso.datetime(),
+});
+export type CurrentClassificationResponse = z.infer<typeof currentClassificationSchema>;
+
+/**
+ * GET /v1/mailbox/emails/:emailId and each item of a thread. body_text is what the sender typed
+ * (signature and, when the thread was already stored, quoted history removed); body_html is as sent.
+ */
+export const emailDetailSchema = emailSummarySchema.extend({
+  ccRecipients: z.array(z.object({ name: z.string(), address: z.string() })),
+  rfcMessageId: z.string().nullable(),
+  bodyText: z.string(),
+  bodyHtml: z.string().nullable(),
+  classification: currentClassificationSchema.nullable(),
+});
+export type EmailDetailResponse = z.infer<typeof emailDetailSchema>;
+
+/** GET /v1/mailbox/threads/:gmailThreadId: every stored message of the thread, inbox and sent, oldest first. */
+export const threadResponseSchema = z.object({
+  gmailThreadId: z.string(),
+  emails: z.array(emailDetailSchema),
+});
+export type ThreadResponse = z.infer<typeof threadResponseSchema>;

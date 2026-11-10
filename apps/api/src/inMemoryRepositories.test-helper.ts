@@ -5,6 +5,8 @@ import type {
   AttachmentSummary,
   ClassificationRule,
   ClassificationRuleRepository,
+  CurrentClassification,
+  EmailDetail,
   EmailRepository,
   EmailSummary,
   MailboxConnection,
@@ -24,8 +26,13 @@ export function createInMemoryRepositories(): {
   emailRepository: EmailRepository;
   attachmentRepository: AttachmentRepository;
   classificationRuleRepository: ClassificationRuleRepository;
-  /** Seeds the inbox list directly; the processor's insert path is not part of the API. */
-  addEmail(email: EmailSummary & { mailboxId: string; tenantId: string }): void;
+  /** Seeds the inbox list directly; the processor's insert path is not part of the API. Detail fields default to empty. */
+  addEmail(
+    email: EmailSummary &
+      Partial<Omit<EmailDetail, keyof EmailSummary>> & { mailboxId: string; tenantId: string },
+  ): void;
+  /** Sets the current classification of a seeded email. */
+  setClassification(emailId: string, classification: CurrentClassification): void;
   /** Seeds a stored file on a seeded email; tenantId is the row's own isolation column. */
   addAttachment(attachment: AttachmentSummary & { tenantId: string }): void;
 } {
@@ -33,7 +40,11 @@ export function createInMemoryRepositories(): {
   const pubsubPushByTenantId = new Map<string, TenantPubsubPush>();
   const credentialsByEmail = new Map<string, MailboxCredentials>();
   const connectionByMailboxId = new Map<string, MailboxConnection>();
-  const emails: (EmailSummary & { mailboxId: string; tenantId: string })[] = [];
+  const emails: (EmailDetail & { mailboxId: string; tenantId: string })[] = [];
+
+  function emailsInScope({ mailboxId, tenantId }: { mailboxId: string; tenantId: string }) {
+    return emails.filter((email) => email.mailboxId === mailboxId && email.tenantId === tenantId);
+  }
   const attachments: (AttachmentSummary & { tenantId: string })[] = [];
   const classificationRules: (ClassificationRule & { tenantId: string })[] = [];
 
@@ -122,8 +133,20 @@ export function createInMemoryRepositories(): {
       async emailExists() {
         throw new Error('not used by the API');
       },
-      async threadHasStoredEmail() {
+      async findThreadContext() {
         throw new Error('not used by the API');
+      },
+      async findEmail(scope, emailId) {
+        return emailsInScope(scope).find((email) => email.id === emailId);
+      },
+      async listThreadEmails(scope, gmailThreadId) {
+        return emailsInScope(scope)
+          .filter((email) => email.gmailThreadId === gmailThreadId)
+          .sort(
+            (left, right) =>
+              left.receivedAt.getTime() - right.receivedAt.getTime() ||
+              (left.id > right.id ? 1 : -1),
+          );
       },
       async insertEmailIfAbsent() {
         throw new Error('not used by the API');
@@ -172,7 +195,19 @@ export function createInMemoryRepositories(): {
       },
     },
     addEmail(email) {
-      emails.push(email);
+      emails.push({
+        ccRecipients: [],
+        rfcMessageId: null,
+        bodyText: '',
+        bodyHtml: null,
+        classification: null,
+        ...email,
+      });
+    },
+    setClassification(emailId, classification) {
+      const email = emails.find((candidate) => candidate.id === emailId);
+      if (!email) throw new Error(`no seeded email ${emailId}`);
+      email.classification = classification;
     },
     addAttachment(attachment) {
       attachments.push(attachment);

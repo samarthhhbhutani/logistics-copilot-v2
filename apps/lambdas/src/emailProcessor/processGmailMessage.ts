@@ -6,6 +6,7 @@ import {
   toGmailApiError,
 } from '@lc/core';
 import type {
+  ClassificationLabel,
   ClassificationRuleRepository,
   EmailClassification,
   EmailClassifier,
@@ -20,6 +21,7 @@ import type {
   ParsedEmail,
   StoredAttachment,
   TenantRepository,
+  ThreadContext,
 } from '@lc/core';
 import { parseGmailMessageIdQueueMessage } from '../gmailMessageIdQueueMessage.js';
 import type { GmailMessageIdQueueMessage } from '../gmailMessageIdQueueMessage.js';
@@ -51,6 +53,12 @@ export type GmailMessageProcessor = (event: SQSEvent) => Promise<SQSBatchRespons
 type RecordOutcome = 'done' | 'retry';
 
 const GMAIL_SENT_LABEL_ID = 'SENT';
+/**
+ * A thread holding a message with this label is a customer conversation; further inbound mail in it is the
+ * customer replying. Only the request counts, not an earlier derived reply, so relabelling the request (say to
+ * general) stops the chain instead of the replies keeping each other alive.
+ */
+const CUSTOMER_THREAD_LABEL: ClassificationLabel = 'customer_request';
 /** infra: the queue's deadLetterQueue.maxReceiveCount. On the last delivery a mail is stored rather than lost. */
 const QUEUE_MAX_RECEIVE_COUNT = 3;
 
@@ -170,10 +178,17 @@ export function createGmailMessageProcessor(
     // duplicates rows the thread view shows anyway. A thread new to us (started before the
     // mailbox was connected, a reply-all pulling us in) and a forward keep their quoted text: it
     // is the only copy we have. The raw .eml in S3 stays complete either way.
-    const quotedMessageKnown = await emailRepository.threadHasStoredEmail(scope, fetched.threadId);
+    const receivedAt = parsedEmail.date ?? fetched.internalDate;
+    const threadContext = await emailRepository.findThreadContext(
+      scope,
+      fetched.threadId,
+      receivedAt,
+    );
     const email: ParsedEmail = {
       ...parsedEmail,
-      text: extractNewContent(parsedEmail.text, { quotedMessageKnown }),
+      text: extractNewContent(parsedEmail.text, {
+        quotedMessageKnown: threadContext.hasStoredEmail,
+      }),
     };
     // Sequential: the parts are already in memory (postal-mime buffers them); this only bounds in-flight uploads.
     const storedAttachments: StoredAttachment[] = [];
@@ -182,7 +197,13 @@ export function createGmailMessageProcessor(
     }
     const classification =
       gmailLabel === 'inbox'
-        ? await classifyInboundEmail(email, tenantId, isLastDelivery(record), context)
+        ? await classifyInboundEmail(
+            email,
+            threadContext,
+            tenantId,
+            isLastDelivery(record),
+            context,
+          )
         : undefined;
     if (classification === 'retry') return 'retry';
     const inserted = await emailRepository.insertEmailIfAbsent(
@@ -202,7 +223,7 @@ export function createGmailMessageProcessor(
         bodyText: email.text,
         bodyHtml: email.html,
         rawEmailS3Key,
-        receivedAt: email.date ?? fetched.internalDate,
+        receivedAt,
       },
       storedAttachments,
       classification,
@@ -218,18 +239,24 @@ export function createGmailMessageProcessor(
   }
 
   /**
-   * Inbound mail only; what the desk sent is never a customer request. A tenant rule wins; the
-   * model is asked only when no rule matched and a key is configured. retry: the provider was
+   * Inbound mail only; what the desk sent is never a customer request. The thread decides first:
+   * a later inbound mail in a thread that already holds a customer_request is the customer
+   * replying, whatever a sender rule or the model would say. Then a tenant rule; the model is
+   * asked only when neither applied and a key is configured. retry: the provider was
    * unavailable, so the record goes back to the queue, except on its last delivery, when the mail
    * is stored unclassified rather than dead-lettered. Undefined: stored unclassified, which a
    * rejected request also ends in, because a broken prompt must never lose mail.
    */
   async function classifyInboundEmail(
     email: ParsedEmail,
+    threadContext: ThreadContext,
     tenantId: string,
     lastDelivery: boolean,
     context: Record<string, string>,
   ): Promise<EmailClassification | 'retry' | undefined> {
+    if (threadContext.currentLabels.includes(CUSTOMER_THREAD_LABEL)) {
+      return { source: 'thread', label: 'customer_reply' };
+    }
     const senderEmail = email.from?.address;
     const ruleMatch = matchClassificationRule(
       await classificationRuleRepository.listEnabledRules(tenantId),
@@ -289,18 +316,22 @@ export function createGmailMessageProcessor(
 }
 
 function toClassificationLogFields(classification: EmailClassification): Record<string, string> {
-  return classification.source === 'rule'
-    ? {
-        classificationLabel: classification.label,
-        classificationSource: classification.source,
-        classificationRuleId: classification.ruleId,
-      }
-    : {
-        classificationLabel: classification.label,
-        classificationSource: classification.source,
+  const common = {
+    classificationLabel: classification.label,
+    classificationSource: classification.source,
+  };
+  switch (classification.source) {
+    case 'thread':
+      return common;
+    case 'rule':
+      return { ...common, classificationRuleId: classification.ruleId };
+    case 'llm':
+      return {
+        ...common,
         classificationModel: classification.llmModel,
         classificationConfidence: classification.confidence.toFixed(2),
       };
+  }
 }
 
 /** True when returning this record would send it to the dead-letter queue instead of back to us. */

@@ -1,6 +1,7 @@
 import type { SQSEvent, SQSRecord } from 'aws-lambda';
 import { GmailApiError, createEncryptionUtil } from '@lc/core';
 import type {
+  ClassificationLabel,
   ClassificationRuleRepository,
   ClassifierOutcome,
   EmailClassification,
@@ -139,7 +140,13 @@ function createTestProcessor(
   const state = {
     storedIds: new Set<string>(),
     storedThreadIds: new Set<string>(),
-    threadLookups: [] as string[],
+    threadLabels: {} as Record<string, ClassificationLabel[]>,
+    /** The mailbox already holds the thread, its earlier messages carrying these current labels. */
+    storeThread(gmailThreadId: string, currentLabels: ClassificationLabel[]) {
+      state.storedThreadIds.add(gmailThreadId);
+      state.threadLabels[gmailThreadId] = currentLabels;
+    },
+    threadLookups: [] as { gmailThreadId: string; receivedBefore: Date }[],
     inserted: [] as NewEmail[],
     insertResult: true,
     needsReconnect: false,
@@ -221,9 +228,18 @@ function createTestProcessor(
     async emailExists(_scope, gmailMessageId) {
       return state.storedIds.has(gmailMessageId);
     },
-    async threadHasStoredEmail(_scope, gmailThreadId) {
-      state.threadLookups.push(gmailThreadId);
-      return state.storedThreadIds.has(gmailThreadId);
+    async findThreadContext(_scope, gmailThreadId, receivedBefore) {
+      state.threadLookups.push({ gmailThreadId, receivedBefore });
+      return {
+        hasStoredEmail: state.storedThreadIds.has(gmailThreadId),
+        currentLabels: state.threadLabels[gmailThreadId] ?? [],
+      };
+    },
+    async findEmail() {
+      throw new Error('not used by the processor');
+    },
+    async listThreadEmails() {
+      throw new Error('not used by the processor');
     },
     async insertEmailIfAbsent(newEmail, attachments, classification) {
       state.inserted.push(newEmail);
@@ -419,7 +435,10 @@ describe('emailProcessor', () => {
 
     await process(sqsEvent(queueMessage));
 
-    expect(state.threadLookups).toEqual(['thread-1']);
+    // The lookup is bounded by the mail's own Date header, so a later-arriving earlier mail cannot inherit from it.
+    expect(state.threadLookups).toEqual([
+      { gmailThreadId: 'thread-1', receivedBefore: new Date('2026-11-10T04:30:00Z') },
+    ]);
     expect(state.inserted[0]?.bodyText).toBe('Please share the BL draft.\n\nRavi');
     expect(state.classifyCalls[0]?.bodyText).toBe('Please share the BL draft.\n\nRavi');
   });
@@ -446,8 +465,70 @@ describe('emailProcessor', () => {
 
     await process(sqsEvent(queueMessage));
 
-    expect(state.threadLookups).toEqual(['thread-1']);
+    expect(state.threadLookups.map((lookup) => lookup.gmailThreadId)).toEqual(['thread-1']);
     expect(state.inserted[0]?.bodyText).toBe('Please share the BL draft.\n\nRavi');
+  });
+
+  it('bounds the thread lookup by internalDate when the mail has no Date header', async () => {
+    const { process, state } = createTestProcessor();
+    state.fetchResult = { ...state.fetchResult, raw: new Uint8Array(DATELESS_RAW) };
+
+    await process(sqsEvent(queueMessage));
+
+    expect(state.threadLookups[0]?.receivedBefore).toEqual(new Date('2026-11-09T04:31:00Z'));
+  });
+
+  it('labels a later inbound mail customer_reply when the thread already holds a customer_request, before rules and model', async () => {
+    const { process, state } = createTestProcessor({ withClassifier: true });
+    state.storeThread('thread-1', ['customer_request', 'general']);
+    state.classificationRules = [
+      { id: 'rule-domain', priority: 1, senderPattern: 'acme.com', label: 'general', ...ruleState },
+    ];
+
+    await process(sqsEvent(queueMessage));
+
+    expect(state.insertedClassifications).toEqual([{ source: 'thread', label: 'customer_reply' }]);
+    expect(state.ruleLookups).toEqual([]);
+    expect(state.classifyCalls).toEqual([]);
+  });
+
+  it('keeps labelling customer_reply as the thread goes on', async () => {
+    const { process, state } = createTestProcessor({ withClassifier: true });
+    state.storeThread('thread-1', ['customer_request', 'customer_reply']);
+
+    await process(sqsEvent(queueMessage));
+
+    expect(state.insertedClassifications).toEqual([{ source: 'thread', label: 'customer_reply' }]);
+  });
+
+  it('stops deriving once the request itself is no longer labelled customer_request, even if earlier replies are', async () => {
+    const { process, state } = createTestProcessor({ withClassifier: true });
+    state.storeThread('thread-1', ['general', 'customer_reply']);
+
+    await process(sqsEvent(queueMessage));
+
+    expect(state.classifyCalls).toHaveLength(1);
+    expect(state.insertedClassifications).toEqual([LLM_CLASSIFIED.classification]);
+  });
+
+  it('does not derive customer_reply from a thread labelled only general or rate_card', async () => {
+    const { process, state } = createTestProcessor({ withClassifier: true });
+    state.storeThread('thread-1', ['general', 'rate_card']);
+
+    await process(sqsEvent(queueMessage));
+
+    expect(state.classifyCalls).toHaveLength(1);
+    expect(state.insertedClassifications).toEqual([LLM_CLASSIFIED.classification]);
+  });
+
+  it('never derives customer_reply for a SENT message', async () => {
+    const { process, state } = createTestProcessor({ withClassifier: true });
+    state.fetchResult = { ...state.fetchResult, labelIds: ['SENT'] };
+    state.storeThread('thread-1', ['customer_request']);
+
+    await process(sqsEvent(queueMessage));
+
+    expect(state.insertedClassifications).toEqual([undefined]);
   });
 
   it('does not ask the model when a rule matched', async () => {

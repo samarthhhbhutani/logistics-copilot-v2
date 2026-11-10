@@ -1,7 +1,6 @@
 import express from 'express';
 import type { RequestHandler, Router } from 'express';
 import createHttpError from 'http-errors';
-import { z } from 'zod';
 import type { AttachmentRepository, AttachmentSummary } from '@lc/core';
 import type {
   AttachmentDownloadUrlResponse,
@@ -9,6 +8,7 @@ import type {
   ListAttachmentsResponse,
 } from '@lc/contract';
 import { getSession } from '../auth/requireSession.js';
+import { parseIdOr404 } from '../http/parseIdOr404.js';
 import type { AttachmentDownloadUrlSigner } from './attachmentDownloadUrlSigner.js';
 
 export interface AttachmentsRouterDependencies {
@@ -16,15 +16,6 @@ export interface AttachmentsRouterDependencies {
   /** Undefined when the API has no bucket configured (local dev, tests): listing works, download links answer 503. */
   attachmentDownloadUrlSigner: AttachmentDownloadUrlSigner | undefined;
   requireSession: RequestHandler;
-}
-
-const uuidSchema = z.uuid();
-
-/** A malformed id can match nothing, so it gets the same answer as an unknown one. */
-function parseIdOr404(value: unknown): string {
-  const result = uuidSchema.safeParse(value);
-  if (!result.success) throw createHttpError(404, 'not_found');
-  return result.data;
 }
 
 /**

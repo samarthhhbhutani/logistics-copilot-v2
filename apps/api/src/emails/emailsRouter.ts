@@ -2,11 +2,13 @@ import express from 'express';
 import type { RequestHandler, Router } from 'express';
 import createHttpError from 'http-errors';
 import { decodeEmailListCursor, encodeEmailListCursor } from '@lc/core';
-import type { EmailRepository, EmailSummary } from '@lc/core';
+import type { EmailRepository } from '@lc/core';
 import { listEmailsQuerySchema } from '@lc/contract';
-import type { EmailSummaryResponse, ListEmailsResponse } from '@lc/contract';
+import type { EmailDetailResponse, ListEmailsResponse } from '@lc/contract';
 import { getSession } from '../auth/requireSession.js';
+import { parseIdOr404 } from '../http/parseIdOr404.js';
 import { parseRequestQuery } from '../http/parseRequestQuery.js';
+import { toEmailDetailResponse, toEmailSummaryResponse } from './emailResponses.js';
 
 export interface EmailsRouterDependencies {
   emailRepository: EmailRepository;
@@ -16,10 +18,10 @@ export interface EmailsRouterDependencies {
 export { DEFAULT_EMAIL_PAGE_SIZE, MAX_EMAIL_PAGE_SIZE } from '@lc/contract';
 
 /**
- * The signed-in person's mail, newest first, mounted at /v1/mailbox/emails.
- *   GET /  ?limit=50&cursor=<opaque>&label=inbox|sent
- * The mailbox is the session's; tenantId rides along as the isolation check. Bodies are not
- * listed here (GET /:id, roadmap 3.1).
+ * The signed-in person's mail, mounted at /v1/mailbox/emails.
+ *   GET /            ?limit=50&cursor=<opaque>&label=inbox|sent   newest first, list fields only
+ *   GET /:emailId    one mail with bodies and its current classification; 404 outside the mailbox
+ * The mailbox is the session's; tenantId rides along as the isolation check.
  */
 export function createEmailsRouter({
   emailRepository,
@@ -52,18 +54,13 @@ export function createEmailsRouter({
     response.json(body);
   });
 
-  return router;
-}
+  router.get('/:emailId', requireSession, async (request, response) => {
+    const emailId = parseIdOr404(request.params.emailId);
+    const email = await emailRepository.findEmail(getSession(response), emailId);
+    if (!email) throw createHttpError(404, 'not_found');
+    const body: EmailDetailResponse = toEmailDetailResponse(email);
+    response.json(body);
+  });
 
-function toEmailSummaryResponse(email: EmailSummary): EmailSummaryResponse {
-  return {
-    id: email.id,
-    gmailThreadId: email.gmailThreadId,
-    gmailLabel: email.gmailLabel,
-    sender: { name: email.senderName, email: email.senderEmail },
-    toRecipients: email.toRecipients,
-    subject: email.subject,
-    snippet: email.snippet,
-    receivedAt: email.receivedAt.toISOString(),
-  };
+  return router;
 }

@@ -170,21 +170,26 @@ model Attachment {
 }
 
 /// What an inbound mail is for the desk. general = everything else; customer_request = a shipper
-/// asking for a quote (the RFQ entry point); rate_card = an unsolicited price list from a vendor.
-/// Vendor replies to RFQs we sent are linked by thread, not classified.
+/// asking for a quote or a booking (the RFQ entry point); customer_reply = a later inbound mail in
+/// a thread that already holds a customer_request, derived from the thread, never by rule or LLM;
+/// rate_card = an unsolicited price list from a vendor. Vendor replies to RFQs we sent are linked
+/// by thread, not classified.
 enum ClassificationLabel {
   GENERAL          @map("general")
   CUSTOMER_REQUEST @map("customer_request")
+  CUSTOMER_REPLY   @map("customer_reply")
   RATE_CARD        @map("rate_card")
 
   @@map("classification_label")
 }
 
-/// Who decided the label: a tenant rule, the LLM, or an operator correcting it in the portal.
+/// Who decided the label: the thread it arrived in (customer_reply), a tenant rule, the LLM, or an
+/// operator correcting it in the portal.
 enum ClassificationSource {
-  RULE @map("rule")
-  LLM  @map("llm")
-  USER @map("user")
+  THREAD @map("thread")
+  RULE   @map("rule")
+  LLM    @map("llm")
+  USER   @map("user")
 
   @@map("classification_source")
 }

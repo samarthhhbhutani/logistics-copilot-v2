@@ -200,6 +200,13 @@ describe('createOpenAiEmailClassifier', () => {
     expect(requests[0]).toMatchObject({ model: 'gpt-test', store: false, max_output_tokens: 1000 });
     const input = (requests[0] as { input: { content: unknown[] }[] }).input;
     expect(input[0]?.content).toHaveLength(1);
+    // customer_reply is derived from the thread, so the model is never offered it.
+    const labelSchema = (
+      requests[0] as {
+        text: { format: { schema: { properties: { label: { enum: string[] } } } } };
+      }
+    ).text.format.schema.properties.label;
+    expect(labelSchema.enum).toEqual(['general', 'customer_request', 'rate_card']);
   });
 
   it('attaches files to the request when the switch is on', async () => {

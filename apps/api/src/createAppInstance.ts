@@ -19,6 +19,7 @@ import type { AttachmentDownloadUrlSigner } from './emails/attachmentDownloadUrl
 import { createClassificationRulesRouter } from './classification/classificationRulesRouter.js';
 import { createAttachmentsRouter } from './emails/attachmentsRouter.js';
 import { createEmailsRouter } from './emails/emailsRouter.js';
+import { createThreadsRouter } from './emails/threadsRouter.js';
 import { createGmailConnectionRouter } from './gmail/gmailConnectionRouter.js';
 import { createTenantsRouter } from './tenants/tenantsRouter.js';
 
@@ -100,6 +101,7 @@ export function createAppInstance({
     }),
   );
   v1Router.use('/mailbox/emails', createEmailsRouter({ emailRepository, requireSession }));
+  v1Router.use('/mailbox/threads', createThreadsRouter({ emailRepository, requireSession }));
   v1Router.use(
     '/mailbox/emails',
     createAttachmentsRouter({ attachmentRepository, attachmentDownloadUrlSigner, requireSession }),
