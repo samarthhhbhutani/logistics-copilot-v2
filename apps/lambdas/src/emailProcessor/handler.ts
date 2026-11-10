@@ -3,6 +3,8 @@ import type { SQSBatchResponse, SQSEvent } from 'aws-lambda';
 import {
   createEncryptionUtil,
   createGoogleGmailMessages,
+  createOpenAiClient,
+  createOpenAiEmailClassifier,
   createPrismaClassificationRuleRepository,
   createPrismaEmailRepository,
   createPrismaMailboxConnectionRepository,
@@ -11,6 +13,7 @@ import {
   initializePrismaClient,
 } from '@lc/core';
 import { loadLambdaConfig } from '../lambdaConfig.js';
+import { log } from '../structuredLog.js';
 import { createS3AttachmentStore } from './attachmentStore.js';
 import { createGmailMessageProcessor } from './processGmailMessage.js';
 import type { GmailMessageProcessor } from './processGmailMessage.js';
@@ -29,6 +32,16 @@ async function buildProcessor(): Promise<GmailMessageProcessor> {
   if (!config.RAW_MAIL_BUCKET_NAME) throw new Error('RAW_MAIL_BUCKET_NAME is required');
   const prismaClient = initializePrismaClient(config, { maxConnections: 1 });
   const s3Client = new S3Client({});
+  const emailClassifier = config.OPENAI_API_KEY
+    ? createOpenAiEmailClassifier({
+        openAiClient: createOpenAiClient(config.OPENAI_API_KEY),
+        model: config.MODEL_CLASSIFY,
+        includeAttachments: config.LLM_CLASSIFY_INCLUDE_ATTACHMENTS,
+      })
+    : undefined;
+  if (!emailClassifier) {
+    log('warn', 'OPENAI_API_KEY not set: mail no rule matches is stored unclassified');
+  }
   return createGmailMessageProcessor({
     mailboxSyncRepository: createPrismaMailboxSyncRepository(prismaClient),
     mailboxConnectionRepository: createPrismaMailboxConnectionRepository(prismaClient),
@@ -39,6 +52,7 @@ async function buildProcessor(): Promise<GmailMessageProcessor> {
     attachmentStore: createS3AttachmentStore({ s3Client, bucketName: config.RAW_MAIL_BUCKET_NAME }),
     emailRepository: createPrismaEmailRepository(prismaClient),
     classificationRuleRepository: createPrismaClassificationRuleRepository(prismaClient),
+    emailClassifier,
   });
 }
 

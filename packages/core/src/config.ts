@@ -15,8 +15,11 @@ const envSchema = z.object({
   RAW_MAIL_BUCKET_NAME: z.string().min(1).optional(),
   /** Where the push receiver enqueues Gmail message ids for emailProcessor. */
   GMAIL_MESSAGE_ID_QUEUE_URL: z.url().optional(),
+  /** Unset: the LLM classifier is off and unmatched inbound mail stays unclassified. */
   OPENAI_API_KEY: z.string().min(1).optional(),
   MODEL_CLASSIFY: z.string().default('gpt-6-luna'),
+  /** Send PDF and image attachments to the classifier along with the mail. Off: mail text only (token cost). */
+  LLM_CLASSIFY_INCLUDE_ATTACHMENTS: z.stringbool().default(false),
   MODEL_AGENT: z.string().default('gpt-6.1-sol'),
   PORT: z.coerce.number().int().positive().default(8080),
   /** HMAC key for session JWTs (API only). Generate: openssl rand -base64 48 */

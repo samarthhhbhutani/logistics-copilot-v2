@@ -200,7 +200,7 @@ describe('createPrismaEmailRepository.insertEmailIfAbsent', () => {
     const inserted = await createPrismaEmailRepository(prismaClient).insertEmailIfAbsent(
       newEmail,
       [storedAttachment],
-      { label: 'customer_request', ruleId: 'rule-1' },
+      { source: 'rule', label: 'customer_request', ruleId: 'rule-1' },
     );
 
     expect(inserted).toBe(true);
@@ -214,13 +214,41 @@ describe('createPrismaEmailRepository.insertEmailIfAbsent', () => {
     });
   });
 
+  it('writes an LLM classification with model, prompt version and confidence, no rule', async () => {
+    const { prismaClient, calls } = createTransactionStub(false);
+
+    const inserted = await createPrismaEmailRepository(prismaClient).insertEmailIfAbsent(
+      newEmail,
+      [],
+      {
+        source: 'llm',
+        label: 'rate_card',
+        confidence: 0.87,
+        llmModel: 'gpt-test-2026',
+        promptVersion: 'classify-email-v1',
+      },
+    );
+
+    expect(inserted).toBe(true);
+    expect(calls.map((call) => call.model)).toEqual(['email', 'classification']);
+    expect(calls[1]!.args.data).toEqual({
+      tenantId: 'tenant-1',
+      emailId: DATABASE_GENERATED_EMAIL_ID,
+      label: 'RATE_CARD',
+      source: 'LLM',
+      llmModel: 'gpt-test-2026',
+      promptVersion: 'classify-email-v1',
+      confidence: 0.87,
+    });
+  });
+
   it('writes no classification when the email already existed, even if a rule matched', async () => {
     const { prismaClient, calls } = createTransactionStub(true);
 
     const inserted = await createPrismaEmailRepository(prismaClient).insertEmailIfAbsent(
       newEmail,
       [],
-      { label: 'customer_request', ruleId: 'rule-1' },
+      { source: 'rule', label: 'customer_request', ruleId: 'rule-1' },
     );
 
     expect(inserted).toBe(false);

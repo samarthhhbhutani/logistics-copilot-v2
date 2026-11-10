@@ -2,6 +2,8 @@ import type { SQSBatchResponse, SQSEvent, SQSRecord } from 'aws-lambda';
 import { matchClassificationRule, parseRawEmail, toGmailApiError } from '@lc/core';
 import type {
   ClassificationRuleRepository,
+  EmailClassification,
+  EmailClassifier,
   EmailRepository,
   EncryptionUtil,
   GmailLabel,
@@ -10,6 +12,7 @@ import type {
   MailboxConnectionRepository,
   MailboxScope,
   MailboxSyncRepository,
+  ParsedEmail,
   StoredAttachment,
   TenantRepository,
 } from '@lc/core';
@@ -29,6 +32,8 @@ export interface GmailMessageProcessorDependencies {
   attachmentStore: AttachmentStore;
   emailRepository: EmailRepository;
   classificationRuleRepository: ClassificationRuleRepository;
+  /** Undefined when no OPENAI_API_KEY is configured: mail no rule matches is stored unclassified. */
+  emailClassifier: EmailClassifier | undefined;
 }
 
 export type GmailMessageProcessor = (event: SQSEvent) => Promise<SQSBatchResponse>;
@@ -41,12 +46,15 @@ export type GmailMessageProcessor = (event: SQSEvent) => Promise<SQSBatchRespons
 type RecordOutcome = 'done' | 'retry';
 
 const GMAIL_SENT_LABEL_ID = 'SENT';
+/** infra: the queue's deadLetterQueue.maxReceiveCount. On the last delivery a mail is stored rather than lost. */
+const QUEUE_MAX_RECEIVE_COUNT = 3;
 
 /**
  * One SQS record = one Gmail message to ingest: check it is not already stored, fetch it raw,
- * keep the bytes in S3, parse, store each attachment, insert. The unique (mailbox_id,
- * gmail_message_id) index makes a duplicate or a racing twin a no-op, and attachment objects are
- * content-addressed, so every step before the insert may safely run twice.
+ * keep the bytes in S3, parse, store each attachment, classify (tenant rule first, then the
+ * model), insert. The unique (mailbox_id, gmail_message_id) index makes a duplicate or a racing
+ * twin a no-op, and attachment objects are content-addressed, so every step before the insert may
+ * safely run twice; the model call is the costly one, so it comes last.
  */
 export function createGmailMessageProcessor(
   dependencies: GmailMessageProcessorDependencies,
@@ -61,6 +69,7 @@ export function createGmailMessageProcessor(
     attachmentStore,
     emailRepository,
     classificationRuleRepository,
+    emailClassifier,
   } = dependencies;
 
   /** Undefined when this mailbox cannot be fetched from now; the reason is logged and the record is done. */
@@ -151,20 +160,16 @@ export function createGmailMessageProcessor(
     const rawEmailS3Key = await rawMailStore.putRawEmail(scope, gmailMessageId, fetched.raw);
     const parsedEmail = await parseRawEmail(fetched.raw);
     const gmailLabel = toGmailLabel(fetched.labelIds);
-    // Tenant rules decide inbound mail only; what the desk sent is never a customer request.
-    // Matched before the uploads so a failing rules query retries without re-sending bytes.
-    const ruleClassification =
-      gmailLabel === 'inbox'
-        ? matchClassificationRule(
-            await classificationRuleRepository.listEnabledRules(tenantId),
-            parsedEmail.from?.address,
-          )
-        : undefined;
     // Sequential: the parts are already in memory (postal-mime buffers them); this only bounds in-flight uploads.
     const storedAttachments: StoredAttachment[] = [];
     for (const attachment of parsedEmail.attachments) {
       storedAttachments.push(await attachmentStore.uploadAttachmentToS3(scope, attachment));
     }
+    const classification =
+      gmailLabel === 'inbox'
+        ? await classifyInboundEmail(parsedEmail, tenantId, isLastDelivery(record), context)
+        : undefined;
+    if (classification === 'retry') return 'retry';
     const inserted = await emailRepository.insertEmailIfAbsent(
       {
         tenantId,
@@ -185,21 +190,68 @@ export function createGmailMessageProcessor(
         receivedAt: parsedEmail.date ?? fetched.internalDate,
       },
       storedAttachments,
-      ruleClassification,
+      classification,
     );
     log('info', inserted ? 'message stored' : 'message skipped: stored by a concurrent run', {
       ...context,
       rawEmailS3Key,
       sizeBytes: fetched.raw.byteLength,
       attachmentCount: storedAttachments.length,
-      ...(inserted && ruleClassification
-        ? {
-            classificationLabel: ruleClassification.label,
-            classificationRuleId: ruleClassification.ruleId,
-          }
-        : {}),
+      ...(inserted && classification ? toClassificationLogFields(classification) : {}),
     });
     return 'done';
+  }
+
+  /**
+   * Inbound mail only; what the desk sent is never a customer request. A tenant rule wins; the
+   * model is asked only when no rule matched and a key is configured. retry: the provider was
+   * unavailable, so the record goes back to the queue, except on its last delivery, when the mail
+   * is stored unclassified rather than dead-lettered. Undefined: stored unclassified, which a
+   * rejected request also ends in, because a broken prompt must never lose mail.
+   */
+  async function classifyInboundEmail(
+    parsedEmail: ParsedEmail,
+    tenantId: string,
+    lastDelivery: boolean,
+    context: Record<string, string>,
+  ): Promise<EmailClassification | 'retry' | undefined> {
+    const senderEmail = parsedEmail.from?.address;
+    const ruleMatch = matchClassificationRule(
+      await classificationRuleRepository.listEnabledRules(tenantId),
+      senderEmail,
+    );
+    if (ruleMatch) return { source: 'rule', label: ruleMatch.label, ruleId: ruleMatch.ruleId };
+    if (!emailClassifier) return undefined;
+    const result = await emailClassifier.classify({
+      senderName: parsedEmail.from?.name ?? '',
+      senderEmail,
+      subject: parsedEmail.subject,
+      bodyText: parsedEmail.text,
+      attachments: parsedEmail.attachments,
+    });
+    switch (result.outcome) {
+      case 'classified':
+        return result.classification;
+      case 'retry':
+        if (lastDelivery) {
+          log('error', 'classifier unavailable on the last delivery, message stored unclassified', {
+            ...context,
+            detail: result.detail,
+          });
+          return undefined;
+        }
+        log('warn', 'classifier unavailable, record returned to the queue', {
+          ...context,
+          detail: result.detail,
+        });
+        return 'retry';
+      case 'failed':
+        log('error', 'classification failed, message stored unclassified', {
+          ...context,
+          detail: result.detail,
+        });
+        return undefined;
+    }
   }
 
   return async (event) => {
@@ -219,6 +271,27 @@ export function createGmailMessageProcessor(
     }
     return { batchItemFailures };
   };
+}
+
+function toClassificationLogFields(classification: EmailClassification): Record<string, string> {
+  return classification.source === 'rule'
+    ? {
+        classificationLabel: classification.label,
+        classificationSource: classification.source,
+        classificationRuleId: classification.ruleId,
+      }
+    : {
+        classificationLabel: classification.label,
+        classificationSource: classification.source,
+        classificationModel: classification.llmModel,
+        classificationConfidence: classification.confidence.toFixed(2),
+      };
+}
+
+/** True when returning this record would send it to the dead-letter queue instead of back to us. */
+function isLastDelivery(record: SQSRecord): boolean {
+  const receiveCount = Number(record.attributes?.ApproximateReceiveCount);
+  return Number.isFinite(receiveCount) && receiveCount >= QUEUE_MAX_RECEIVE_COUNT;
 }
 
 /** The watch covers INBOX and SENT only, so anything without SENT arrived in the inbox. */
