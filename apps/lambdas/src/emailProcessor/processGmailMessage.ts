@@ -10,7 +10,7 @@ import type {
   ClassificationRuleRepository,
   EmailClassification,
   EmailClassifier,
-  EmailRepository,
+  EmailIngestRepository,
   EncryptionUtil,
   GmailLabel,
   GmailMessages,
@@ -37,7 +37,7 @@ export interface GmailMessageProcessorDependencies {
   gmailMessages: GmailMessages;
   rawMailStore: RawMailStore;
   attachmentStore: AttachmentStore;
-  emailRepository: EmailRepository;
+  emailIngestRepository: EmailIngestRepository;
   classificationRuleRepository: ClassificationRuleRepository;
   /** Undefined when no OPENAI_API_KEY is configured: mail no rule matches is stored unclassified. */
   emailClassifier: EmailClassifier | undefined;
@@ -80,7 +80,7 @@ export function createGmailMessageProcessor(
     gmailMessages,
     rawMailStore,
     attachmentStore,
-    emailRepository,
+    emailIngestRepository,
     classificationRuleRepository,
     emailClassifier,
   } = dependencies;
@@ -160,7 +160,7 @@ export function createGmailMessageProcessor(
     const scope: MailboxScope = { tenantId, mailboxId };
     const context = { tenantId, mailboxId, gmailMessageId };
 
-    if (await emailRepository.emailExists(scope, gmailMessageId)) {
+    if (await emailIngestRepository.emailExists(scope, gmailMessageId)) {
       log('info', 'message skipped: already stored', context);
       return 'done';
     }
@@ -179,7 +179,7 @@ export function createGmailMessageProcessor(
     // mailbox was connected, a reply-all pulling us in) and a forward keep their quoted text: it
     // is the only copy we have. The raw .eml in S3 stays complete either way.
     const receivedAt = parsedEmail.date ?? fetched.internalDate;
-    const threadContext = await emailRepository.findThreadContext(
+    const threadContext = await emailIngestRepository.findThreadContext(
       scope,
       fetched.threadId,
       receivedAt,
@@ -206,7 +206,7 @@ export function createGmailMessageProcessor(
           )
         : undefined;
     if (classification === 'retry') return 'retry';
-    const inserted = await emailRepository.insertEmailIfAbsent(
+    const inserted = await emailIngestRepository.insertEmailIfAbsent(
       {
         tenantId,
         mailboxId,

@@ -6,7 +6,7 @@ import {
   createOpenAiClient,
   createOpenAiEmailClassifier,
   createPrismaClassificationRuleRepository,
-  createPrismaEmailRepository,
+  createPrismaEmailIngestRepository,
   createPrismaMailboxConnectionRepository,
   createPrismaMailboxSyncRepository,
   createPrismaTenantRepository,
@@ -50,7 +50,7 @@ async function buildProcessor(): Promise<GmailMessageProcessor> {
     gmailMessages: createGoogleGmailMessages(),
     rawMailStore: createS3RawMailStore({ s3Client, bucketName: config.RAW_MAIL_BUCKET_NAME }),
     attachmentStore: createS3AttachmentStore({ s3Client, bucketName: config.RAW_MAIL_BUCKET_NAME }),
-    emailRepository: createPrismaEmailRepository(prismaClient),
+    emailIngestRepository: createPrismaEmailIngestRepository(prismaClient),
     classificationRuleRepository: createPrismaClassificationRuleRepository(prismaClient),
     emailClassifier,
   });

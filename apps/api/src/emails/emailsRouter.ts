@@ -2,7 +2,7 @@ import express from 'express';
 import type { RequestHandler, Router } from 'express';
 import createHttpError from 'http-errors';
 import { decodeEmailListCursor, encodeEmailListCursor } from '@lc/core';
-import type { EmailRepository } from '@lc/core';
+import type { EmailReadRepository } from '@lc/core';
 import { listEmailsQuerySchema } from '@lc/contract';
 import type { EmailDetailResponse, ListEmailsResponse } from '@lc/contract';
 import { getSession } from '../auth/requireSession.js';
@@ -11,7 +11,7 @@ import { parseRequestQuery } from '../http/parseRequestQuery.js';
 import { toEmailDetailResponse, toEmailSummaryResponse } from './emailResponses.js';
 
 export interface EmailsRouterDependencies {
-  emailRepository: EmailRepository;
+  emailReadRepository: EmailReadRepository;
   requireSession: RequestHandler;
 }
 
@@ -24,7 +24,7 @@ export { DEFAULT_EMAIL_PAGE_SIZE, MAX_EMAIL_PAGE_SIZE } from '@lc/contract';
  * The mailbox is the session's; tenantId rides along as the isolation check.
  */
 export function createEmailsRouter({
-  emailRepository,
+  emailReadRepository,
   requireSession,
 }: EmailsRouterDependencies): Router {
   const router = express.Router();
@@ -35,7 +35,7 @@ export function createEmailsRouter({
     if (cursor && !before) throw createHttpError(400, 'invalid_cursor');
 
     const session = getSession(response);
-    const rows = await emailRepository.listEmails(session, {
+    const rows = await emailReadRepository.listEmails(session, {
       limit: limit + 1,
       gmailLabel: label,
       before,
@@ -56,7 +56,7 @@ export function createEmailsRouter({
 
   router.get('/:emailId', requireSession, async (request, response) => {
     const emailId = parseIdOr404(request.params.emailId);
-    const email = await emailRepository.findEmail(getSession(response), emailId);
+    const email = await emailReadRepository.findEmail(getSession(response), emailId);
     if (!email) throw createHttpError(404, 'not_found');
     const body: EmailDetailResponse = toEmailDetailResponse(email);
     response.json(body);

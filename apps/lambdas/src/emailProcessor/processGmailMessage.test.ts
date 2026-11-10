@@ -6,7 +6,7 @@ import type {
   ClassifierOutcome,
   EmailClassification,
   EmailClassifier,
-  EmailRepository,
+  EmailIngestRepository,
   EmailToClassify,
   GmailMessages,
   GmailRawMessage,
@@ -224,7 +224,7 @@ function createTestProcessor(
       return key;
     },
   };
-  const emailRepository: EmailRepository = {
+  const emailIngestRepository: EmailIngestRepository = {
     async emailExists(_scope, gmailMessageId) {
       return state.storedIds.has(gmailMessageId);
     },
@@ -234,12 +234,6 @@ function createTestProcessor(
         hasStoredEmail: state.storedThreadIds.has(gmailThreadId),
         currentLabels: state.threadLabels[gmailThreadId] ?? [],
       };
-    },
-    async findEmail() {
-      throw new Error('not used by the processor');
-    },
-    async listThreadEmails() {
-      throw new Error('not used by the processor');
     },
     async insertEmailIfAbsent(newEmail, attachments, classification) {
       state.inserted.push(newEmail);
@@ -285,7 +279,7 @@ function createTestProcessor(
     gmailMessages,
     rawMailStore,
     attachmentStore,
-    emailRepository,
+    emailIngestRepository,
     classificationRuleRepository,
     emailClassifier: overrides.withClassifier ? emailClassifier : undefined,
   });
