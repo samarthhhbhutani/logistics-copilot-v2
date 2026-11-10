@@ -7,7 +7,7 @@ import type {
   ClassificationRuleRepository,
   CurrentClassification,
   EmailDetail,
-  EmailRepository,
+  EmailReadRepository,
   EmailSummary,
   MailboxConnection,
   MailboxConnectionRepository,
@@ -23,7 +23,7 @@ export function createInMemoryRepositories(): {
   tenantRepository: TenantRepository;
   mailboxCredentialsRepository: MailboxCredentialsRepository;
   mailboxConnectionRepository: MailboxConnectionRepository;
-  emailRepository: EmailRepository;
+  emailReadRepository: EmailReadRepository;
   attachmentRepository: AttachmentRepository;
   classificationRuleRepository: ClassificationRuleRepository;
   /** Seeds the inbox list directly; the processor's insert path is not part of the API. Detail fields default to empty. */
@@ -112,7 +112,7 @@ export function createInMemoryRepositories(): {
         return credentials;
       },
     },
-    emailRepository: {
+    emailReadRepository: {
       async listEmails({ mailboxId, tenantId }, { limit, gmailLabel, before }) {
         return emails
           .filter((email) => email.mailboxId === mailboxId && email.tenantId === tenantId)
@@ -130,12 +130,6 @@ export function createInMemoryRepositories(): {
           )
           .slice(0, limit);
       },
-      async emailExists() {
-        throw new Error('not used by the API');
-      },
-      async findThreadContext() {
-        throw new Error('not used by the API');
-      },
       async findEmail(scope, emailId) {
         return emailsInScope(scope).find((email) => email.id === emailId);
       },
@@ -147,9 +141,6 @@ export function createInMemoryRepositories(): {
               left.receivedAt.getTime() - right.receivedAt.getTime() ||
               (left.id > right.id ? 1 : -1),
           );
-      },
-      async insertEmailIfAbsent() {
-        throw new Error('not used by the API');
       },
     },
     attachmentRepository: {

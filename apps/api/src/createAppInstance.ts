@@ -5,7 +5,7 @@ import type {
   AttachmentRepository,
   ClassificationRuleRepository,
   Config,
-  EmailRepository,
+  EmailReadRepository,
   GmailOAuth,
   GmailWatch,
   MailboxConnectionRepository,
@@ -28,7 +28,7 @@ export interface AppDependencies {
   tenantRepository: TenantRepository;
   mailboxCredentialsRepository: MailboxCredentialsRepository;
   mailboxConnectionRepository: MailboxConnectionRepository;
-  emailRepository: EmailRepository;
+  emailReadRepository: EmailReadRepository;
   attachmentRepository: AttachmentRepository;
   classificationRuleRepository: ClassificationRuleRepository;
   /** Presigns S3 download links; undefined when no bucket is configured, so download links answer 503. */
@@ -55,7 +55,7 @@ export function createAppInstance({
   tenantRepository,
   mailboxCredentialsRepository,
   mailboxConnectionRepository,
-  emailRepository,
+  emailReadRepository,
   attachmentRepository,
   classificationRuleRepository,
   attachmentDownloadUrlSigner,
@@ -100,8 +100,8 @@ export function createAppInstance({
       frontendUrl: config.FRONTEND_URL,
     }),
   );
-  v1Router.use('/mailbox/emails', createEmailsRouter({ emailRepository, requireSession }));
-  v1Router.use('/mailbox/threads', createThreadsRouter({ emailRepository, requireSession }));
+  v1Router.use('/mailbox/emails', createEmailsRouter({ emailReadRepository, requireSession }));
+  v1Router.use('/mailbox/threads', createThreadsRouter({ emailReadRepository, requireSession }));
   v1Router.use(
     '/mailbox/emails',
     createAttachmentsRouter({ attachmentRepository, attachmentDownloadUrlSigner, requireSession }),
