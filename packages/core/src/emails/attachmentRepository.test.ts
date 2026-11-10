@@ -242,6 +242,25 @@ describe('createPrismaEmailRepository.insertEmailIfAbsent', () => {
     });
   });
 
+  it('writes a thread-derived classification with no rule, model or confidence', async () => {
+    const { prismaClient, calls } = createTransactionStub(false);
+
+    const inserted = await createPrismaEmailRepository(prismaClient).insertEmailIfAbsent(
+      newEmail,
+      [],
+      { source: 'thread', label: 'customer_reply' },
+    );
+
+    expect(inserted).toBe(true);
+    expect(calls.map((call) => call.model)).toEqual(['email', 'classification']);
+    expect(calls[1]!.args.data).toEqual({
+      tenantId: 'tenant-1',
+      emailId: DATABASE_GENERATED_EMAIL_ID,
+      label: 'CUSTOMER_REPLY',
+      source: 'THREAD',
+    });
+  });
+
   it('writes no classification when the email already existed, even if a rule matched', async () => {
     const { prismaClient, calls } = createTransactionStub(true);
 

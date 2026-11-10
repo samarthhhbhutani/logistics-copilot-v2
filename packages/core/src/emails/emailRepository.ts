@@ -5,8 +5,14 @@ import type { EmailAddress } from '../utils/mime/parsedEmail.js';
 import type { EmailListPosition } from './emailListCursor.js';
 import type { StoredAttachment } from './attachmentRepository.js';
 import {
+  CLASSIFICATION_LABEL_BY_PRISMA_LABEL,
+  CLASSIFICATION_SOURCE_BY_PRISMA_SOURCE,
   PRISMA_LABEL_BY_CLASSIFICATION_LABEL,
   PRISMA_SOURCE_BY_CLASSIFICATION_SOURCE,
+} from '../classification/classificationLabel.js';
+import type {
+  ClassificationLabel,
+  ClassificationSource,
 } from '../classification/classificationLabel.js';
 import type { EmailClassification } from '../classification/emailClassification.js';
 
@@ -45,6 +51,31 @@ export interface EmailSummary {
   receivedAt: Date;
 }
 
+/** The newest classifications row of an email: what the desk currently calls it and who said so. */
+export interface CurrentClassification {
+  label: ClassificationLabel;
+  source: ClassificationSource;
+  confidence: number | null;
+  classifiedAt: Date;
+}
+
+/** One mail in full, for the detail and thread views. */
+export interface EmailDetail extends EmailSummary {
+  ccRecipients: EmailAddress[];
+  rfcMessageId: string | null;
+  bodyText: string;
+  bodyHtml: string | null;
+  classification: CurrentClassification | null;
+}
+
+/** What the processor learns about a Gmail thread before storing a new message of it. */
+export interface ThreadContext {
+  /** The mailbox already holds a message of the thread (any age), so quoted history is ours. */
+  hasStoredEmail: boolean;
+  /** Current label of every stored message of the thread received before the new one; later ones do not decide its label. */
+  currentLabels: ClassificationLabel[];
+}
+
 export interface ListEmailsQuery {
   /** How many rows to return; the caller asks for one more than the page to learn whether a next page exists. */
   limit: number;
@@ -59,10 +90,19 @@ export interface EmailRepository {
   /** Cheap check before fetching from Gmail: SQS redelivers, and a push can list an id twice. */
   emailExists(scope: MailboxScope, gmailMessageId: string): Promise<boolean>;
   /**
-   * True when this mailbox already holds a message of the Gmail thread (inbox or sent). Then the
-   * history a reply quotes duplicates stored rows and is dropped from the stored body.
+   * One query per ingested message: whether the thread is known (quoted history is ours) and what the messages
+   * received before `receivedBefore` are labelled. Two mails of one thread can be delivered out of order; the
+   * earlier one must not inherit a label from the later one.
    */
-  threadHasStoredEmail(scope: MailboxScope, gmailThreadId: string): Promise<boolean>;
+  findThreadContext(
+    scope: MailboxScope,
+    gmailThreadId: string,
+    receivedBefore: Date,
+  ): Promise<ThreadContext>;
+  /** The mail with its bodies and current label; undefined outside the scope's mailbox and tenant. */
+  findEmail(scope: MailboxScope, emailId: string): Promise<EmailDetail | undefined>;
+  /** Every stored message of the thread in this mailbox, inbox and sent, oldest first. Empty when none. */
+  listThreadEmails(scope: MailboxScope, gmailThreadId: string): Promise<EmailDetail[]>;
   /**
    * Inserts the email, its attachment rows and (when a rule or the model decided) its
    * classification in one transaction, unless (mailbox_id, gmail_message_id) already exists; two processors racing on
@@ -110,6 +150,109 @@ function toJsonAddresses(addresses: EmailAddress[]): { name: string; address: st
     name: withoutNulCharacters(name),
     address: withoutNulCharacters(address),
   }));
+}
+
+/**
+ * The newest classifications row of the parent email; Prisma scopes the nested select to that email, and the
+ * parent query already carries the tenant filter. The id tie-breaker only makes the pick deterministic when
+ * two rows share a classified_at; it carries no ordering meaning.
+ */
+const CURRENT_CLASSIFICATION_SELECT = {
+  orderBy: [{ classifiedAt: 'desc' as const }, { id: 'desc' as const }],
+  take: 1,
+  select: { label: true, source: true, confidence: true, classifiedAt: true },
+};
+
+const EMAIL_DETAIL_SELECT = {
+  id: true,
+  gmailThreadId: true,
+  gmailLabel: true,
+  senderName: true,
+  senderEmail: true,
+  toRecipients: true,
+  ccRecipients: true,
+  subject: true,
+  snippet: true,
+  receivedAt: true,
+  rfcMessageId: true,
+  bodyText: true,
+  bodyHtml: true,
+  classifications: CURRENT_CLASSIFICATION_SELECT,
+};
+
+type CurrentClassificationRow = {
+  label: keyof typeof CLASSIFICATION_LABEL_BY_PRISMA_LABEL;
+  source: keyof typeof CLASSIFICATION_SOURCE_BY_PRISMA_SOURCE;
+  confidence: number | null;
+  classifiedAt: Date;
+};
+
+type EmailDetailRow = {
+  id: string;
+  gmailThreadId: string;
+  gmailLabel: PrismaGmailLabel;
+  senderName: string;
+  senderEmail: string | null;
+  toRecipients: unknown;
+  ccRecipients: unknown;
+  subject: string;
+  snippet: string;
+  receivedAt: Date;
+  rfcMessageId: string | null;
+  bodyText: string;
+  bodyHtml: string | null;
+  classifications: CurrentClassificationRow[];
+};
+
+function toCurrentClassification(rows: CurrentClassificationRow[]): CurrentClassification | null {
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    label: CLASSIFICATION_LABEL_BY_PRISMA_LABEL[row.label],
+    source: CLASSIFICATION_SOURCE_BY_PRISMA_SOURCE[row.source],
+    confidence: row.confidence,
+    classifiedAt: row.classifiedAt,
+  };
+}
+
+function toEmailDetail(row: EmailDetailRow): EmailDetail {
+  return {
+    id: row.id,
+    gmailThreadId: row.gmailThreadId,
+    gmailLabel: SNAKE_CASE_LABEL_BY_PRISMA_ENUM[row.gmailLabel],
+    senderName: row.senderName,
+    senderEmail: row.senderEmail,
+    toRecipients: fromJsonAddresses(row.toRecipients),
+    ccRecipients: fromJsonAddresses(row.ccRecipients),
+    subject: row.subject,
+    snippet: row.snippet,
+    receivedAt: row.receivedAt,
+    rfcMessageId: row.rfcMessageId,
+    bodyText: row.bodyText,
+    bodyHtml: row.bodyHtml,
+    classification: toCurrentClassification(row.classifications),
+  };
+}
+
+/** The columns that say how a label was decided; which ones are set depends on the source. */
+function classificationProvenance(classification: EmailClassification): {
+  ruleId?: string;
+  llmModel?: string;
+  promptVersion?: string;
+  confidence?: number;
+} {
+  switch (classification.source) {
+    case 'thread':
+      return {};
+    case 'rule':
+      return { ruleId: classification.ruleId };
+    case 'llm':
+      return {
+        llmModel: classification.llmModel,
+        promptVersion: classification.promptVersion,
+        confidence: classification.confidence,
+      };
+  }
 }
 
 export function createPrismaEmailRepository(prismaClient: PrismaClient): EmailRepository {
@@ -165,12 +308,36 @@ export function createPrismaEmailRepository(prismaClient: PrismaClient): EmailRe
       return email !== null;
     },
 
-    async threadHasStoredEmail({ mailboxId, tenantId }, gmailThreadId) {
-      const email = await prismaClient.email.findFirst({
+    async findThreadContext({ mailboxId, tenantId }, gmailThreadId, receivedBefore) {
+      const emails = await prismaClient.email.findMany({
         where: { mailboxId, tenantId, gmailThreadId },
-        select: { id: true },
+        select: { receivedAt: true, classifications: CURRENT_CLASSIFICATION_SELECT },
       });
-      return email !== null;
+      return {
+        hasStoredEmail: emails.length > 0,
+        currentLabels: emails.flatMap((email) => {
+          if (email.receivedAt >= receivedBefore) return [];
+          const current = toCurrentClassification(email.classifications);
+          return current ? [current.label] : [];
+        }),
+      };
+    },
+
+    async findEmail({ mailboxId, tenantId }, emailId) {
+      const email = await prismaClient.email.findFirst({
+        where: { id: emailId, mailboxId, tenantId },
+        select: EMAIL_DETAIL_SELECT,
+      });
+      return email ? toEmailDetail(email) : undefined;
+    },
+
+    async listThreadEmails({ mailboxId, tenantId }, gmailThreadId) {
+      const emails = await prismaClient.email.findMany({
+        where: { mailboxId, tenantId, gmailThreadId },
+        orderBy: [{ receivedAt: 'asc' }, { id: 'asc' }],
+        select: EMAIL_DETAIL_SELECT,
+      });
+      return emails.map(toEmailDetail);
     },
 
     async insertEmailIfAbsent(newEmail, attachments, classification) {
@@ -225,13 +392,7 @@ export function createPrismaEmailRepository(prismaClient: PrismaClient): EmailRe
               emailId,
               label: PRISMA_LABEL_BY_CLASSIFICATION_LABEL[classification.label],
               source: PRISMA_SOURCE_BY_CLASSIFICATION_SOURCE[classification.source],
-              ...(classification.source === 'rule'
-                ? { ruleId: classification.ruleId }
-                : {
-                    llmModel: classification.llmModel,
-                    promptVersion: classification.promptVersion,
-                    confidence: classification.confidence,
-                  }),
+              ...classificationProvenance(classification),
             },
           });
         }

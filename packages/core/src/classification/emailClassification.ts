@@ -1,5 +1,11 @@
 import type { ClassificationLabel } from './classificationLabel.js';
 
+/** The thread decided: it already holds a customer_request, so this later inbound mail is the customer replying. */
+export interface ThreadClassification {
+  source: 'thread';
+  label: 'customer_reply';
+}
+
 /** A tenant rule decided; the rule is kept so the row explains itself. */
 export interface RuleClassification {
   source: 'rule';
@@ -18,4 +24,4 @@ export interface LlmClassification {
 }
 
 /** What the processor hands the repository to store alongside the email, in the same transaction. */
-export type EmailClassification = RuleClassification | LlmClassification;
+export type EmailClassification = ThreadClassification | RuleClassification | LlmClassification;

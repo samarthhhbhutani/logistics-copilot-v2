@@ -1,7 +1,15 @@
 import { z } from 'zod';
 
-export const classificationLabelSchema = z.enum(['general', 'customer_request', 'rate_card']);
+/** Every label a classification row can carry. */
+export const classificationLabelSchema = z.enum([
+  'general',
+  'customer_request',
+  'customer_reply',
+  'rate_card',
+]);
 export type ClassificationLabel = z.infer<typeof classificationLabelSchema>;
+export const classificationSourceSchema = z.enum(['thread', 'rule', 'llm', 'user']);
+export type ClassificationSource = z.infer<typeof classificationSourceSchema>;
 
 export const DEFAULT_CLASSIFICATION_RULE_PRIORITY = 100;
 export const MAX_SENDER_PATTERN_LENGTH = 254;
@@ -28,7 +36,8 @@ export const senderPatternSchema = z
 /** POST /v1/mailbox/classification-rules. Lower priority value is checked first. */
 export const createClassificationRuleBodySchema = z.object({
   senderPattern: senderPatternSchema,
-  label: classificationLabelSchema,
+  /** customer_reply is derived from the thread and cannot be declared by a rule. */
+  label: classificationLabelSchema.exclude(['customer_reply']),
   priority: z.number().int().min(0).max(10_000).default(DEFAULT_CLASSIFICATION_RULE_PRIORITY),
 });
 export type CreateClassificationRuleBody = z.input<typeof createClassificationRuleBodySchema>;

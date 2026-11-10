@@ -196,3 +196,185 @@ describe('GET /v1/mailbox/emails', () => {
     expect(response.body.error.startsWith(errorPrefix)).toBe(true);
   });
 });
+
+describe('GET /v1/mailbox/emails/:emailId', () => {
+  it('returns bodies, cc and the current classification; null when never classified', async () => {
+    const testApp = createTestApp();
+    const scope = await signedInMailbox(testApp);
+    seedEmails(testApp, scope, 2);
+    testApp.repositories.addEmail({
+      ...scope,
+      id: emailId(7),
+      gmailThreadId: 'abc123',
+      gmailLabel: 'inbox',
+      senderName: 'Ravi Kumar',
+      senderEmail: 'ravi@acme.com',
+      toRecipients: [{ name: '', address: testMailboxEmail }],
+      ccRecipients: [{ name: 'Boss', address: 'boss@acme.com' }],
+      subject: 'RFQ',
+      snippet: 'Need a quote',
+      receivedAt: new Date('2026-11-10T10:00:00Z'),
+      rfcMessageId: '<rfq-7@acme.com>',
+      bodyText: 'Need a quote for 2 x 40ft.',
+      bodyHtml: '<p>Need a quote for 2 x 40ft.</p>',
+    });
+    testApp.repositories.setClassification(emailId(7), {
+      label: 'customer_request',
+      source: 'llm',
+      confidence: 0.93,
+      classifiedAt: new Date('2026-11-10T10:00:05Z'),
+    });
+
+    const classified = await request(testApp.app)
+      .get(`/v1/mailbox/emails/${emailId(7)}`)
+      .set('Cookie', scope.cookie);
+    expect(classified.status).toBe(200);
+    expect(classified.body).toEqual({
+      id: emailId(7),
+      gmailThreadId: 'abc123',
+      gmailLabel: 'inbox',
+      sender: { name: 'Ravi Kumar', email: 'ravi@acme.com' },
+      toRecipients: [{ name: '', address: testMailboxEmail }],
+      ccRecipients: [{ name: 'Boss', address: 'boss@acme.com' }],
+      subject: 'RFQ',
+      snippet: 'Need a quote',
+      receivedAt: '2026-11-10T10:00:00.000Z',
+      rfcMessageId: '<rfq-7@acme.com>',
+      bodyText: 'Need a quote for 2 x 40ft.',
+      bodyHtml: '<p>Need a quote for 2 x 40ft.</p>',
+      classification: {
+        label: 'customer_request',
+        source: 'llm',
+        confidence: 0.93,
+        classifiedAt: '2026-11-10T10:00:05.000Z',
+      },
+    });
+
+    const unclassified = await request(testApp.app)
+      .get(`/v1/mailbox/emails/${emailId(0)}`)
+      .set('Cookie', scope.cookie);
+    expect(unclassified.status).toBe(200);
+    expect(unclassified.body).toMatchObject({ id: emailId(0), classification: null, bodyText: '' });
+  });
+
+  it('answers 404 for an unknown id, a malformed id and another mailbox, and 401 without a session', async () => {
+    const testApp = createTestApp();
+    const scope = await signedInMailbox(testApp);
+    seedEmails(testApp, scope, 1);
+    testApp.repositories.addEmail({
+      mailboxId: '11111111-1111-4111-8111-111111111111',
+      tenantId: scope.tenantId,
+      id: emailId(9),
+      gmailThreadId: 'other',
+      gmailLabel: 'inbox',
+      senderName: '',
+      senderEmail: null,
+      toRecipients: [],
+      subject: '',
+      snippet: '',
+      receivedAt: new Date('2026-11-10T10:00:00Z'),
+    });
+
+    for (const id of [emailId(5), 'not-a-uuid', emailId(9)]) {
+      const response = await request(testApp.app)
+        .get(`/v1/mailbox/emails/${id}`)
+        .set('Cookie', scope.cookie);
+      expect(response.status).toBe(404);
+      expect(response.body).toEqual({ error: 'not_found' });
+    }
+    expect((await request(testApp.app).get(`/v1/mailbox/emails/${emailId(0)}`)).status).toBe(401);
+  });
+});
+
+describe('GET /v1/mailbox/threads/:gmailThreadId', () => {
+  it('returns every stored message of the thread in this mailbox, inbox and sent, oldest first', async () => {
+    const testApp = createTestApp();
+    const scope = await signedInMailbox(testApp);
+    const thread = (index: number, gmailLabel: 'inbox' | 'sent', minute: number) =>
+      testApp.repositories.addEmail({
+        ...scope,
+        id: emailId(index),
+        gmailThreadId: '1a1c6f27c3b30c33',
+        gmailLabel,
+        senderName: gmailLabel === 'inbox' ? 'Ravi Kumar' : 'Ops Desk',
+        senderEmail: gmailLabel === 'inbox' ? 'ravi@acme.com' : testMailboxEmail,
+        toRecipients: [],
+        subject: 'RFQ',
+        snippet: `message ${index}`,
+        receivedAt: new Date(Date.UTC(2026, 10, 10, 10, minute)),
+        bodyText: `message ${index}`,
+      });
+    thread(2, 'inbox', 20);
+    thread(0, 'inbox', 0);
+    thread(1, 'sent', 10);
+    seedEmails(testApp, scope, 1); // another thread, must not appear
+    testApp.repositories.setClassification(emailId(0), {
+      label: 'customer_request',
+      source: 'llm',
+      confidence: 1,
+      classifiedAt: new Date('2026-11-10T10:00:05Z'),
+    });
+    testApp.repositories.setClassification(emailId(2), {
+      label: 'customer_reply',
+      source: 'thread',
+      confidence: null,
+      classifiedAt: new Date('2026-11-10T10:20:05Z'),
+    });
+
+    const response = await request(testApp.app)
+      .get('/v1/mailbox/threads/1a1c6f27c3b30c33')
+      .set('Cookie', scope.cookie);
+
+    expect(response.status).toBe(200);
+    expect(response.body.gmailThreadId).toBe('1a1c6f27c3b30c33');
+    expect(
+      response.body.emails.map(
+        (email: { id: string; gmailLabel: string; classification: unknown }) => [
+          email.id,
+          email.gmailLabel,
+          email.classification && (email.classification as { label: string }).label,
+        ],
+      ),
+    ).toEqual([
+      [emailId(0), 'inbox', 'customer_request'],
+      [emailId(1), 'sent', null],
+      [emailId(2), 'inbox', 'customer_reply'],
+    ]);
+    expect(response.body.emails[2].classification.source).toBe('thread');
+  });
+
+  it('answers 404 for a thread with no stored mail in this mailbox and for a malformed id', async () => {
+    const testApp = createTestApp();
+    const scope = await signedInMailbox(testApp);
+    seedEmails(testApp, scope, 1);
+    // Same mailbox id under another tenant: tenantId is the isolation check, not just the mailbox.
+    testApp.repositories.addEmail({
+      mailboxId: scope.mailboxId,
+      tenantId: '22222222-2222-4222-8222-222222222222',
+      id: emailId(9),
+      gmailThreadId: 'deadbeef',
+      gmailLabel: 'inbox',
+      senderName: '',
+      senderEmail: null,
+      toRecipients: [],
+      subject: '',
+      snippet: '',
+      receivedAt: new Date('2026-11-10T10:00:00Z'),
+    });
+
+    expect(
+      (
+        await request(testApp.app)
+          .get(`/v1/mailbox/emails/${emailId(9)}`)
+          .set('Cookie', scope.cookie)
+      ).status,
+    ).toBe(404);
+    for (const threadId of ['deadbeef', 'thread-0!', 'Thread-0']) {
+      const response = await request(testApp.app)
+        .get(`/v1/mailbox/threads/${threadId}`)
+        .set('Cookie', scope.cookie);
+      expect(response.status).toBe(404);
+    }
+    expect((await request(testApp.app).get('/v1/mailbox/threads/deadbeef')).status).toBe(401);
+  });
+});

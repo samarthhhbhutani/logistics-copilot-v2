@@ -121,6 +121,18 @@ shows anyway. A thread new to us (started before the mailbox was connected, a re
 in) and a forward keep their quoted text, since it is the only copy we have. The classifier reads the
 same text. `body_html` and the `.eml` in S3 stay complete.
 
+## Reading mail
+
+| Route                                    | Does                                                                                                                      |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `GET /v1/mailbox/emails`                 | list, newest first, cursor paged, `?label=inbox\|sent`; list fields only                                                  |
+| `GET /v1/mailbox/emails/:emailId`        | one mail: list fields plus `ccRecipients`, `rfcMessageId`, `bodyText`, `bodyHtml`, `classification` (newest row or null)  |
+| `GET /v1/mailbox/threads/:gmailThreadId` | `{ gmailThreadId, emails }`: every stored message of the thread in this mailbox, inbox and sent, oldest first, same shape |
+
+All three are scoped to the session's mailbox and tenant; anything outside answers 404, as does a
+malformed id. The thread view is built from rows, one per message, which is why `body_text` above
+drops quoted history for known threads: the history is already on screen as its own messages.
+
 ## Attachments
 
 `emailProcessor` stores every MIME part of a message as a file: bytes go to the raw-mail bucket under
@@ -145,12 +157,24 @@ the LLM for classification (token cost); when that changes it will be a config s
 
 ## Classification
 
-Every inbound mail gets a label: `general`, `customer_request` (a shipper asking for a quote, the RFQ
-entry point) or `rate_card` (an unsolicited vendor price list). Labels live in `classifications`,
+Every inbound mail gets a label: `general`, `customer_request` (a shipper asking the desk to quote for
+or move a new shipment, the RFQ entry point), `customer_reply` (a later inbound mail in a thread that
+already holds a `customer_request`) or `rate_card` (an unsolicited vendor price list). Labels live in `classifications`,
 append-only: a correction is a new row with `source = user`, and the current label is the newest row,
 so who said what is kept. `sent` mail is never classified.
 
-Tenant rules run first and need no LLM. A `classification_rules` row says "mail from this sender is
+The thread decides first. When the mailbox already holds an earlier message of the same Gmail thread
+whose current label is `customer_request`, the new inbound mail is `customer_reply` with
+`source = thread`, before any rule or model runs: a follow-up in a quote conversation is never a fresh
+request, whatever the sender's rule says. `customer_reply` is derived only; rules cannot assign it and
+the model is not offered it. Only the request counts, not an earlier derived reply, so relabelling the
+request stops the chain. "Earlier" means `received_at` before the new mail's own date: Gmail can
+deliver two messages of a thread out of order, and the older one must not inherit from the newer.
+Known gap: two mails of one thread processed at the same moment both see a thread without a
+request and are both classified on their own merits; a per-thread lock inside the insert
+transaction is a follow-up.
+
+Tenant rules run next and need no LLM. A `classification_rules` row says "mail from this sender is
 this label": `sender_pattern` is compared case-insensitively against the sender address; a value with
 an `@` must equal the whole address (`ravi@acme.com`), anything else must equal the domain after the
 `@` (`acme.com`; subdomains do not match). Lowest `priority` value wins, disabled rules are kept so
