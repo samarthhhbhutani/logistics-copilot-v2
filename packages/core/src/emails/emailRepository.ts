@@ -4,6 +4,11 @@ import type { MailboxScope } from '../connectors/gmail/mailboxConnectionReposito
 import type { EmailAddress } from '../utils/mime/parsedEmail.js';
 import type { EmailListPosition } from './emailListCursor.js';
 import type { StoredAttachment } from './attachmentRepository.js';
+import {
+  PRISMA_LABEL_BY_CLASSIFICATION_LABEL,
+  PRISMA_SOURCE_BY_CLASSIFICATION_SOURCE,
+} from '../classification/classificationLabel.js';
+import type { ClassificationLabel } from '../classification/classificationLabel.js';
 
 /** Which Gmail folder the message arrived in; snake_case like every other enum the API speaks. */
 export type GmailLabel = 'inbox' | 'sent';
@@ -48,17 +53,28 @@ export interface ListEmailsQuery {
   before?: EmailListPosition;
 }
 
+/** The label a tenant rule gave a mail at ingest; stored with the email so the two never disagree. */
+export interface RuleClassification {
+  label: ClassificationLabel;
+  ruleId: string;
+}
+
 export interface EmailRepository {
   /** The mailbox's mail, newest first. The tenant in the scope is the isolation check, the mailbox the display scope. */
   listEmails(scope: MailboxScope, query: ListEmailsQuery): Promise<EmailSummary[]>;
   /** Cheap check before fetching from Gmail: SQS redelivers, and a push can list an id twice. */
   emailExists(scope: MailboxScope, gmailMessageId: string): Promise<boolean>;
   /**
-   * Inserts the email and its attachment rows in one transaction, unless (mailbox_id,
-   * gmail_message_id) already exists; two processors racing on the same id both succeed and
-   * exactly one email with one set of attachments results. Returns false when the row was there.
+   * Inserts the email, its attachment rows and (when a rule matched) its classification in one
+   * transaction, unless (mailbox_id, gmail_message_id) already exists; two processors racing on
+   * the same id both succeed and exactly one email with one set of rows results. Returns false
+   * when the row was there.
    */
-  insertEmailIfAbsent(newEmail: NewEmail, attachments: StoredAttachment[]): Promise<boolean>;
+  insertEmailIfAbsent(
+    newEmail: NewEmail,
+    attachments: StoredAttachment[],
+    ruleClassification?: RuleClassification,
+  ): Promise<boolean>;
 }
 
 // Prisma generates UPPER_CASE enum members; the API and the column speak snake_case.
@@ -150,7 +166,7 @@ export function createPrismaEmailRepository(prismaClient: PrismaClient): EmailRe
       return email !== null;
     },
 
-    async insertEmailIfAbsent(newEmail, attachments) {
+    async insertEmailIfAbsent(newEmail, attachments, ruleClassification) {
       return prismaClient.$transaction(async (transaction) => {
         // ON CONFLICT DO NOTHING RETURNING id: an empty result means the row was already there.
         const inserted = await transaction.email.createManyAndReturn({
@@ -193,6 +209,17 @@ export function createPrismaEmailRepository(prismaClient: PrismaClient): EmailRe
               contentId: attachment.contentId ? withoutNulCharacters(attachment.contentId) : null,
               isInline: attachment.isInline,
             })),
+          });
+        }
+        if (ruleClassification) {
+          await transaction.classification.create({
+            data: {
+              tenantId: newEmail.tenantId,
+              emailId,
+              label: PRISMA_LABEL_BY_CLASSIFICATION_LABEL[ruleClassification.label],
+              source: PRISMA_SOURCE_BY_CLASSIFICATION_SOURCE.rule,
+              ruleId: ruleClassification.ruleId,
+            },
           });
         }
         return true;

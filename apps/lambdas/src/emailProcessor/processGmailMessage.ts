@@ -1,6 +1,7 @@
 import type { SQSBatchResponse, SQSEvent, SQSRecord } from 'aws-lambda';
-import { parseRawEmail, toGmailApiError } from '@lc/core';
+import { matchClassificationRule, parseRawEmail, toGmailApiError } from '@lc/core';
 import type {
+  ClassificationRuleRepository,
   EmailRepository,
   EncryptionUtil,
   GmailLabel,
@@ -27,6 +28,7 @@ export interface GmailMessageProcessorDependencies {
   rawMailStore: RawMailStore;
   attachmentStore: AttachmentStore;
   emailRepository: EmailRepository;
+  classificationRuleRepository: ClassificationRuleRepository;
 }
 
 export type GmailMessageProcessor = (event: SQSEvent) => Promise<SQSBatchResponse>;
@@ -58,6 +60,7 @@ export function createGmailMessageProcessor(
     rawMailStore,
     attachmentStore,
     emailRepository,
+    classificationRuleRepository,
   } = dependencies;
 
   /** Undefined when this mailbox cannot be fetched from now; the reason is logged and the record is done. */
@@ -147,6 +150,16 @@ export function createGmailMessageProcessor(
 
     const rawEmailS3Key = await rawMailStore.putRawEmail(scope, gmailMessageId, fetched.raw);
     const parsedEmail = await parseRawEmail(fetched.raw);
+    const gmailLabel = toGmailLabel(fetched.labelIds);
+    // Tenant rules decide inbound mail only; what the desk sent is never a customer request.
+    // Matched before the uploads so a failing rules query retries without re-sending bytes.
+    const ruleClassification =
+      gmailLabel === 'inbox'
+        ? matchClassificationRule(
+            await classificationRuleRepository.listEnabledRules(tenantId),
+            parsedEmail.from?.address,
+          )
+        : undefined;
     // Sequential: the parts are already in memory (postal-mime buffers them); this only bounds in-flight uploads.
     const storedAttachments: StoredAttachment[] = [];
     for (const attachment of parsedEmail.attachments) {
@@ -158,7 +171,7 @@ export function createGmailMessageProcessor(
         mailboxId,
         gmailMessageId,
         gmailThreadId: fetched.threadId,
-        gmailLabel: toGmailLabel(fetched.labelIds),
+        gmailLabel,
         rfcMessageId: parsedEmail.messageId,
         senderName: parsedEmail.from?.name ?? '',
         senderEmail: parsedEmail.from?.address,
@@ -172,12 +185,19 @@ export function createGmailMessageProcessor(
         receivedAt: parsedEmail.date ?? fetched.internalDate,
       },
       storedAttachments,
+      ruleClassification,
     );
     log('info', inserted ? 'message stored' : 'message skipped: stored by a concurrent run', {
       ...context,
       rawEmailS3Key,
       sizeBytes: fetched.raw.byteLength,
       attachmentCount: storedAttachments.length,
+      ...(inserted && ruleClassification
+        ? {
+            classificationLabel: ruleClassification.label,
+            classificationRuleId: ruleClassification.ruleId,
+          }
+        : {}),
     });
     return 'done';
   }

@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import { MAX_CLASSIFICATION_RULES_PER_TENANT } from '@lc/core';
 import type {
   AttachmentRepository,
   AttachmentSummary,
+  ClassificationRule,
+  ClassificationRuleRepository,
   EmailRepository,
   EmailSummary,
   MailboxConnection,
@@ -20,6 +23,7 @@ export function createInMemoryRepositories(): {
   mailboxConnectionRepository: MailboxConnectionRepository;
   emailRepository: EmailRepository;
   attachmentRepository: AttachmentRepository;
+  classificationRuleRepository: ClassificationRuleRepository;
   /** Seeds the inbox list directly; the processor's insert path is not part of the API. */
   addEmail(email: EmailSummary & { mailboxId: string; tenantId: string }): void;
   /** Seeds a stored file on a seeded email; tenantId is the row's own isolation column. */
@@ -31,6 +35,7 @@ export function createInMemoryRepositories(): {
   const connectionByMailboxId = new Map<string, MailboxConnection>();
   const emails: (EmailSummary & { mailboxId: string; tenantId: string })[] = [];
   const attachments: (AttachmentSummary & { tenantId: string })[] = [];
+  const classificationRules: (ClassificationRule & { tenantId: string })[] = [];
 
   /** The email must be in the scope's mailbox and tenant, and the attachment row in the same tenant. */
   function attachmentsOf(scope: { mailboxId: string; tenantId: string }, emailId: string) {
@@ -131,6 +136,36 @@ export function createInMemoryRepositories(): {
       },
       async findAttachment(scope, emailId, attachmentId) {
         return attachmentsOf(scope, emailId)?.find((attachment) => attachment.id === attachmentId);
+      },
+    },
+    classificationRuleRepository: {
+      async listEnabledRules(tenantId) {
+        return classificationRules
+          .filter((rule) => rule.tenantId === tenantId && rule.enabled)
+          .sort((left, right) => left.priority - right.priority);
+      },
+      async listRules(tenantId) {
+        return classificationRules
+          .filter((rule) => rule.tenantId === tenantId)
+          .sort((left, right) => left.priority - right.priority);
+      },
+      async createRule(tenantId, newRule) {
+        const tenantRules = classificationRules.filter((rule) => rule.tenantId === tenantId);
+        if (tenantRules.length >= MAX_CLASSIFICATION_RULES_PER_TENANT) {
+          return { outcome: 'too_many_rules' };
+        }
+        if (tenantRules.some((rule) => rule.senderPattern === newRule.senderPattern)) {
+          return { outcome: 'duplicate_pattern' };
+        }
+        const rule = {
+          id: randomUUID(),
+          ...newRule,
+          enabled: true,
+          createdAt: new Date(),
+          tenantId,
+        };
+        classificationRules.push(rule);
+        return { outcome: 'created', rule };
       },
     },
     addEmail(email) {

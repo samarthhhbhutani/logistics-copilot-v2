@@ -3,6 +3,7 @@ import type { SQSBatchResponse, SQSEvent } from 'aws-lambda';
 import {
   createEncryptionUtil,
   createGoogleGmailMessages,
+  createPrismaClassificationRuleRepository,
   createPrismaEmailRepository,
   createPrismaMailboxConnectionRepository,
   createPrismaMailboxSyncRepository,
@@ -37,6 +38,7 @@ async function buildProcessor(): Promise<GmailMessageProcessor> {
     rawMailStore: createS3RawMailStore({ s3Client, bucketName: config.RAW_MAIL_BUCKET_NAME }),
     attachmentStore: createS3AttachmentStore({ s3Client, bucketName: config.RAW_MAIL_BUCKET_NAME }),
     emailRepository: createPrismaEmailRepository(prismaClient),
+    classificationRuleRepository: createPrismaClassificationRuleRepository(prismaClient),
   });
 }
 
