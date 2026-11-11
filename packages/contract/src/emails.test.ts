@@ -20,6 +20,7 @@ const email: EmailSummaryResponse = {
   subject: 'RFQ: 2x40HC Nhava Sheva to Jebel Ali',
   snippet: 'Please quote',
   receivedAt: '2026-11-09T12:59:00.000Z',
+  classification: null,
 };
 
 describe('listEmailsQuerySchema', () => {
@@ -47,6 +48,28 @@ describe('listEmailsQuerySchema', () => {
 });
 
 describe('listEmailsResponseSchema', () => {
+  it.each(['general', 'customer_request', 'customer_reply', 'rate_card'])(
+    'preserves current classification %s in a list row',
+    (label) => {
+      const page = {
+        ...scope,
+        nextCursor: null,
+        emails: [
+          {
+            ...email,
+            classification: {
+              label,
+              source: 'llm',
+              confidence: 0.93,
+              classifiedAt: '2026-11-09T13:00:00.000Z',
+            },
+          },
+        ],
+      };
+      expect(listEmailsResponseSchema.parse(page)).toEqual(page);
+    },
+  );
+
   it('accepts a page with a next cursor', () => {
     const page = { ...scope, emails: [email], nextCursor: 'opaque' };
     expect(listEmailsResponseSchema.parse(page)).toEqual(page);
@@ -62,6 +85,8 @@ describe('listEmailsResponseSchema', () => {
   });
 
   it.each([
+    { emails: [{ ...email, classification: undefined }], nextCursor: null },
+    { emails: [{ ...email, classification: { label: 'unknown' } }], nextCursor: null },
     { emails: [{ ...email, gmailLabel: 'spam' }], nextCursor: null },
     { emails: [{ ...email, receivedAt: 'Mon, 9 Nov 2026' }], nextCursor: null },
     { emails: [{ ...email, sender: { name: 'Ravi Kumar' } }], nextCursor: null },

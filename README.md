@@ -264,12 +264,24 @@ same-site API hosting with a matching frontend base URL; that deployment and the
 
 Implemented: password login/logout, All mail / Inbox / Sent, 30-row cursor pages, refresh,
 empty/loading/error states, Gmail connect/reconnect, and explicit success/failure screens.
-Mail rows are summaries, not clickable: message bodies, search, RFQs and classification need
-later endpoints. The query string retains folder and cursor for browser back/reload. No polling
+Mail rows open a read-only conversation using the deployed detail and thread endpoints. Messages
+are shown latest first, with the latest and selected messages expanded. Each expanded message shows
+sender, recipients, plain-text body and its current classification/source (model confidence when
+present). All mail and Inbox rows show the current classification or an unclassified state, read
+in the list request without fetching each message separately. Files load on demand; inline images
+are hidden and downloads request a fresh signed link. Deploy the API before the frontend: the list
+contract now requires the nullable classification field (no database migration).
+Email HTML is never inserted into the page and remote images are not loaded. HTML-only mail has an
+explicit plain-text-unavailable state. Corrections, sending, search and RFQs are not part of this UI.
+The query string retains folder, cursor and selected email for browser back/reload. No polling
 or Gmail resync is triggered by the frontend; Refresh reads already-ingested rows.
 The list response includes the cookie's mailboxId and tenantId. The browser rejects a response
 for a different session before caching it, including when another tab switches the account.
 Failed background refreshes keep cached mail visible with an inline warning.
+Thread reads start with a globally unique email id, then verify that the thread includes that email
+before caching it; a Gmail thread id alone can occur in more than one mailbox. Thread and file reads
+also verify `/me` before returning data. Queries are scoped to the current identity and cancelled on
+sign-out. Signed download requests are cancelled when their message leaves the view.
 
 ### Browser tests and synthetic preview
 
@@ -297,4 +309,6 @@ FRONTEND_API_TARGET=http://127.0.0.1:4181 npm run dev -w @lc/frontend -- --port 
 
 Open `http://127.0.0.1:4180`. Synthetic accounts: `ops@example.com`, `sales@example.com`,
 `new@example.com`; password `frontend-test-password`. These are in-memory fixtures, never real
-accounts. Google connect needs the Playwright interception to finish in this synthetic preview.
+accounts. The ops mailbox includes “Clearance charges - Mundra import (inline image sample)”,
+parsed from the real MIME fixture with a CID-linked PNG logo; plain-text reading intentionally
+hides it. Google connect needs the Playwright interception to finish in this synthetic preview.

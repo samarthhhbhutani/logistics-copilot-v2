@@ -53,6 +53,48 @@ const currentClassificationSelect = {
   select: { label: true, source: true, confidence: true, classifiedAt: true },
 };
 
+describe('listEmails', () => {
+  it('selects only the current classification with the scoped page, without bodies or per-email reads', async () => {
+    const { prismaClient, calls } = stubPrisma([
+      detailRow,
+      { ...detailRow, id: 'email-2', classifications: [] },
+    ]);
+    const before = { receivedAt: new Date('2026-11-11T10:00:00Z'), id: 'email-9' };
+    const emails = await createPrismaEmailReadRepository(prismaClient).listEmails(scope, {
+      limit: 31,
+      gmailLabel: 'inbox',
+      before,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      method: 'findMany',
+      args: {
+        where: {
+          ...scope,
+          gmailLabel: 'INBOX',
+          OR: [
+            { receivedAt: { lt: before.receivedAt } },
+            { receivedAt: before.receivedAt, id: { lt: before.id } },
+          ],
+        },
+        orderBy: [{ receivedAt: 'desc' }, { id: 'desc' }],
+        take: 31,
+        select: { classifications: currentClassificationSelect },
+      },
+    });
+    expect(calls[0]?.args.select).not.toHaveProperty('bodyText');
+    expect(calls[0]?.args.select).not.toHaveProperty('bodyHtml');
+    expect(emails[0]?.classification).toEqual({
+      label: 'customer_reply',
+      source: 'thread',
+      confidence: null,
+      classifiedAt: new Date('2026-11-10T10:00:05Z'),
+    });
+    expect(emails[1]?.classification).toBeNull();
+    expect(emails[0]).not.toHaveProperty('bodyText');
+  });
+});
+
 describe('findEmail and listThreadEmails', () => {
   it('maps enums to snake_case, the newest classification to the current one, and bad jsonb to no recipients', async () => {
     const { prismaClient, calls } = stubPrisma([detailRow]);

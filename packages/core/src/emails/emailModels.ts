@@ -23,6 +23,7 @@ export interface EmailSummary {
   subject: string;
   snippet: string;
   receivedAt: Date;
+  classification: CurrentClassification | null;
 }
 
 /** The newest classifications row of an email: what the desk currently calls it and who said so. */
@@ -39,7 +40,6 @@ export interface EmailDetail extends EmailSummary {
   rfcMessageId: string | null;
   bodyText: string;
   bodyHtml: string | null;
-  classification: CurrentClassification | null;
 }
 
 // Prisma generates UPPER_CASE enum members; the API and the column speak snake_case.

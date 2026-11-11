@@ -91,6 +91,7 @@ describe('GET /v1/mailbox/emails', () => {
           subject: 'RFQ 0',
           snippet: 'Need a quote 0',
           receivedAt: '2026-11-09T12:59:00.000Z',
+          classification: null,
         },
         expect.objectContaining({ id: emailId(1), gmailLabel: 'sent' }),
       ],
@@ -98,6 +99,53 @@ describe('GET /v1/mailbox/emails', () => {
     });
     expect(JSON.stringify(response.body)).not.toContain('body');
     expect((await request(testApp.app).get('/v1/mailbox/emails')).status).toBe(401);
+  });
+
+  it('returns current labels on All mail and Inbox, including changes, while excluding other tenants', async () => {
+    const testApp = createTestApp();
+    const scope = await signedInMailbox(testApp);
+    seedEmails(testApp, scope, 3);
+    seedEmails(testApp, { mailboxId: scope.mailboxId, tenantId: 'other-tenant' }, 1);
+    const classification = {
+      label: 'customer_request' as const,
+      source: 'llm' as const,
+      confidence: 0.93,
+      classifiedAt: new Date('2026-11-10T10:00:05Z'),
+    };
+    testApp.repositories.setClassification(emailId(0), classification);
+    for (const query of ['', '?label=inbox']) {
+      const response = await request(testApp.app)
+        .get(`/v1/mailbox/emails${query}`)
+        .set('Cookie', scope.cookie);
+      expect(response.status).toBe(200);
+      expect(response.body.emails).toHaveLength(query ? 2 : 3);
+      expect(response.body.emails[0]).toMatchObject({
+        id: emailId(0),
+        classification: {
+          ...classification,
+          classifiedAt: classification.classifiedAt.toISOString(),
+        },
+      });
+      expect(response.body.emails.at(-1).classification).toBeNull();
+      if (!query)
+        expect(response.body.emails[1]).toMatchObject({ gmailLabel: 'sent', classification: null });
+      expect(response.body.emails[0]).not.toHaveProperty('bodyText');
+      expect(response.body.emails[0]).not.toHaveProperty('bodyHtml');
+    }
+    testApp.repositories.setClassification(emailId(0), {
+      ...classification,
+      label: 'rate_card',
+      source: 'user',
+      confidence: null,
+    });
+    const refreshed = await request(testApp.app)
+      .get('/v1/mailbox/emails?limit=1')
+      .set('Cookie', scope.cookie);
+    expect(refreshed.body.emails[0].classification).toMatchObject({
+      label: 'rate_card',
+      source: 'user',
+      confidence: null,
+    });
   });
 
   it('pages with an opaque cursor: no gaps, no repeats, null cursor on the last page', async () => {

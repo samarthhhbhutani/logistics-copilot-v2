@@ -14,6 +14,16 @@ export const listEmailsQuerySchema = z.object({
   label: gmailLabelSchema.optional(),
 });
 
+/** The newest label of a mail and who decided it; null when nothing has classified it yet. */
+export const currentClassificationSchema = z.object({
+  label: classificationLabelSchema,
+  source: classificationSourceSchema,
+  /** The model's own estimate for llm rows; null for every other source. */
+  confidence: z.number().min(0).max(1).nullable(),
+  classifiedAt: z.iso.datetime(),
+});
+export type CurrentClassificationResponse = z.infer<typeof currentClassificationSchema>;
+
 /** One list row: dates as ISO strings, sender folded into one object, email null when From was missing. */
 export const emailSummarySchema = z.object({
   id: z.uuid(),
@@ -24,6 +34,7 @@ export const emailSummarySchema = z.object({
   subject: z.string(),
   snippet: z.string(),
   receivedAt: z.iso.datetime(),
+  classification: currentClassificationSchema.nullable(),
 });
 export type EmailSummaryResponse = z.infer<typeof emailSummarySchema>;
 
@@ -37,16 +48,6 @@ export const listEmailsResponseSchema = z.object({
 });
 export type ListEmailsResponse = z.infer<typeof listEmailsResponseSchema>;
 
-/** The newest label of a mail and who decided it; null when nothing has classified it yet. */
-export const currentClassificationSchema = z.object({
-  label: classificationLabelSchema,
-  source: classificationSourceSchema,
-  /** The model's own estimate for llm rows; null for every other source. */
-  confidence: z.number().min(0).max(1).nullable(),
-  classifiedAt: z.iso.datetime(),
-});
-export type CurrentClassificationResponse = z.infer<typeof currentClassificationSchema>;
-
 /**
  * GET /v1/mailbox/emails/:emailId and each item of a thread. body_text is what the sender typed
  * (signature and, when the thread was already stored, quoted history removed); body_html is as sent.
@@ -56,7 +57,6 @@ export const emailDetailSchema = emailSummarySchema.extend({
   rfcMessageId: z.string().nullable(),
   bodyText: z.string(),
   bodyHtml: z.string().nullable(),
-  classification: currentClassificationSchema.nullable(),
 });
 export type EmailDetailResponse = z.infer<typeof emailDetailSchema>;
 

@@ -18,7 +18,10 @@ function SessionPage() {
   const signedOut = useCallback(() => {
     // Cancel in-flight reads before dropping every account's cache. No old mailbox can flash at next login.
     void queryClient.cancelQueries();
-    queryClient.clear();
+    // Keep the observed session query: removing it can trigger a fresh /me request on navigation
+    // and immediately sign back in with the shared cookie we just rejected.
+    queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== 'session' });
+    queryClient.getMutationCache().clear();
     queryClient.setQueryData(['session'], null);
     navigate('/login', { replace: true });
   }, [queryClient, navigate]);

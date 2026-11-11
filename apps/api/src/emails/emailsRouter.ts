@@ -19,7 +19,7 @@ export { DEFAULT_EMAIL_PAGE_SIZE, MAX_EMAIL_PAGE_SIZE } from '@lc/contract';
 
 /**
  * The signed-in person's mail, mounted at /v1/mailbox/emails.
- *   GET /            ?limit=50&cursor=<opaque>&label=inbox|sent   newest first, list fields only
+ *   GET /            ?limit=50&cursor=<opaque>&label=inbox|sent   newest first, list fields plus current classification
  *   GET /:emailId    one mail with bodies and its current classification; 404 outside the mailbox
  * The mailbox is the session's; tenantId rides along as the isolation check.
  */

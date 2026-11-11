@@ -115,3 +115,152 @@ describe('frontendApi', () => {
     );
   });
 });
+
+const emailId = '00000000-0000-4000-8000-000000000011';
+const message = {
+  id: emailId,
+  gmailThreadId: 'abc123',
+  gmailLabel: 'inbox',
+  sender: { name: 'Ravi', email: 'ravi@example.com' },
+  toRecipients: [],
+  ccRecipients: [],
+  subject: 'Quote',
+  snippet: '',
+  receivedAt: '2026-11-09T12:00:00.000Z',
+  rfcMessageId: null,
+  bodyText: 'Please quote.',
+  bodyHtml: null,
+  classification: null,
+};
+function mockResponses(...bodies: unknown[]) {
+  const fetchMock = vi.fn();
+  for (const body of bodies) fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(body)));
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
+}
+describe('list classifications', () => {
+  it('preserves labels from the list response without a detail request', async () => {
+    const classification = {
+      label: 'customer_reply',
+      source: 'thread',
+      confidence: null,
+      classifiedAt: '2026-11-09T13:00:00.000Z',
+    };
+    const fetchMock = mockResponses({
+      ...session,
+      emails: [{ ...message, classification }],
+      nextCursor: null,
+    });
+    const response = await frontendApi.emails(session, 'inbox', undefined);
+    expect(response.emails[0]?.classification).toEqual(classification);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('thread and attachments', () => {
+  it('anchors the thread to the selected email, validates the session and propagates cancellation', async () => {
+    const thread = { gmailThreadId: 'abc123', emails: [message] };
+    const fetchMock = mockResponses(message, thread, session);
+    const controller = new AbortController();
+    expect(await frontendApi.thread(session, emailId, controller.signal)).toEqual(thread);
+    expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([
+      `/v1/mailbox/emails/${emailId}`,
+      '/v1/mailbox/threads/abc123',
+      '/v1/me',
+    ]);
+    for (const [, options] of fetchMock.mock.calls)
+      expect(options).toMatchObject({
+        signal: controller.signal,
+        cache: 'no-store',
+        credentials: 'same-origin',
+      });
+  });
+  it('rejects a thread from another mailbox even when the Gmail thread id matches', async () => {
+    mockResponses(message, {
+      gmailThreadId: 'abc123',
+      emails: [{ ...message, id: session.mailboxId }],
+    });
+    await expect(frontendApi.thread(session, emailId)).rejects.toMatchObject({
+      code: 'session_changed',
+    });
+  });
+  it('rejects a switched identity after the thread arrives', async () => {
+    mockResponses(
+      message,
+      { gmailThreadId: 'abc123', emails: [message] },
+      { ...session, mailboxId: emailId },
+    );
+    await expect(frontendApi.thread(session, emailId)).rejects.toMatchObject({
+      code: 'session_changed',
+    });
+  });
+  it('rejects a mismatched detail id before reading the thread', async () => {
+    const fetchMock = mockResponses({ ...message, id: session.mailboxId });
+    await expect(frontendApi.thread(session, emailId)).rejects.toMatchObject({
+      code: 'invalid_response',
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it('validates attachment ownership and the session', async () => {
+    const body = { emailId, attachments: [] };
+    mockResponses(body, session);
+    expect(await frontendApi.attachments(session, emailId)).toEqual(body);
+    mockResponses({ ...body, emailId: session.mailboxId });
+    await expect(frontendApi.attachments(session, emailId)).rejects.toMatchObject({
+      code: 'invalid_response',
+    });
+    mockResponses(body, { ...session, tenantId: emailId });
+    await expect(frontendApi.attachments(session, emailId)).rejects.toMatchObject({
+      code: 'session_changed',
+    });
+  });
+  it.each([
+    'javascript:alert(1)',
+    'http://bucket.example/file',
+    'https://user:pass@bucket.example/file',
+  ])('rejects unsafe download target %s', async (url) => {
+    mockResponses({ url, expiresAt: '2026-11-09T12:05:00.000Z' });
+    await expect(frontendApi.attachmentDownload(session, emailId, 'file-id')).rejects.toMatchObject(
+      { code: 'invalid_download_url' },
+    );
+  });
+  it('requests a fresh HTTPS link and verifies identity before handing it to the UI', async () => {
+    const body = { url: 'https://bucket.example/file', expiresAt: '2026-11-09T12:05:00.000Z' };
+    mockResponses(body, session);
+    expect(await frontendApi.attachmentDownload(session, emailId, 'file-id')).toEqual(body);
+    mockResponses(body, { ...session, mailboxId: emailId });
+    await expect(frontendApi.attachmentDownload(session, emailId, 'file-id')).rejects.toMatchObject(
+      { code: 'session_changed' },
+    );
+  });
+});
+
+describe('scoped mail 404 after an account switch', () => {
+  it.each(['thread', 'attachments', 'attachmentDownload'] as const)(
+    'checks identity on a %s 404',
+    async (operation) => {
+      vi.stubGlobal(
+        'fetch',
+        vi
+          .fn()
+          .mockResolvedValueOnce(new Response('{}', { status: 404 }))
+          .mockResolvedValueOnce(new Response(JSON.stringify({ ...session, mailboxId: emailId }))),
+      );
+      const pending =
+        operation === 'attachmentDownload'
+          ? frontendApi.attachmentDownload(session, emailId, 'file-id')
+          : frontendApi[operation](session, emailId);
+      await expect(pending).rejects.toMatchObject({ code: 'session_changed', status: 401 });
+    },
+  );
+  it('preserves a genuine 404 when the cookie still belongs to the same account', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(new Response('{}', { status: 404 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify(session))),
+    );
+    await expect(frontendApi.thread(session, emailId)).rejects.toMatchObject({ status: 404 });
+  });
+});

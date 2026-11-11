@@ -521,6 +521,21 @@ h2 {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.emailSubjectLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-top: 6px;
+}
+.emailSubjectLine .emailSubject {
+  margin: 0;
+  min-width: 0;
+  max-width: 100%;
+}
+.emailSubjectLine .classificationBadge {
+  flex-shrink: 0;
+}
 .emailSnippet {
   font-size: 0.79rem;
   color: #596b5b;
@@ -806,5 +821,236 @@ h2 {
     animation: none !important;
     transition: none !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* Read-only conversations extend the mailbox's paper-and-ink palette. */
+a.emailRow {
+  text-decoration: none;
+  color: var(--ink);
+  border-radius: 3px;
+}
+a.emailRow:hover {
+  background: #edf2eb;
+}
+a.emailRow:focus-visible {
+  outline-offset: -3px;
+}
+.threadView {
+  padding: 24px clamp(22px, 4vw, 56px) 40px;
+  max-width: 1250px;
+}
+.threadToolbar {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 32px;
+}
+.threadToolbar .textButton {
+  padding-left: 0;
+}
+.threadHeading {
+  padding-bottom: 20px;
+}
+.threadHeading h1 {
+  font-size: clamp(1.65rem, 3vw, 2.5rem);
+  overflow-wrap: anywhere;
+  margin-bottom: 16px;
+}
+.threadHeading h1:focus {
+  outline: none;
+}
+.threadHeading .muted {
+  font-size: 0.78rem;
+}
+.threadMessages {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-bottom: 1px solid var(--line);
+}
+.threadMessage {
+  border-top: 1px solid var(--line);
+  background: var(--paper);
+}
+.messageSummary {
+  list-style: none;
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto 18px;
+  align-items: center;
+  gap: 14px;
+  padding: 22px 18px;
+}
+.messageSummary::-webkit-details-marker {
+  display: none;
+}
+.messageSummary:hover {
+  background: #f1f5ed;
+}
+.messageSummary:focus-visible {
+  outline-offset: -3px;
+}
+.messageIdentity {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}
+.messageIdentity strong {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.messageIdentity > span {
+  font-size: 0.73rem;
+  color: var(--muted);
+}
+.messageTime {
+  display: flex;
+  gap: 9px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+}
+.messageTime time {
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+.messageChevron {
+  transition: transform 160ms ease-out;
+}
+.threadMessage[open] > summary .messageChevron {
+  transform: rotate(180deg);
+}
+.messageContent {
+  padding: 0 24px 22px 68px;
+}
+.messageRecipients {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 7px 12px;
+  font-size: 0.74rem;
+  color: var(--muted);
+  margin: 0 0 20px;
+}
+.messageRecipients dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.messageClassification {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin-bottom: 25px;
+}
+.classificationBadge {
+  display: inline-flex;
+  padding: 5px 9px;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+.classification_customer_request {
+  background: #dcebd7;
+  color: #24503a;
+}
+.classification_customer_reply {
+  background: #e1eaf3;
+  color: #344e69;
+}
+.classification_rate_card {
+  background: #f4e9cf;
+  color: #68501b;
+}
+.classification_general {
+  background: #e9ece5;
+  color: #475649;
+}
+.classificationUnassigned {
+  background: #f0f0e9;
+  color: #536454;
+}
+.messageBody {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.91rem;
+  line-height: 1.75;
+  max-width: 78ch;
+}
+.messageFiles {
+  border-top: 1px solid var(--line);
+  margin-top: 28px;
+  padding-top: 10px;
+}
+.messageFiles > .textButton {
+  padding-left: 0;
+}
+.attachmentList {
+  list-style: none;
+  padding: 0;
+  margin: 6px 0 0;
+}
+.attachmentFile {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+}
+.attachmentIdentity {
+  display: grid;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}
+.attachmentIdentity strong {
+  font-size: 0.8rem;
+  font-weight: 550;
+}
+.attachmentIdentity > span,
+.attachmentNote,
+.threadFootnote {
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+.attachmentFile .formError {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+.threadFootnote {
+  line-height: 1.7;
+  margin: 24px 0 0;
+  max-width: 75ch;
+}
+@media (max-width: 600px) {
+  .messageSummary {
+    grid-template-columns: minmax(0, 1fr) 18px;
+    padding: 20px 10px;
+    gap: 10px;
+  }
+  .messageSummary .senderAvatar {
+    display: none;
+  }
+  .messageTime {
+    grid-column: 1;
+    grid-row: 2;
+    justify-content: flex-start;
+  }
+  .messageChevron {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .messageContent {
+    padding: 0 10px 22px;
+  }
+  .attachmentFile {
+    grid-template-columns: 18px minmax(0, 1fr);
+  }
+  .attachmentFile button {
+    grid-column: 2;
+    justify-self: start;
   }
 }
