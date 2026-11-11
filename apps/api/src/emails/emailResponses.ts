@@ -1,6 +1,17 @@
 import type { EmailDetail, EmailSummary } from '@lc/core';
 import type { EmailDetailResponse, EmailSummaryResponse } from '@lc/contract';
 
+function toCurrentClassificationResponse(classification: EmailSummary['classification']) {
+  return classification
+    ? {
+        label: classification.label,
+        source: classification.source,
+        confidence: classification.confidence,
+        classifiedAt: classification.classifiedAt.toISOString(),
+      }
+    : null;
+}
+
 export function toEmailSummaryResponse(email: EmailSummary): EmailSummaryResponse {
   return {
     id: email.id,
@@ -11,6 +22,7 @@ export function toEmailSummaryResponse(email: EmailSummary): EmailSummaryRespons
     subject: email.subject,
     snippet: email.snippet,
     receivedAt: email.receivedAt.toISOString(),
+    classification: toCurrentClassificationResponse(email.classification),
   };
 }
 
@@ -21,13 +33,5 @@ export function toEmailDetailResponse(email: EmailDetail): EmailDetailResponse {
     rfcMessageId: email.rfcMessageId,
     bodyText: email.bodyText,
     bodyHtml: email.bodyHtml,
-    classification: email.classification
-      ? {
-          label: email.classification.label,
-          source: email.classification.source,
-          confidence: email.classification.confidence,
-          classifiedAt: email.classification.classifiedAt.toISOString(),
-        }
-      : null,
   };
 }

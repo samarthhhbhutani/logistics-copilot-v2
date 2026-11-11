@@ -28,7 +28,8 @@ export function createInMemoryRepositories(): {
   classificationRuleRepository: ClassificationRuleRepository;
   /** Seeds the inbox list directly; the processor's insert path is not part of the API. Detail fields default to empty. */
   addEmail(
-    email: EmailSummary &
+    email: Omit<EmailSummary, 'classification'> &
+      Partial<Pick<EmailSummary, 'classification'>> &
       Partial<Omit<EmailDetail, keyof EmailSummary>> & { mailboxId: string; tenantId: string },
   ): void;
   /** Sets the current classification of a seeded email. */

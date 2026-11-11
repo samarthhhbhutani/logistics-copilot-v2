@@ -2,10 +2,12 @@ import type { PrismaClient } from '../db/prismaClient.js';
 import type { MailboxScope } from '../connectors/gmail/mailboxConnectionRepository.js';
 import type { EmailListPosition } from './emailListCursor.js';
 import {
+  CURRENT_CLASSIFICATION_SELECT,
   EMAIL_DETAIL_SELECT,
   PRISMA_ENUM_BY_SNAKE_CASE_LABEL,
   SNAKE_CASE_LABEL_BY_PRISMA_ENUM,
   fromJsonAddresses,
+  toCurrentClassification,
   toEmailDetail,
 } from './emailModels.js';
 import type { EmailDetail, EmailSummary, GmailLabel } from './emailModels.js';
@@ -58,6 +60,7 @@ export function createPrismaEmailReadRepository(prismaClient: PrismaClient): Ema
           subject: true,
           snippet: true,
           receivedAt: true,
+          classifications: CURRENT_CLASSIFICATION_SELECT,
         },
       });
       return emails.map((email) => ({
@@ -70,6 +73,7 @@ export function createPrismaEmailReadRepository(prismaClient: PrismaClient): Ema
         subject: email.subject,
         snippet: email.snippet,
         receivedAt: email.receivedAt,
+        classification: toCurrentClassification(email.classifications),
       }));
     },
 

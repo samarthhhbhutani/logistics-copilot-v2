@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   Archive,
   ArrowLeft,
@@ -13,6 +13,8 @@ import {
   TriangleAlert,
 } from 'lucide-react';
 import type { GmailLabel, SessionResponse } from '@lc/contract';
+import { ThreadView } from './threadView.js';
+import { ClassificationBadge } from './classificationBadge.js';
 import { Brand } from './brand.js';
 import { ConnectionPanel } from './connectionPanel.js';
 import { errorMessage, isUnauthenticated, frontendApi } from './frontendApi.js';
@@ -45,6 +47,7 @@ export function MailboxPage({
   const label: GmailLabel | undefined =
     folderValue === 'inbox' || folderValue === 'sent' ? folderValue : undefined;
   const cursor = searchParams.get('cursor') || undefined;
+  const selectedEmailId = searchParams.get('email');
   const outcome = {
     connected: searchParams.get('connected') === '1',
     error: searchParams.get('error') || undefined,
@@ -58,7 +61,7 @@ export function MailboxPage({
   const emails = useQuery({
     queryKey: ['emails', session.tenantId, session.mailboxId, label, cursor],
     queryFn: ({ signal }) => frontendApi.emails(session, label, cursor, signal),
-    enabled: Boolean(mailbox.data) && !isOutcomePage && !isSetupPage,
+    enabled: Boolean(mailbox.data) && !isOutcomePage && !isSetupPage && !selectedEmailId,
   });
   const connect = useMutation({
     mutationFn: frontendApi.connect,
@@ -77,8 +80,8 @@ export function MailboxPage({
   }, [expired, onSignedOut]);
   const folder = folders.find((entry) => entry.label === label) ?? folders[0];
   useEffect(() => {
-    document.title = `${folder.title} · Logistics Copilot`;
-  }, [folder.title]);
+    if (!selectedEmailId) document.title = `${folder.title} · Logistics Copilot`;
+  }, [folder.title, selectedEmailId]);
   function changeFolder(nextLabel?: GmailLabel) {
     setSearchParams(nextLabel ? { label: nextLabel } : {});
   }
@@ -188,6 +191,15 @@ export function MailboxPage({
                 }}
                 onContinue={() => changeFolder(label)}
               />
+            ) : selectedEmailId ? (
+              <ThreadView
+                key={selectedEmailId}
+                emailId={selectedEmailId}
+                session={session}
+                onSignedOut={onSignedOut}
+                backTo={`/mailbox${label || cursor ? `?${new URLSearchParams({ ...(label ? { label } : {}), ...(cursor ? { cursor } : {}) })}` : ''}`}
+                backLabel={folder.title}
+              />
             ) : (
               <>
                 <div className="mailHeading">
@@ -292,36 +304,55 @@ export function MailboxPage({
                                 .join(', ') || 'Undisclosed recipients'
                             : email.sender.name || email.sender.email || 'Unknown sender';
                         return (
-                          <li className="emailRow" key={email.id}>
-                            <span
-                              className={`senderAvatar ${email.gmailLabel === 'sent' ? 'sentAvatar' : ''}`}
-                              aria-hidden="true"
+                          <li key={email.id}>
+                            <Link
+                              className="emailRow"
+                              to={{
+                                pathname: '/mailbox',
+                                search: `?${new URLSearchParams({ ...(label ? { label } : {}), ...(cursor ? { cursor } : {}), email: email.id })}`,
+                              }}
                             >
-                              {sender.slice(0, 1).toUpperCase()}
-                            </span>
-                            <div className="emailSummary">
-                              <div className="emailSender">
-                                <span title={sender}>
-                                  {email.gmailLabel === 'sent' ? `To: ${sender}` : sender}
-                                </span>
-                                <span className="mailLabel">
-                                  {email.gmailLabel === 'sent' ? 'Sent' : 'Inbox'}
-                                </span>
+                              <span
+                                className={`senderAvatar ${email.gmailLabel === 'sent' ? 'sentAvatar' : ''}`}
+                                aria-hidden="true"
+                              >
+                                {sender.slice(0, 1).toUpperCase()}
+                              </span>
+                              <div className="emailSummary">
+                                <div className="emailSender">
+                                  <span title={sender}>
+                                    {email.gmailLabel === 'sent' ? `To: ${sender}` : sender}
+                                  </span>
+                                  <span className="mailLabel">
+                                    {email.gmailLabel === 'sent' ? 'Sent' : 'Inbox'}
+                                  </span>
+                                </div>
+                                <div className="emailSubjectLine">
+                                  <p className="emailSubject">{email.subject || '(No subject)'}</p>
+                                  {email.classification ? (
+                                    <ClassificationBadge label={email.classification.label} />
+                                  ) : (
+                                    <span className="classificationBadge classificationUnassigned">
+                                      {email.gmailLabel === 'sent'
+                                        ? 'Not classified'
+                                        : 'Not classified yet'}
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="emailSnippet">
+                                  {email.snippet || 'No preview available'}
+                                </p>
                               </div>
-                              <p className="emailSubject">{email.subject || '(No subject)'}</p>
-                              <p className="emailSnippet">
-                                {email.snippet || 'No preview available'}
-                              </p>
-                            </div>
-                            <time
-                              dateTime={email.receivedAt}
-                              title={new Date(email.receivedAt).toLocaleString()}
-                            >
-                              {new Intl.DateTimeFormat(undefined, {
-                                month: 'short',
-                                day: 'numeric',
-                              }).format(new Date(email.receivedAt))}
-                            </time>
+                              <time
+                                dateTime={email.receivedAt}
+                                title={new Date(email.receivedAt).toLocaleString()}
+                              >
+                                {new Intl.DateTimeFormat(undefined, {
+                                  month: 'short',
+                                  day: 'numeric',
+                                }).format(new Date(email.receivedAt))}
+                              </time>
+                            </Link>
                           </li>
                         );
                       })}
@@ -358,9 +389,7 @@ export function MailboxPage({
                     {emails.data
                       ? `${emails.data.emails.length} messages on this page`
                       : 'Mailbox preview'}
-                    <span className="footerNote">
-                      Message detail comes in the next inbox release.
-                    </span>
+                    <span className="footerNote">Open a message to read its conversation.</span>
                   </span>
                   <div className="pagination">
                     {cursor && (

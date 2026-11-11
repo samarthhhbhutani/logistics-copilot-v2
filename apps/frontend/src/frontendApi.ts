@@ -1,4 +1,8 @@
 import {
+  attachmentDownloadUrlResponseSchema,
+  emailDetailSchema,
+  listAttachmentsResponseSchema,
+  threadResponseSchema,
   gmailConnectResponseSchema,
   listEmailsResponseSchema,
   mailboxResponseSchema,
@@ -59,6 +63,23 @@ function requireMatchingSession<ResponseBody extends SessionResponse>(
   return body;
 }
 
+/** A scoped 404 may mean another tab replaced the cookie, rather than a missing message. */
+async function requestMailJson<ResponseBody>(
+  session: SessionResponse,
+  path: string,
+  schema: { parse(value: unknown): ResponseBody },
+  signal?: AbortSignal,
+): Promise<ResponseBody> {
+  try {
+    return await requestJson(path, schema, { signal });
+  } catch (error) {
+    if (error instanceof FrontendApiError && error.status === 404) {
+      requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
+    }
+    throw error;
+  }
+}
+
 export const frontendApi = {
   async session(signal?: AbortSignal) {
     try {
@@ -97,6 +118,62 @@ export const frontendApi = {
       session,
     );
   },
+  async thread(session: SessionResponse, emailId: string, signal?: AbortSignal) {
+    // Anchor the thread to a globally unique email id, not just Gmail's thread id, which can
+    // appear in multiple mailboxes. A cross-tab cookie switch cannot substitute another thread.
+    const email = await requestMailJson(
+      session,
+      `/mailbox/emails/${encodeURIComponent(emailId)}`,
+      emailDetailSchema,
+      signal,
+    );
+    if (email.id !== emailId) throw new FrontendApiError(502, 'invalid_response');
+    const thread = await requestMailJson(
+      session,
+      `/mailbox/threads/${encodeURIComponent(email.gmailThreadId)}`,
+      threadResponseSchema,
+      signal,
+    );
+    if (
+      thread.gmailThreadId !== email.gmailThreadId ||
+      !thread.emails.some((message) => message.id === emailId) ||
+      thread.emails.some((message) => message.gmailThreadId !== email.gmailThreadId)
+    ) {
+      throw new FrontendApiError(401, 'session_changed');
+    }
+    requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
+    return thread;
+  },
+  async attachments(session: SessionResponse, emailId: string, signal?: AbortSignal) {
+    const body = await requestMailJson(
+      session,
+      `/mailbox/emails/${encodeURIComponent(emailId)}/attachments`,
+      listAttachmentsResponseSchema,
+      signal,
+    );
+    if (body.emailId !== emailId) throw new FrontendApiError(502, 'invalid_response');
+    requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
+    return body;
+  },
+  async attachmentDownload(
+    session: SessionResponse,
+    emailId: string,
+    attachmentId: string,
+    signal?: AbortSignal,
+  ) {
+    const body = await requestMailJson(
+      session,
+      `/mailbox/emails/${encodeURIComponent(emailId)}/attachments/${encodeURIComponent(attachmentId)}/download-url`,
+      attachmentDownloadUrlResponseSchema,
+      signal,
+    );
+    const target = new URL(body.url);
+    if (target.protocol !== 'https:' || target.username || target.password) {
+      throw new FrontendApiError(502, 'invalid_download_url');
+    }
+    requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
+    return body;
+  },
   connect() {
     return requestJson('/mailbox/gmail/connect', gmailConnectResponseSchema, { method: 'POST' });
   },
@@ -111,9 +188,12 @@ export function errorMessage(error: unknown): string {
     if (error.code === 'invalid_credentials')
       return 'That email and password do not match. Please try again.';
     if (error.status === 401) return 'Your session has expired. Sign in again to continue.';
+    if (error.code === 'attachments_unavailable')
+      return 'Downloads are temporarily unavailable. Please try again later.';
     if (error.status === 429) return 'Too many requests. Please try again in a moment.';
     if (error.code === 'mailbox_not_found')
       return 'Your mailbox is unavailable. Please contact your workspace administrator.';
+    if (error.status === 404) return 'This message is no longer available in your mailbox.';
     if (error.code === 'google_client_not_configured' || error.code === 'pubsub_not_configured') {
       return 'Gmail setup is not complete for your workspace. Please contact your administrator.';
     }
