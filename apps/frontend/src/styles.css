@@ -1054,3 +1054,16 @@ a.emailRow:focus-visible {
     justify-self: start;
   }
 }
+
+.emailHtmlFrame {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+}
+.inlineImageStatus {
+  font-size: 0.75rem;
+}
+.inlineImageStatus .textButton {
+  padding-left: 0;
+}

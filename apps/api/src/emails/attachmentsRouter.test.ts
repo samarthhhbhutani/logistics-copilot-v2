@@ -1,5 +1,6 @@
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
+import { listAttachmentsResponseSchema } from '@lc/contract';
 import { fakeDownloadUrlExpiresAt } from '../fakeAttachmentDownloadUrlSigner.test-helper.js';
 import { testTenantBody } from '../tenantFixture.test-helper.js';
 import { createTestApp, testMailboxEmail } from '../testAppInstance.test-helper.js';
@@ -109,6 +110,7 @@ describe('GET /v1/mailbox/emails/:emailId/attachments', () => {
           contentType: 'application/pdf',
           sizeBytes: 12345,
           isInline: false,
+          contentId: null,
         },
         {
           id: logoAttachmentId,
@@ -116,11 +118,14 @@ describe('GET /v1/mailbox/emails/:emailId/attachments', () => {
           contentType: 'image/png',
           sizeBytes: 8,
           isInline: true,
+          contentId: 'logo@acme.com',
         },
       ],
     });
     expect(JSON.stringify(response.body)).not.toContain('s3Key');
     expect(JSON.stringify(response.body)).not.toContain('sha256');
+    expect(JSON.stringify(response.body)).not.toContain('not-yours.pdf');
+    expect(listAttachmentsResponseSchema.parse(response.body)).toEqual(response.body);
 
     const anonymous = await request(testApp.app).get(`/v1/mailbox/emails/${emailId}/attachments`);
     expect(anonymous.status).toBe(401);
