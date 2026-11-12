@@ -56,7 +56,8 @@ export function createEmailDocument(sanitized: ReturnType<typeof sanitizeEmailHt
   const policy = `default-src 'none'; script-src '${emailFrameLayoutScriptHash}'; script-src-attr 'none'; style-src 'unsafe-inline'; img-src ${imageSources}; base-uri 'none'; form-action 'none'; object-src 'none'`;
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="${policy}"><style>
     :root { color-scheme: light; overflow: hidden; } body { display: flow-root; margin: 0; padding: 0; color: #263e30; background: transparent; font: 15px/1.75 sans-serif; overflow-wrap: anywhere; }
-    img { max-width: 100% !important; height: auto; } table { max-width: 100% !important; table-layout: fixed; border-collapse: collapse; } table:not([width]):not([style*="width"]) { width: 100%; } td, th { overflow-wrap: anywhere; }
+    img { max-width: 100% !important; height: auto !important; } table { max-width: 100% !important; table-layout: auto; border-collapse: collapse; } :where(table:not([width]):not([style*="width"])) { width: 100%; } td, th { overflow-wrap: anywhere; }
+    :where(div, p, pre, blockquote, center, ul, ol, li, h1, h2, h3, h4, h5, h6) { max-width: 100%; box-sizing: border-box !important; }
     pre { white-space: pre-wrap; } blockquote { margin: 12px 0; padding-left: 14px; border-left: 2px solid #dce2d7; } a { color: #24583c; } p:first-child { margin-top: 0; } p:last-child { margin-bottom: 0; }
   </style></head><body>${sanitized.html}<script>${emailFrameLayoutScript}</script></body></html>`;
 }

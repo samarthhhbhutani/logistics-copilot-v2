@@ -1,4 +1,5 @@
 import DOMPurify from 'dompurify';
+import { constrainEmailLayout } from './emailLayoutConstraints.js';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { Letter } from 'react-letter';
@@ -303,7 +304,7 @@ export function sanitizeEmailHtml(
   const container = fragment.ownerDocument.createElement('div');
   container.append(fragment);
   return {
-    html: container.innerHTML,
+    html: constrainEmailLayout(container.innerHTML),
     contentIds: [...contentIds],
     blockedImageCount,
     imageOrigins: [...imageOrigins],
