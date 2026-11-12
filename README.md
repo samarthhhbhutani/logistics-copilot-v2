@@ -123,13 +123,14 @@ same text. `body_html` and the `.eml` in S3 stay complete.
 
 ## Reading mail
 
-| Route                                    | Does                                                                                                                      |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `GET /v1/mailbox/emails`                 | list, newest first, cursor paged, `?label=inbox\|sent`; list fields only                                                  |
-| `GET /v1/mailbox/emails/:emailId`        | one mail: list fields plus `ccRecipients`, `rfcMessageId`, `bodyText`, `bodyHtml`, `classification` (newest row or null)  |
-| `GET /v1/mailbox/threads/:gmailThreadId` | `{ gmailThreadId, emails }`: every stored message of the thread in this mailbox, inbox and sent, oldest first, same shape |
+| Route                                              | Does                                                                                                                                                                   |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /v1/mailbox/emails`                           | list, newest first, cursor paged, `?label=inbox\|sent`; list fields only                                                                                               |
+| `GET /v1/mailbox/emails/:emailId`                  | one mail: list fields plus `ccRecipients`, `rfcMessageId`, `bodyText`, `bodyHtml`, `classification` (newest row or null)                                               |
+| `GET /v1/mailbox/threads/:gmailThreadId`           | `{ gmailThreadId, emails }`: every stored message of the thread in this mailbox, inbox and sent, oldest first, same shape                                              |
+| `POST /v1/mailbox/emails/:emailId/classifications` | `{ label }`: operator correction, appends a `source = user` row; 201 with the new current classification; 409 `not_inbound` for sent mail (rules under Classification) |
 
-All three are scoped to the session's mailbox and tenant; anything outside answers 404, as does a
+All four are scoped to the session's mailbox and tenant; anything outside answers 404, as does a
 malformed id. The thread view is built from rows, one per message, which is why `body_text` above
 drops quoted history for known threads: the history is already on screen as its own messages.
 
@@ -204,6 +205,13 @@ tenant has at most one rule per pattern (409 `rule_exists`) and at most 200 rule
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `GET /v1/mailbox/classification-rules`  | every rule of the session tenant, disabled included, priority ascending                                |
 | `POST /v1/mailbox/classification-rules` | `{ senderPattern, label, priority? }` (priority defaults to 100); 201 with the stored, normalised rule |
+
+Operators correct a label with `POST /v1/mailbox/emails/:emailId/classifications` (table under
+Reading mail). Any of the four labels is allowed, including `customer_reply`: the derived-only
+restriction is on rules and the model, not on people. The row is appended even when the label is
+unchanged, because a confirmation is worth recording. The effect on the thread is forward only: relabelling a mail to `customer_request` makes later inbound mails in
+that thread derive `customer_reply`, relabelling the request to anything else stops the chain, and
+rows already written are never rewritten.
 
 ## Database
 

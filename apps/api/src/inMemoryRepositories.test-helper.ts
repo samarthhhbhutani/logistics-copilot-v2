@@ -5,6 +5,7 @@ import type {
   AttachmentSummary,
   ClassificationRule,
   ClassificationRuleRepository,
+  EmailClassificationRepository,
   CurrentClassification,
   EmailDetail,
   EmailReadRepository,
@@ -26,6 +27,7 @@ export function createInMemoryRepositories(): {
   emailReadRepository: EmailReadRepository;
   attachmentRepository: AttachmentRepository;
   classificationRuleRepository: ClassificationRuleRepository;
+  emailClassificationRepository: EmailClassificationRepository;
   /** Seeds the inbox list directly; the processor's insert path is not part of the API. Detail fields default to empty. */
   addEmail(
     email: Omit<EmailSummary, 'classification'> &
@@ -184,6 +186,21 @@ export function createInMemoryRepositories(): {
         };
         classificationRules.push(rule);
         return { outcome: 'created', rule };
+      },
+    },
+    emailClassificationRepository: {
+      async appendUserClassification(scope, emailId, label) {
+        const email = emailsInScope(scope).find((candidate) => candidate.id === emailId);
+        if (!email) return { outcome: 'not_found' };
+        if (email.gmailLabel !== 'inbox') return { outcome: 'not_inbound' };
+        const classification = {
+          label,
+          source: 'user' as const,
+          confidence: null,
+          classifiedAt: new Date(),
+        };
+        email.classification = classification;
+        return { outcome: 'appended', classification };
       },
     },
     addEmail(email) {
