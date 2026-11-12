@@ -7,6 +7,7 @@ import { errorMessage, frontendApi, FrontendApiError, isUnauthenticated } from '
 import { MessageAttachments } from './messageAttachments.js';
 import { ClassificationBadge } from './classificationBadge.js';
 import { EmailBody } from './emailBody.js';
+import { ClassificationCorrection } from './classificationCorrection.js';
 
 const sourceTitles: Record<ClassificationSource, string> = {
   thread: 'From this conversation',
@@ -113,6 +114,10 @@ export function ThreadView({
                   email={email}
                   session={session}
                   onSignedOut={onSignedOut}
+                  onRefresh={async () => {
+                    const result = await thread.refetch();
+                    return !result.isError && Boolean(result.data);
+                  }}
                   initiallyOpen={index === 0 || email.id === emailId}
                 />
               </li>
@@ -133,11 +138,13 @@ function ThreadMessage({
   session,
   onSignedOut,
   initiallyOpen,
+  onRefresh,
 }: {
   email: EmailDetailResponse;
   session: SessionResponse;
   onSignedOut: () => void;
   initiallyOpen: boolean;
+  onRefresh: () => Promise<boolean>;
 }) {
   const [open, setOpen] = useState(initiallyOpen);
   const [showFiles, setShowFiles] = useState(false);
@@ -215,6 +222,12 @@ function ThreadMessage({
                   : 'Not classified yet'}
               </span>
             )}
+            <ClassificationCorrection
+              email={email}
+              session={session}
+              onSignedOut={onSignedOut}
+              onRefresh={onRefresh}
+            />
           </div>
           <EmailBody email={email} session={session} onSignedOut={onSignedOut} />
           <div className="messageFiles">

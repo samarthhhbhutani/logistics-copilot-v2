@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FrontendApiError, frontendApi } from './frontendApi.js';
+import { ClassificationOutcomeUnknownError, FrontendApiError, frontendApi } from './frontendApi.js';
 
 const session = {
   mailboxId: '00000000-0000-4000-8000-000000000001',
@@ -378,5 +378,226 @@ describe('transport retries', () => {
     const pending = frontendApi.session();
     await vi.advanceTimersByTimeAsync(60_000);
     await expect(pending).resolves.toEqual(session);
+  });
+});
+
+describe('classification correction', () => {
+  const correction = {
+    label: 'customer_reply',
+    source: 'user',
+    confidence: null,
+    classifiedAt: '2026-11-13T09:00:00.000Z',
+  } as const;
+
+  it('checks the cookie before and after a non-replaying POST, validates the response', async () => {
+    const fetchMock = mockResponses(session, correction, session);
+    const controller = new AbortController();
+    await expect(
+      frontendApi.correctClassification(session, emailId, 'customer_reply', controller.signal),
+    ).resolves.toEqual(correction);
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      '/v1/me',
+      `/v1/mailbox/emails/${emailId}/classifications`,
+      '/v1/me',
+    ]);
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
+      method: 'POST',
+      body: JSON.stringify({ label: 'customer_reply' }),
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      signal: expect.any(AbortSignal),
+    });
+  });
+
+  it.each(['tenantId', 'mailboxId'] as const)(
+    'rejects a cookie switch of %s before the write',
+    async (field) => {
+      const fetchMock = mockResponses({ ...session, [field]: emailId });
+      await expect(frontendApi.correctClassification(session, emailId, 'general')).rejects.toEqual(
+        new FrontendApiError(401, 'session_changed'),
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('does not attempt a POST when the preflight identity read fails', async () => {
+    const unavailable = vi.fn().mockResolvedValue(new Response('{}', { status: 401 }));
+    vi.stubGlobal('fetch', unavailable);
+    await expect(frontendApi.correctClassification(session, emailId, 'rate_card')).rejects.toEqual(
+      new FrontendApiError(401, 'request_failed'),
+    );
+    expect(unavailable).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats a postflight outage as unknown without trying another POST', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(session)))
+      .mockResolvedValueOnce(new Response(JSON.stringify(correction)))
+      .mockResolvedValueOnce(new Response('{}', { status: 503 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 503 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 503 }));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.useFakeTimers();
+    try {
+      const pending = frontendApi.correctClassification(session, emailId, 'customer_reply');
+      const rejected = expect(pending).rejects.toEqual(new ClassificationOutcomeUnknownError());
+      await vi.advanceTimersByTimeAsync(1_500);
+      await rejected;
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      '/v1/me',
+      `/v1/mailbox/emails/${emailId}/classifications`,
+      '/v1/me',
+      '/v1/me',
+      '/v1/me',
+    ]);
+  });
+
+  it('rejects an account switch after the write without returning cross-account data', async () => {
+    const fetchMock = mockResponses(session, correction, { ...session, tenantId: emailId });
+    await expect(
+      frontendApi.correctClassification(session, emailId, 'customer_reply'),
+    ).rejects.toMatchObject({ code: 'session_changed' });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('checks identity on a scoped 404 but preserves a genuine missing-message error', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(session)))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'not_found' }), { status: 404 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...session, mailboxId: emailId })));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(frontendApi.correctClassification(session, emailId, 'rate_card')).rejects.toEqual(
+      new FrontendApiError(401, 'session_changed'),
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    const unchanged = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(session)))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'not_found' }), { status: 404 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(session)));
+    vi.stubGlobal('fetch', unchanged);
+    await expect(frontendApi.correctClassification(session, emailId, 'rate_card')).rejects.toEqual(
+      new FrontendApiError(404, 'not_found'),
+    );
+    expect(unchanged).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(['503', 'network'] as const)(
+    'preserves a correction 404 when its identity recheck fails with %s',
+    async (failure) => {
+      vi.useFakeTimers();
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify(session)))
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ error: 'not_found' }), { status: 404 }),
+        )
+        .mockImplementation(async () => {
+          if (failure === 'network') throw new TypeError('Connection reset');
+          return new Response('{}', { status: 503 });
+        });
+      vi.stubGlobal('fetch', fetchMock);
+      const rejected = expect(
+        frontendApi.correctClassification(session, emailId, 'rate_card'),
+      ).rejects.toEqual(new FrontendApiError(404, 'not_found'));
+      await vi.advanceTimersByTimeAsync(1_500);
+      await rejected;
+      expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+        '/v1/me',
+        `/v1/mailbox/emails/${emailId}/classifications`,
+        '/v1/me',
+        '/v1/me',
+        '/v1/me',
+      ]);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it('propagates an expired session during a correction 404 identity recheck', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(session)))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'not_found' }), { status: 404 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: 'not_authenticated' }), { status: 401 }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(frontendApi.correctClassification(session, emailId, 'general')).rejects.toEqual(
+      new FrontendApiError(401, 'not_authenticated'),
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('preserves cancellation during a correction 404 identity recheck', async () => {
+    const controller = new AbortController();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(session)))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'not_found' }), { status: 404 }))
+      .mockImplementationOnce(async () => {
+        controller.abort(new Error('navigated'));
+        return new Response('{}', { status: 503 });
+      });
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(
+      frontendApi.correctClassification(session, emailId, 'general', controller.signal),
+    ).rejects.toThrow('navigated');
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not replay a 503 or a lost response because even a confirmation appends a row', async () => {
+    const failed = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(session)))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: 'unavailable' }), { status: 503 }),
+      );
+    vi.stubGlobal('fetch', failed);
+    await expect(frontendApi.correctClassification(session, emailId, 'general')).rejects.toEqual(
+      new ClassificationOutcomeUnknownError(),
+    );
+    expect(failed).toHaveBeenCalledTimes(2);
+    const disconnected = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(session)))
+      .mockRejectedValueOnce(new TypeError('Connection reset'));
+    vi.stubGlobal('fetch', disconnected);
+    await expect(frontendApi.correctClassification(session, emailId, 'general')).rejects.toEqual(
+      new ClassificationOutcomeUnknownError(),
+    );
+    expect(disconnected).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects a response that disagrees with the appended user label', async () => {
+    const wrongLabel = mockResponses(session, correction, session);
+    await expect(frontendApi.correctClassification(session, emailId, 'rate_card')).rejects.toEqual(
+      new ClassificationOutcomeUnknownError(),
+    );
+    expect(wrongLabel).toHaveBeenCalledTimes(3);
+    const wrongSource = mockResponses(session, { ...correction, source: 'llm' }, session);
+    await expect(
+      frontendApi.correctClassification(session, emailId, 'customer_reply'),
+    ).rejects.toEqual(new ClassificationOutcomeUnknownError());
+    expect(wrongSource).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not accept an invalid response or aborted request as a saved classification', async () => {
+    const invalid = mockResponses(session, { ...correction, label: 'not_a_label' });
+    await expect(frontendApi.correctClassification(session, emailId, 'general')).rejects.toThrow();
+    expect(invalid).toHaveBeenCalledTimes(2);
+    const controller = new AbortController();
+    const aborted = mockResponses(session);
+    controller.abort(new Error('navigated'));
+    await expect(
+      frontendApi.correctClassification(session, emailId, 'general', controller.signal),
+    ).rejects.toThrow('navigated');
+    expect(aborted).toHaveBeenCalledTimes(0);
   });
 });
