@@ -332,3 +332,41 @@ describe('selectInlineAttachments', () => {
     ).toHaveLength(MAX_INLINE_IMAGES);
   });
 });
+
+describe('downloaded raster CID images', () => {
+  it('rejects oversized app-supplied data before matching base64', () => {
+    const dataUrl = `data:image/png;base64,${'A'.repeat(Math.ceil(MAX_INLINE_IMAGE_BYTES / 3) * 4 + 64)}`;
+    const result = sanitizeEmailHtml('<img src="cid:logo">', new Map([['logo', dataUrl]]));
+    expect(parse(result.html).querySelector('img')).toBeNull();
+    expect(result.imageOrigins).toEqual([]);
+  });
+
+  it('permits app-supplied raster data for CID src, srcset and CSS only', () => {
+    const dataUrl = 'data:image/png;base64,cG5n';
+    const result = sanitizeEmailHtml(
+      '<img src="cid:logo"><img srcset="cid:logo 1x"><div style="background-image:url(cid:logo)">Logo</div><img src="data:image/png;base64,cG5n">',
+      new Map([['logo', dataUrl]]),
+    );
+    const document = parse(result.html);
+    expect(document.querySelectorAll('img')).toHaveLength(2);
+    expect(document.querySelector('img')?.getAttribute('src')).toBe(dataUrl);
+    expect(document.querySelector('[srcset]')?.getAttribute('srcset')).toBe(`${dataUrl} 1x`);
+    expect(document.querySelector('[style]')?.getAttribute('style')).toContain(dataUrl);
+    expect(result.imageOrigins).toEqual(['data:']);
+    expect(result.blockedImageCount).toBe(1);
+    expect(createEmailDocument(result)).toContain('img-src data:');
+    expect(createEmailDocument(result)).toContain("default-src 'none'");
+  });
+  it.each([
+    'data:image/svg+xml;base64,PHN2Zz4=',
+    'data:text/html;base64,PHNjcmlwdD4=',
+    'data:image/png;base64,abc" onclick="alert(1)',
+    'blob:https://app.example/id',
+  ])('rejects non-raster or malformed app-supplied data %s', (dataUrl) => {
+    expect(
+      parse(
+        sanitizeEmailHtml('<img src="cid:logo">', new Map([['logo', dataUrl]])).html,
+      ).querySelector('img'),
+    ).toBeNull();
+  });
+});

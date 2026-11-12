@@ -258,6 +258,7 @@ if (!imageBytes) throw new Error('synthetic inline logo is missing');
 const responsiveImageBytes = await readFile(
   new URL('./fixtures/responsiveLogo.png', import.meta.url),
 );
+const slowBodyCases = new Set<string>();
 const imageServer = createServer(
   { key: readFileSync(keyFile), cert: readFileSync(certificateFile) },
   (request, response) => {
@@ -269,13 +270,36 @@ const imageServer = createServer(
       response.writeHead(403).end();
       return;
     }
-    response.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' });
+    const headers: Record<string, string> = {
+      'Content-Type': 'image/png',
+      'Cache-Control': 'no-store',
+    };
     const requestUrl = new URL(request.url ?? '/', 'https://127.0.0.1');
-    response.end(
-      requestUrl.searchParams.get('kind')?.startsWith('responsive')
-        ? responsiveImageBytes
-        : imageBytes,
-    );
+    if (
+      request.headers.origin === 'http://127.0.0.1:4180' &&
+      requestUrl.searchParams.get('retryScenario') !== 'corsDenied'
+    ) {
+      headers['Access-Control-Allow-Origin'] = request.headers.origin;
+      headers['Vary'] = 'Origin';
+    }
+    response.writeHead(200, headers);
+    const bytes = requestUrl.searchParams.get('kind')?.startsWith('responsive')
+      ? responsiveImageBytes
+      : imageBytes;
+    const retryCase = requestUrl.searchParams.get('retryCase');
+    if (
+      requestUrl.searchParams.get('retryScenario') === 'slowBody' &&
+      retryCase &&
+      !slowBodyCases.has(retryCase)
+    ) {
+      slowBodyCases.add(retryCase);
+      response.flushHeaders();
+      response.write(bytes.subarray(0, 1));
+      const delayedBody = setTimeout(() => response.end(bytes.subarray(1)), 30_000);
+      response.on('close', () => clearTimeout(delayedBody));
+      return;
+    }
+    response.end(bytes);
   },
 );
 imageServer.listen(imagePort, '127.0.0.1');

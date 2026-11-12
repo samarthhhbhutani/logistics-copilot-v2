@@ -6,6 +6,7 @@ import '@fontsource-variable/dm-sans';
 import { FrontendApp } from './frontendApp.js';
 import './styles.css';
 
+// frontendRequest.ts already retries transient failures; React Query retries would multiply them.
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: { retry: false, staleTime: 30_000, refetchOnWindowFocus: true },
