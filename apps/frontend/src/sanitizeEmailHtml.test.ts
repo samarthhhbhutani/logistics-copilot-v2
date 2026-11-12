@@ -59,7 +59,9 @@ describe('sanitizeEmailHtml', () => {
       'http://cdn.example',
       'https://images.example',
     ]);
-    expect(document.querySelector('[style]')?.getAttribute('style')).toContain('background-image');
+    expect(document.querySelector('div[style]')?.getAttribute('style')).toContain(
+      'background-image',
+    );
     expect(result.blockedImageCount).toBe(0);
   });
 
@@ -351,7 +353,7 @@ describe('downloaded raster CID images', () => {
     expect(document.querySelectorAll('img')).toHaveLength(2);
     expect(document.querySelector('img')?.getAttribute('src')).toBe(dataUrl);
     expect(document.querySelector('[srcset]')?.getAttribute('srcset')).toBe(`${dataUrl} 1x`);
-    expect(document.querySelector('[style]')?.getAttribute('style')).toContain(dataUrl);
+    expect(document.querySelector('div[style]')?.getAttribute('style')).toContain(dataUrl);
     expect(result.imageOrigins).toEqual(['data:']);
     expect(result.blockedImageCount).toBe(1);
     expect(createEmailDocument(result)).toContain('img-src data:');
