@@ -269,7 +269,7 @@ are shown latest first, with the latest and selected messages expanded. Each exp
 sender, recipients, message body and its current classification/source (model confidence when
 present). All mail and Inbox rows show the current classification or an unclassified state, read
 in the list request without fetching each message separately. Files load on demand and downloads
-request a fresh signed link. Messages have one reading view: sanitized HTML when available, plain
+request a fresh signed link, download through the shared transport, recheck the session and save an in-memory file. Messages have one reading view: sanitized HTML when available, plain
 text otherwise. The local prototype uses `react-letter` to preserve supported sender CSS.
 Remote HTTP/HTTPS images and CSS backgrounds load automatically, including tracking pixels;
 opening a message can notify its sender. Scripts, forms, SVG markup and nested frames remain removed.
@@ -278,7 +278,8 @@ selection. Each candidate uses the same remote-URL/CID validation and no-referre
 Invalid candidates are dropped; mixed width/density lists are discarded, retaining a safe `src` fallback.
 Duplicate descriptors keep the first candidate. Height-dependent stylesheet media queries and
 responsive image media/sizes are removed to keep automatic frame sizing stable.
-Relative/data/blob image URLs remain unsupported. Browser mixed-content
+Email-supplied relative/data/blob image URLs remain unsupported. App-created raster data URLs are
+permitted only through scoped CID substitution after a bounded, successful storage download. Browser mixed-content
 rules can still prevent HTTP images on HTTPS pages. CSS imports, unsupported nested rules and
 viewport-height sizing are removed to prevent active resources or auto-height feedback.
 HTML remains in a borderless, opaque sandboxed iframe that grows with its contents, including image
@@ -308,6 +309,40 @@ Thread reads start with a globally unique email id, then verify that the thread 
 before caching it; a Gmail thread id alone can occur in more than one mailbox. Thread and file reads
 also verify `/me` before returning data. Queries are scoped to the current identity and cancelled on
 sign-out. Signed download requests are cancelled when their message leaves the view.
+
+### Frontend request retries and storage deadlines
+
+All application API calls share `frontendRequest.ts`: one initial attempt and at most **two retries**
+for network failures and HTTP 408, 429, 500, 502, 503 or 504. Backoff is 500 ms then 1 second.
+`Retry-After` is honoured up to 5 seconds; longer waits surface the response instead of retrying early.
+Cancellation, other HTTP errors, invalid JSON/schema responses and session mismatches do not retry.
+React Query retries stay disabled to prevent multiplying attempts. GET/HEAD are replayable; the current
+login/logout and consent-URL POSTs explicitly opt in because they do not send mail or create business
+records. Future non-idempotent writes must establish replay safety before opting in.
+
+**Only presigned S3 GETs** get new deadlines: **5 seconds to response headers** and **20 seconds for the
+entire transfer**, per attempt, including the body. Browser JavaScript cannot isolate TCP/TLS setup,
+so the first deadline also includes browser queuing and server response time. Up to three 20-second
+attempts plus backoff may elapse. Other API calls retain their existing timeout behavior (currently
+no application deadline); a request that never settles will not trigger a retry without one.
+
+Storage GETs use CORS, omit cookies and referrers, reject redirects, and enforce the API attachment
+size while streaming. Inline images are downloaded and validated, then inserted as app-created raster data URLs,
+so the opaque email frame does not make another unbounded S3 transfer. Email-supplied data URLs,
+SVGs and executable content remain blocked. File downloads use a short-lived object URL and keep
+the metadata filename; object URLs are revoked after saving or when the component closes. No bytes
+or signed URLs are persisted in browser storage. Navigation/session cancellation stops transfer and
+backoff. Third-party images/styles, navigation and the browser's initial app-asset loading remain
+browser-managed; they do not pass through the application API/S3 request transport.
+
+**Rollout dependency:** deploy bucket CORS before deploying this frontend. The staging bucket rule
+allows GET only from the verified staging frontend and `http://localhost:5173` / `http://127.0.0.1:5173`.
+It does not grant public access: signatures and the private, TLS-only bucket policy still apply.
+Production has no guessed origin or wildcard; configure its verified exact frontend origin before
+rolling out the frontend there. Set the stage-specific CDK context key `frontendOrigins:production`
+(or `frontendOrigins:staging`) to a comma-separated list of exact origins, or a string array in
+`infra/cdk.json`. An unkeyed `frontendOrigins` is rejected. An absent production key deliberately
+leaves CORS disabled. Local synthetic tests supply CORS separately and need no AWS change.
 
 ### Browser tests and synthetic preview
 

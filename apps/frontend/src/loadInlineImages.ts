@@ -1,8 +1,9 @@
 import type { SessionResponse } from '@lc/contract';
 import { FrontendApiError, frontendApi } from './frontendApi.js';
 import { selectInlineAttachments } from './sanitizeEmailHtml.js';
+import { downloadPresignedFile } from './downloadPresignedFile.js';
 
-/** Decode only an API-approved stored image. No email-supplied URL reaches this function. */
+/** A bounded, downloaded raster image. No network request is made during decoding. */
 function verifyImage(url: string, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     signal.throwIfAborted();
@@ -31,6 +32,35 @@ function verifyImage(url: string, signal: AbortSignal): Promise<void> {
   });
 }
 
+/** Data URLs work inside an opaque frame without granting it access to our origin's blob store. */
+function rasterDataUrl(blob: Blob, contentType: string, signal: AbortSignal): Promise<string> {
+  return new Promise((resolve, reject) => {
+    signal.throwIfAborted();
+    const reader = new FileReader();
+    const cleanup = () => {
+      signal.removeEventListener('abort', aborted);
+      reader.onload = null;
+      reader.onerror = null;
+    };
+    const aborted = () => {
+      cleanup();
+      reader.abort();
+      reject(signal.reason);
+    };
+    reader.onload = () => {
+      cleanup();
+      if (typeof reader.result !== 'string') reject(new Error('inline_image_unavailable'));
+      else resolve(reader.result);
+    };
+    reader.onerror = () => {
+      cleanup();
+      reject(new Error('inline_image_unavailable'));
+    };
+    signal.addEventListener('abort', aborted, { once: true });
+    reader.readAsDataURL(new Blob([blob], { type: contentType }));
+  });
+}
+
 export async function loadInlineImages(
   session: SessionResponse,
   emailId: string,
@@ -55,8 +85,14 @@ export async function loadInlineImages(
           controller.signal,
         );
         try {
-          await verifyImage(url, controller.signal);
-          return [contentId, url] as const;
+          const blob = await downloadPresignedFile(url, attachment.sizeBytes, controller.signal);
+          const dataUrl = await rasterDataUrl(
+            blob,
+            attachment.contentType.toLowerCase(),
+            controller.signal,
+          );
+          await verifyImage(dataUrl, controller.signal);
+          return [contentId, dataUrl] as const;
         } catch (error) {
           if (controller.signal.aborted) throw error;
           return undefined;

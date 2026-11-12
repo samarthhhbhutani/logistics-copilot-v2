@@ -9,6 +9,8 @@ import {
   sessionResponseSchema,
 } from '@lc/contract';
 import type { GmailLabel, SessionResponse } from '@lc/contract';
+import { readNetworkResponse, requestWithRetry } from './frontendRequest.js';
+import type { RequestRetryOptions } from './frontendRequest.js';
 
 export class FrontendApiError extends Error {
   constructor(
@@ -25,16 +27,28 @@ async function requestJson<ResponseBody>(
   path: string,
   schema: { parse(value: unknown): ResponseBody },
   options: RequestInit = {},
+  retryOptions?: RequestRetryOptions,
 ): Promise<ResponseBody> {
-  const response = await fetch(`/v1${path}`, {
-    ...options,
-    credentials: 'same-origin',
-    cache: 'no-store',
-    headers: {
-      ...options.headers,
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+  const body = await requestWithRetry(
+    `/v1${path}`,
+    {
+      ...options,
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: {
+        ...options.headers,
+        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      },
     },
-  });
+    readJsonBody,
+    undefined,
+    retryOptions,
+  );
+  // Parsed outside the retry transport so a schema failure is never replayed.
+  return schema.parse(body);
+}
+
+async function readJsonBody(response: Response): Promise<unknown> {
   if (!response.ok) {
     let code = 'request_failed';
     try {
@@ -47,9 +61,11 @@ async function requestJson<ResponseBody>(
     }
     throw new FrontendApiError(response.status, code);
   }
-  const body: unknown = response.status === 204 ? undefined : await response.json();
-  return schema.parse(body);
+  return response.status === 204 ? undefined : await readNetworkResponse(response.json());
 }
+
+/** These POSTs only set or clear the session cookie or return an OAuth URL, so a replay is harmless. */
+const REPLAY_SAFE_POST: RequestRetryOptions = { replaySafe: true };
 
 function requireMatchingSession<ResponseBody extends SessionResponse>(
   body: ResponseBody,
@@ -89,14 +105,21 @@ export const frontendApi = {
       throw error;
     }
   },
-  login(email: string, password: string) {
-    return requestJson('/auth/login', sessionResponseSchema, {
-      method: 'POST',
-      body: JSON.stringify({ email, password }),
-    });
+  login(email: string, password: string, signal?: AbortSignal) {
+    return requestJson(
+      '/auth/login',
+      sessionResponseSchema,
+      { method: 'POST', body: JSON.stringify({ email, password }), signal },
+      REPLAY_SAFE_POST,
+    );
   },
-  logout() {
-    return requestJson('/auth/logout', { parse: () => undefined }, { method: 'POST' });
+  logout(signal?: AbortSignal) {
+    return requestJson(
+      '/auth/logout',
+      { parse: () => undefined },
+      { method: 'POST', signal },
+      REPLAY_SAFE_POST,
+    );
   },
   async mailbox(session: SessionResponse, signal?: AbortSignal) {
     return requireMatchingSession(
@@ -174,8 +197,13 @@ export const frontendApi = {
     requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
     return body;
   },
-  connect() {
-    return requestJson('/mailbox/gmail/connect', gmailConnectResponseSchema, { method: 'POST' });
+  connect(signal?: AbortSignal) {
+    return requestJson(
+      '/mailbox/gmail/connect',
+      gmailConnectResponseSchema,
+      { method: 'POST', signal },
+      REPLAY_SAFE_POST,
+    );
   },
 };
 

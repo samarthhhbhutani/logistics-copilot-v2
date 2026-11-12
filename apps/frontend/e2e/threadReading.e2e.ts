@@ -52,7 +52,10 @@ function fulfillStoredLogo(route: Route, logoBytes: Buffer) {
   return route.fulfill({
     status: 200,
     contentType: 'image/png',
-    headers: { 'Cache-Control': 'no-store' },
+    headers: {
+      'Cache-Control': 'no-store',
+      'Access-Control-Allow-Origin': 'http://127.0.0.1:4180',
+    },
     body: logoBytes,
   });
 }
@@ -61,7 +64,10 @@ function fulfillStorageDenied(route: Route) {
   return route.fulfill({
     status: 403,
     contentType: 'application/xml',
-    headers: { 'Cache-Control': 'no-store' },
+    headers: {
+      'Cache-Control': 'no-store',
+      'Access-Control-Allow-Origin': 'http://127.0.0.1:4180',
+    },
     body: '<Error><Code>AccessDenied</Code></Error>',
   });
 }
@@ -304,7 +310,10 @@ test('opens latest-first conversation with labels, recipients and files; keyboar
     await route.fulfill({
       status: 200,
       contentType: 'application/pdf',
-      headers: { 'Content-Disposition': 'attachment; filename="sailing-offer.pdf"' },
+      headers: {
+        'Content-Disposition': 'attachment; filename="sailing-offer.pdf"',
+        'Access-Control-Allow-Origin': 'http://127.0.0.1:4180',
+      },
       body: 'Synthetic attachment only',
     });
   });
@@ -568,10 +577,7 @@ test('inline-image sample shows the stored CID logo from storage without remote 
   const body = messageFrame(page);
   await expect(body.locator('body')).toContainText('INR 8,500 per BL plus actuals.');
   const logo = body.getByRole('img', { name: 'Swift CHA' });
-  await expect(logo).toHaveAttribute(
-    'src',
-    /^https:\/\/127\.0\.0\.1:4184\/synthetic\/inlineImage\/logo\.png/,
-  );
+  await expect(logo).toHaveAttribute('src', /^data:image\/png;base64,/);
   await expect(logo).toHaveAttribute('referrerpolicy', 'no-referrer');
   await expect
     .poll(() => logo.evaluate((image: HTMLImageElement) => image.naturalWidth))
@@ -1108,10 +1114,7 @@ test('srcset resolves scoped CID attachments and discards unsafe candidates', as
   await expect
     .poll(() => image.evaluate((element: HTMLImageElement) => element.naturalWidth))
     .toBeGreaterThan(0);
-  await expect(image).toHaveAttribute(
-    'srcset',
-    /^https:\/\/127\.0\.0\.1:4184\/synthetic\/inlineImage\/logo\.png\?fileName=logo\.png 1x$/,
-  );
+  await expect(image).toHaveAttribute('srcset', /^data:image\/png;base64,[A-Za-z0-9+/=]+ 1x$/);
   await expect(frame.locator('source')).toHaveCount(0);
   expect(signingRequests).toHaveLength(1);
   expect(remoteRequests).toEqual([]);

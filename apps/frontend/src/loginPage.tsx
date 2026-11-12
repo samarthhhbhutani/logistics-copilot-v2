@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { ArrowRight, LockKeyhole } from 'lucide-react';
 import { useMutation } from '@tanstack/react-query';
@@ -9,16 +9,23 @@ import { errorMessage, frontendApi } from './frontendApi.js';
 
 export function LoginPage({ onSignedIn }: { onSignedIn: (session: SessionResponse) => void }) {
   const passwordInput = useRef<HTMLInputElement>(null);
+  const loginController = useRef<AbortController | null>(null);
+  useEffect(() => () => loginController.current?.abort(), []);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [validationError, setValidationError] = useState<string>();
   const login = useMutation({
-    mutationFn: () => frontendApi.login(email.trim(), password),
+    mutationFn: () => {
+      loginController.current = new AbortController();
+      return frontendApi.login(email.trim(), password, loginController.current.signal);
+    },
     onSuccess: (session) => {
+      if (loginController.current?.signal.aborted) return;
       setPassword('');
       onSignedIn(session);
     },
     onError: () => {
+      if (loginController.current?.signal.aborted) return;
       setPassword('');
       passwordInput.current?.focus();
     },

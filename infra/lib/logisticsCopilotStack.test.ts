@@ -7,14 +7,22 @@ import {
   AWS_REGION,
   OTEL_LAMBDA_LAYER_ARN,
   EMAIL_PROCESSOR_TIMEOUT,
+  resolveFrontendOrigins,
   resolveStage,
+  validateFrontendOrigins,
 } from './stageConfig.js';
 
-function synthesize(stage: 'staging' | 'production' = 'staging'): Template {
+const STAGING_FRONTEND_ORIGIN = 'https://frontend-staging-d909.up.railway.app';
+
+function synthesize(
+  stage: 'staging' | 'production' = 'staging',
+  frontendOrigins?: readonly string[],
+): Template {
   const app = new App();
   const stack = new LogisticsCopilotStack(app, `LogisticsCopilot-${stage}`, {
     stage,
     env: { account: AWS_ACCOUNT_ID, region: AWS_REGION },
+    frontendOrigins,
   });
   return Template.fromStack(stack);
 }
@@ -59,6 +67,83 @@ describe('LogisticsCopilotStack', () => {
         ]),
       },
     });
+  });
+
+  it('staging bucket CORS allows only GET from the verified frontend and the Vite dev server', () => {
+    template.hasResourceProperties('AWS::S3::Bucket', {
+      CorsConfiguration: {
+        CorsRules: [
+          {
+            AllowedMethods: ['GET'],
+            AllowedOrigins: [
+              STAGING_FRONTEND_ORIGIN,
+              'http://localhost:5173',
+              'http://127.0.0.1:5173',
+            ],
+            ExposedHeaders: ['Retry-After'],
+          },
+        ],
+      },
+    });
+    const [corsRule] = Object.values(template.findResources('AWS::S3::Bucket'))[0].Properties
+      .CorsConfiguration.CorsRules;
+    expect(corsRule).not.toHaveProperty('AllowedHeaders');
+    expect(JSON.stringify(corsRule)).not.toContain('*');
+  });
+
+  it(
+    'production bucket has no CORS unless a verified frontend origin is passed in',
+    { timeout: 20_000 },
+    () => {
+      synthesize('production').hasResourceProperties('AWS::S3::Bucket', {
+        CorsConfiguration: Match.absent(),
+      });
+      synthesize('production', ['https://frontend.example.com']).hasResourceProperties(
+        'AWS::S3::Bucket',
+        {
+          CorsConfiguration: {
+            CorsRules: [
+              {
+                AllowedMethods: ['GET'],
+                AllowedOrigins: ['https://frontend.example.com'],
+                ExposedHeaders: ['Retry-After'],
+              },
+            ],
+          },
+          PublicAccessBlockConfiguration: Match.objectLike({ BlockPublicPolicy: true }),
+        },
+      );
+    },
+  );
+
+  it(
+    'production picks only its own context key, never the staging one',
+    { timeout: 20_000 },
+    () => {
+      const synthesizeFromContext = (context: Record<string, unknown>): Template => {
+        const app = new App({ context });
+        const stack = new LogisticsCopilotStack(app, 'LogisticsCopilot-production', {
+          stage: 'production',
+          env: { account: AWS_ACCOUNT_ID, region: AWS_REGION },
+          frontendOrigins: resolveFrontendOrigins(app, 'production'),
+        });
+        return Template.fromStack(stack);
+      };
+      synthesizeFromContext({
+        'frontendOrigins:staging': STAGING_FRONTEND_ORIGIN,
+      }).hasResourceProperties('AWS::S3::Bucket', { CorsConfiguration: Match.absent() });
+      synthesizeFromContext({
+        'frontendOrigins:production': 'https://frontend.example.com',
+      }).hasResourceProperties('AWS::S3::Bucket', {
+        CorsConfiguration: {
+          CorsRules: [Match.objectLike({ AllowedOrigins: ['https://frontend.example.com'] })],
+        },
+      });
+    },
+  );
+
+  it('refuses to synthesize with an invalid frontend origin', () => {
+    expect(() => synthesize('production', ['http://localhost:5173'])).toThrow(/must use https/);
   });
 
   it('Gmail message-id queues long-poll, dead-letter after 3 receives and outlive the Lambda timeout six times', () => {
@@ -258,5 +343,42 @@ describe('resolveStage', () => {
     expect(resolveStage(new App())).toBe('staging');
     expect(resolveStage(new App({ context: { stage: 'production' } }))).toBe('production');
     expect(() => resolveStage(new App({ context: { stage: 'prod' } }))).toThrow(/Unknown stage/);
+  });
+});
+
+describe('validateFrontendOrigins', () => {
+  it('accepts exact https origins in any stage and loopback http only in staging', () => {
+    expect(validateFrontendOrigins('production', [STAGING_FRONTEND_ORIGIN])).toEqual([
+      STAGING_FRONTEND_ORIGIN,
+    ]);
+    expect(
+      validateFrontendOrigins('staging', ['http://localhost:5173', 'http://127.0.0.1:5173']),
+    ).toEqual(['http://localhost:5173', 'http://127.0.0.1:5173']);
+    expect(validateFrontendOrigins('production', [])).toEqual([]);
+  });
+
+  it.each([
+    ['*', /wildcard/],
+    ['https://*.up.railway.app', /wildcard/],
+    ['frontend.example.com', /not a valid URL/],
+    ['null', /not a valid URL/],
+    ['https://frontend.example.com/', /exact origin/],
+    ['https://frontend.example.com/app', /exact origin/],
+    ['https://frontend.example.com:443', /exact origin/],
+    ['https://user:pass@frontend.example.com', /exact origin/],
+    ['HTTPS://Frontend.example.com', /exact origin/],
+    ['http://frontend.example.com', /must use https/],
+    ['http://192.168.1.5:5173', /must use https/],
+  ])('rejects %s', (origin, message) => {
+    expect(() => validateFrontendOrigins('staging', [origin])).toThrow(message);
+  });
+
+  it('rejects loopback http in production and duplicate origins', () => {
+    expect(() => validateFrontendOrigins('production', ['http://localhost:5173'])).toThrow(
+      /must use https/,
+    );
+    expect(() =>
+      validateFrontendOrigins('staging', [STAGING_FRONTEND_ORIGIN, STAGING_FRONTEND_ORIGIN]),
+    ).toThrow(/listed twice/);
   });
 });

@@ -86,11 +86,20 @@ function safeLink(value: string): string | undefined {
 
 function safeImageUrl(value: string | undefined): string | undefined {
   if (!value) return undefined;
+  // Only the app-owned CID map can supply raster data. Email-supplied data/blob URLs remain blocked.
+  if (value.startsWith('data:'))
+    return value.length <= Math.ceil(MAX_INLINE_IMAGE_BYTES / 3) * 4 + 64 &&
+      /^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(value)
+      ? value
+      : undefined;
   try {
     const url = new URL(value);
     // Only ordinary HTTPS storage origins may enter the iframe's CSP attribute.
     // URL accepts some host punctuation that has separate meaning in CSP or HTML.
-    return /^https:\/\/[a-z0-9.-]+(:\d{1,5})?$/i.test(url.origin) && !url.username && !url.password
+    return url.protocol === 'https:' &&
+      /^https:\/\/[a-z0-9.-]+(:\d{1,5})?$/i.test(url.origin) &&
+      !url.username &&
+      !url.password
       ? url.href
       : undefined;
   } catch {
@@ -170,7 +179,7 @@ export function sanitizeEmailHtml(
     if (contentId) contentIds.add(contentId);
     const source = contentId ? safeImageUrl(inlineImageUrls.get(contentId)) : remoteImageUrl(value);
     if (!source) return '';
-    imageOrigins.add(new URL(source).origin);
+    imageOrigins.add(source.startsWith('data:') ? 'data:' : new URL(source).origin);
     return source;
   };
   const tokenizeResource = (value: string): string => {

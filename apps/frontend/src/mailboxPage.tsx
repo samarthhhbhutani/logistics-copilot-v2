@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
@@ -35,6 +35,15 @@ export function MailboxPage({
   sessionError?: string;
 }) {
   const [redirecting, setRedirecting] = useState(false);
+  const connectController = useRef<AbortController | null>(null);
+  const logoutController = useRef<AbortController | null>(null);
+  useEffect(
+    () => () => {
+      connectController.current?.abort();
+      logoutController.current?.abort();
+    },
+    [],
+  );
   useEffect(() => {
     function resumeFromBrowserCache(event: PageTransitionEvent) {
       if (event.persisted) setRedirecting(false);
@@ -64,14 +73,27 @@ export function MailboxPage({
     enabled: Boolean(mailbox.data) && !isOutcomePage && !isSetupPage && !selectedEmailId,
   });
   const connect = useMutation({
-    mutationFn: frontendApi.connect,
+    mutationFn: () => {
+      connectController.current = new AbortController();
+      return frontendApi.connect(connectController.current.signal);
+    },
     onSuccess: ({ url }) => {
+      if (connectController.current?.signal.aborted) return;
       setRedirecting(true);
       window.location.assign(url);
     },
   });
   const connecting = connect.isPending || redirecting;
-  const logout = useMutation({ mutationFn: frontendApi.logout, onSuccess: onSignedOut });
+  const logout = useMutation({
+    mutationFn: () => {
+      connectController.current?.abort();
+      logoutController.current = new AbortController();
+      return frontendApi.logout(logoutController.current.signal);
+    },
+    onSuccess: () => {
+      if (!logoutController.current?.signal.aborted) onSignedOut();
+    },
+  });
   const expired = [mailbox.error, emails.error, connect.error, logout.error].some(
     isUnauthenticated,
   );

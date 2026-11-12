@@ -1,11 +1,14 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FrontendApiError, frontendApi } from './frontendApi.js';
 
 const session = {
   mailboxId: '00000000-0000-4000-8000-000000000001',
   tenantId: '00000000-0000-4000-8000-000000000002',
 };
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 describe('frontendApi', () => {
   it('sends login to a relative URL with the cookie and parses the shared contract', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(session)));
@@ -22,15 +25,18 @@ describe('frontendApi', () => {
     );
   });
   it('treats only a 401 session response as signed out, not a server outage', async () => {
+    vi.useFakeTimers();
     vi.stubGlobal(
       'fetch',
       vi
         .fn()
         .mockResolvedValueOnce(new Response('{}', { status: 401 }))
-        .mockResolvedValueOnce(new Response('proxy failed', { status: 502 })),
+        .mockImplementation(async () => new Response('proxy failed', { status: 502 })),
     );
     expect(await frontendApi.session()).toBeNull();
-    await expect(frontendApi.session()).rejects.toMatchObject({ status: 502 });
+    const outage = expect(frontendApi.session()).rejects.toMatchObject({ status: 502 });
+    await vi.advanceTimersByTimeAsync(1_500);
+    await outage;
   });
   it('handles an empty logout response', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
@@ -60,8 +66,9 @@ describe('frontendApi', () => {
     await frontendApi.emails(session, 'sent', 'a+b/c', controller.signal);
     expect(fetchMock).toHaveBeenCalledWith(
       '/v1/mailbox/emails?limit=30&label=sent&cursor=a%2Bb%2Fc',
-      expect.objectContaining({ signal: controller.signal }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+    expect(fetchMock.mock.calls[0]?.[1]?.signal.aborted).toBe(false);
   });
   it.each(['mailboxId', 'tenantId'] as const)(
     'rejects mailbox and mail responses when the cookie changed %s',
@@ -169,11 +176,21 @@ describe('thread and attachments', () => {
       '/v1/me',
     ]);
     for (const [, options] of fetchMock.mock.calls)
-      expect(options).toMatchObject({
-        signal: controller.signal,
-        cache: 'no-store',
-        credentials: 'same-origin',
-      });
+      expect(options).toMatchObject({ cache: 'no-store', credentials: 'same-origin' });
+
+    const pendingFetch = vi.fn(
+      (_path: string, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) =>
+          init.signal?.addEventListener('abort', () => reject(init.signal?.reason)),
+        ),
+    );
+    vi.stubGlobal('fetch', pendingFetch);
+    const cancelled = new AbortController();
+    const pending = frontendApi.thread(session, emailId, cancelled.signal);
+    cancelled.abort(new Error('navigated'));
+    await expect(pending).rejects.toThrow('navigated');
+    expect(pendingFetch.mock.calls[0]?.[1].signal?.aborted).toBe(true);
+    expect(pendingFetch).toHaveBeenCalledTimes(1);
   });
   it('rejects a thread from another mailbox even when the Gmail thread id matches', async () => {
     mockResponses(message, {
@@ -262,5 +279,104 @@ describe('scoped mail 404 after an account switch', () => {
         .mockResolvedValueOnce(new Response(JSON.stringify(session))),
     );
     await expect(frontendApi.thread(session, emailId)).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describe('transport retries', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
+  });
+  const unavailable = () =>
+    new Response(JSON.stringify({ error: 'attachments_unavailable' }), { status: 503 });
+
+  it('retries a read three times and keeps the final status and code', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => unavailable());
+    vi.stubGlobal('fetch', fetchMock);
+    const pending = frontendApi.attachments(session, emailId);
+    const assertion = expect(pending).rejects.toEqual(
+      new FrontendApiError(503, 'attachments_unavailable'),
+    );
+    await vi.advanceTimersByTimeAsync(1_500);
+    await assertion;
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('recovers when a read succeeds after a transient failure', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce(new Response(JSON.stringify(session)));
+    vi.stubGlobal('fetch', fetchMock);
+    const pending = frontendApi.session();
+    await vi.advanceTimersByTimeAsync(500);
+    await expect(pending).resolves.toEqual(session);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ['login', () => frontendApi.login('ops@example.com', 'password')],
+    ['logout', () => frontendApi.logout()],
+    ['connect', () => frontendApi.connect()],
+  ] as const)('replays the reviewed %s POST', async (_name, call) => {
+    const fetchMock = vi.fn().mockImplementation(async () => new Response('{}', { status: 502 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const assertion = expect(call()).rejects.toMatchObject({ status: 502 });
+    await vi.advanceTimersByTimeAsync(1_500);
+    await assertion;
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('forwards cancellation on the reviewed POSTs', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => new Response('{}', { status: 503 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const controller = new AbortController();
+    const pending = frontendApi.logout(controller.signal);
+    await vi.advanceTimersByTimeAsync(100);
+    controller.abort(new Error('unmounted'));
+    await expect(pending).rejects.toThrow('unmounted');
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry schema failures, session failures or permanent errors', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => new Response('{"emails":[]}'));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(frontendApi.emails(session, undefined, undefined)).rejects.toThrow();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const switched = mockResponses({ ...session, tenantId: emailId, emails: [], nextCursor: null });
+    await expect(frontendApi.emails(session, undefined, undefined)).rejects.toMatchObject({
+      code: 'session_changed',
+    });
+    expect(switched).toHaveBeenCalledTimes(1);
+
+    const unauthenticated = vi
+      .fn()
+      .mockImplementation(async () => new Response('{}', { status: 401 }));
+    vi.stubGlobal('fetch', unauthenticated);
+    await expect(frontendApi.session()).resolves.toBeNull();
+    expect(unauthenticated).toHaveBeenCalledTimes(1);
+
+    const malformed = vi.fn().mockImplementation(async () => new Response('<html>'));
+    vi.stubGlobal('fetch', malformed);
+    await expect(frontendApi.session()).rejects.toThrow(SyntaxError);
+    expect(malformed).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps API requests free of a deadline', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) =>
+            setTimeout(() => resolve(new Response(JSON.stringify(session))), 60_000),
+          ),
+      ),
+    );
+    const pending = frontendApi.session();
+    await vi.advanceTimersByTimeAsync(60_000);
+    await expect(pending).resolves.toEqual(session);
   });
 });

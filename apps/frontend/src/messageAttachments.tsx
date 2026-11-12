@@ -2,7 +2,8 @@ import { useEffect, useRef } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Download, FileText } from 'lucide-react';
 import type { AttachmentSummaryResponse, SessionResponse } from '@lc/contract';
-import { errorMessage, frontendApi, isUnauthenticated } from './frontendApi.js';
+import { errorMessage, FrontendApiError, frontendApi, isUnauthenticated } from './frontendApi.js';
+import { downloadPresignedFile } from './downloadPresignedFile.js';
 
 export function MessageAttachments({
   session,
@@ -77,20 +78,46 @@ function AttachmentFile({
   onSignedOut: () => void;
 }) {
   const controller = useRef<AbortController | null>(null);
-  useEffect(() => () => controller.current?.abort(), []);
-  const download = useMutation({
-    mutationFn: (signal: AbortSignal) =>
-      frontendApi.attachmentDownload(session, emailId, attachment.id, signal),
-    onError: (error) => {
-      if (isUnauthenticated(error)) onSignedOut();
+  const downloadUrl = useRef<string | null>(null);
+  const releaseTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const releaseDownload = () => {
+    clearTimeout(releaseTimer.current);
+    if (downloadUrl.current) URL.revokeObjectURL(downloadUrl.current);
+    downloadUrl.current = null;
+  };
+  useEffect(
+    () => () => {
+      controller.current?.abort();
+      clearTimeout(releaseTimer.current);
+      if (downloadUrl.current) URL.revokeObjectURL(downloadUrl.current);
     },
-    onSuccess: ({ url }, signal) => {
-      if (signal.aborted) return;
+    [],
+  );
+  const download = useMutation({
+    mutationFn: async (signal: AbortSignal) => {
+      const { url } = await frontendApi.attachmentDownload(session, emailId, attachment.id, signal);
+      const file = await downloadPresignedFile(url, attachment.sizeBytes, signal);
+      const currentSession = await frontendApi.session(signal);
+      if (
+        currentSession?.tenantId !== session.tenantId ||
+        currentSession?.mailboxId !== session.mailboxId
+      )
+        throw new FrontendApiError(401, 'session_changed');
+      signal.throwIfAborted();
+      // Save only after the entire transfer and final mailbox identity check.
+      // Return no Blob to the mutation cache: bytes leave memory after this call.
+      releaseDownload();
+      downloadUrl.current = URL.createObjectURL(file);
       const link = document.createElement('a');
-      link.href = url;
-      // Storage signs Content-Disposition: attachment, so the download leaves the app in place.
+      link.href = downloadUrl.current;
+      link.download = attachment.fileName;
       link.referrerPolicy = 'no-referrer';
       link.click();
+      // Allow the browser to consume the object URL, then release it even if the view stays open.
+      releaseTimer.current = setTimeout(releaseDownload, 60_000);
+    },
+    onError: (error) => {
+      if (isUnauthenticated(error)) onSignedOut();
     },
     // Do not cache signed URLs beyond this component's lifetime.
     gcTime: 0,

@@ -10,11 +10,18 @@ import * as sqs from 'aws-cdk-lib/aws-sqs';
 import type { Construct } from 'constructs';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { PipelineLambda } from './pipelineLambda.js';
-import { EMAIL_PROCESSOR_TIMEOUT, lambdaEnvSecretName } from './stageConfig.js';
+import {
+  EMAIL_PROCESSOR_TIMEOUT,
+  defaultFrontendOrigins,
+  lambdaEnvSecretName,
+  validateFrontendOrigins,
+} from './stageConfig.js';
 import type { Stage } from './stageConfig.js';
 
 export interface LogisticsCopilotStackProps extends StackProps {
   stage: Stage;
+  /** Exact browser origins allowed to GET bucket objects; defaults per stage (none in production). */
+  frontendOrigins?: readonly string[];
 }
 
 /**
@@ -35,6 +42,10 @@ export class LogisticsCopilotStack extends Stack {
   constructor(scope: Construct, id: string, props: LogisticsCopilotStackProps) {
     super(scope, id, props);
     const { stage } = props;
+    const frontendOrigins = validateFrontendOrigins(
+      stage,
+      props.frontendOrigins ?? defaultFrontendOrigins(stage),
+    );
 
     this.rawMailBucket = new s3.Bucket(this, 'RawMailBucket', {
       // Name left to CloudFormation: S3 names are global and a fixed one fails on collision.
@@ -42,6 +53,18 @@ export class LogisticsCopilotStack extends Stack {
       encryption: s3.BucketEncryption.S3_MANAGED,
       enforceSSL: true,
       versioned: false,
+      // The frontend fetches presigned GET URLs without credentials or custom headers (a simple
+      // request, so no preflight); Retry-After is exposed so the client can honour S3 throttling.
+      cors:
+        frontendOrigins.length > 0
+          ? [
+              {
+                allowedMethods: [s3.HttpMethods.GET],
+                allowedOrigins: frontendOrigins,
+                exposedHeaders: ['Retry-After'],
+              },
+            ]
+          : undefined,
       // Mail is the system of record for disputes; never let a stack delete take it along.
       removalPolicy: RemovalPolicy.RETAIN,
       lifecycleRules: [
