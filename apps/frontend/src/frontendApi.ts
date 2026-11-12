@@ -1,5 +1,6 @@
 import {
   attachmentDownloadUrlResponseSchema,
+  currentClassificationSchema,
   emailDetailSchema,
   listAttachmentsResponseSchema,
   threadResponseSchema,
@@ -8,7 +9,7 @@ import {
   mailboxResponseSchema,
   sessionResponseSchema,
 } from '@lc/contract';
-import type { GmailLabel, SessionResponse } from '@lc/contract';
+import type { ClassificationLabel, GmailLabel, SessionResponse } from '@lc/contract';
 import { readNetworkResponse, requestWithRetry } from './frontendRequest.js';
 import type { RequestRetryOptions } from './frontendRequest.js';
 
@@ -19,6 +20,14 @@ export class FrontendApiError extends Error {
   ) {
     super(code);
     this.name = 'FrontendApiError';
+  }
+}
+
+/** The append may have committed even though its response or final identity check was lost. */
+export class ClassificationOutcomeUnknownError extends Error {
+  constructor() {
+    super('Classification outcome unknown');
+    this.name = 'ClassificationOutcomeUnknownError';
   }
 }
 
@@ -166,6 +175,60 @@ export const frontendApi = {
     }
     requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
     return thread;
+  },
+  async correctClassification(
+    session: SessionResponse,
+    emailId: string,
+    label: ClassificationLabel,
+    signal?: AbortSignal,
+  ) {
+    // A shared cookie can change in another tab. Check it before the irreversible append, then
+    // again before accepting a response that carries no mailbox identity. Never replay this POST:
+    // every attempt writes a new classification row, including an unchanged-label confirmation.
+    requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
+    let classification;
+    try {
+      classification = await requestJson(
+        `/mailbox/emails/${encodeURIComponent(emailId)}/classifications`,
+        currentClassificationSchema,
+        { method: 'POST', body: JSON.stringify({ label }), signal },
+      );
+    } catch (error) {
+      if (error instanceof FrontendApiError && error.status === 404) {
+        try {
+          requireMatchingSession(
+            await requestJson('/me', sessionResponseSchema, { signal }),
+            session,
+          );
+        } catch (sessionError) {
+          if (signal?.aborted) throw signal.reason;
+          if (isUnauthenticated(sessionError)) throw sessionError;
+          // A failed identity read cannot change the POST's definite not-found result.
+        }
+      }
+      if (error instanceof FrontendApiError && [400, 401, 404, 409].includes(error.status))
+        throw error;
+      if (signal?.aborted) throw signal.reason;
+      throw new ClassificationOutcomeUnknownError();
+    }
+    try {
+      requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
+    } catch (error) {
+      if (isUnauthenticated(error)) throw error;
+      if (signal?.aborted) throw signal.reason;
+      throw new ClassificationOutcomeUnknownError();
+    }
+    signal?.throwIfAborted();
+    if (
+      classification.label !== label ||
+      classification.source !== 'user' ||
+      classification.confidence !== null
+    ) {
+      // A response that does not reflect this append cannot be shown as a successful correction.
+      // A write may still have happened, so the UI requires a fresh read instead of replaying it.
+      throw new ClassificationOutcomeUnknownError();
+    }
+    return classification;
   },
   async attachments(session: SessionResponse, emailId: string, signal?: AbortSignal) {
     const body = await requestMailJson(

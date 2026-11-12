@@ -1,6 +1,6 @@
 import type { ClassificationLabel } from '@lc/contract';
 
-const classificationLabelTitles: Record<ClassificationLabel, string> = {
+export const classificationLabelTitles: Record<ClassificationLabel, string> = {
   general: 'General',
   customer_request: 'Customer request',
   customer_reply: 'Customer reply',
