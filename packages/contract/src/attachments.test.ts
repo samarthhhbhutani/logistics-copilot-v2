@@ -15,6 +15,7 @@ describe('attachment contracts', () => {
           contentType: 'application/pdf',
           sizeBytes: 12345,
           isInline: false,
+          contentId: null,
         },
         {
           id: '00000000-0000-4000-8000-000000000003',
@@ -22,10 +23,48 @@ describe('attachment contracts', () => {
           contentType: 'image/png',
           sizeBytes: 0,
           isInline: true,
+          contentId: 'logo@acme.com',
         },
       ],
     });
-    expect(parsed.attachments).toHaveLength(2);
+    expect(parsed.attachments.map((attachment) => attachment.contentId)).toEqual([
+      null,
+      'logo@acme.com',
+    ]);
+  });
+
+  it('defaults a missing contentId to null so older API responses still parse', () => {
+    const parsed = listAttachmentsResponseSchema.parse({
+      emailId: '00000000-0000-4000-8000-000000000001',
+      attachments: [
+        {
+          id: '00000000-0000-4000-8000-000000000003',
+          fileName: 'logo.png',
+          contentType: 'image/png',
+          sizeBytes: 8,
+          isInline: true,
+        },
+      ],
+    });
+    expect(parsed.attachments[0]!.contentId).toBeNull();
+  });
+
+  it('rejects a non-string contentId', () => {
+    expect(() =>
+      listAttachmentsResponseSchema.parse({
+        emailId: '00000000-0000-4000-8000-000000000001',
+        attachments: [
+          {
+            id: '00000000-0000-4000-8000-000000000003',
+            fileName: 'logo.png',
+            contentType: 'image/png',
+            sizeBytes: 8,
+            isInline: true,
+            contentId: 42,
+          },
+        ],
+      }),
+    ).toThrow();
   });
 
   it('rejects a negative size and a non-URL download link', () => {

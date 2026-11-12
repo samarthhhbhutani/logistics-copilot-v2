@@ -77,5 +77,6 @@ function toAttachmentSummaryResponse(attachment: AttachmentSummary): AttachmentS
     contentType: attachment.contentType,
     sizeBytes: attachment.sizeBytes,
     isInline: attachment.isInline,
+    contentId: attachment.contentId ?? null,
   };
 }

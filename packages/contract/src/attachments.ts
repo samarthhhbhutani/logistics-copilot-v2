@@ -8,6 +8,9 @@ export const attachmentSummarySchema = z.object({
   sizeBytes: z.number().int().nonnegative(),
   /** True for images referenced from the HTML body (cid:), i.e. logos and signatures, not files someone attached. */
   isInline: z.boolean(),
+  /** MIME Content-ID without angle brackets, matched against cid: references in the HTML body. */
+  // Defaults to null so a frontend ahead of the API still parses older responses; those images just stay unresolved.
+  contentId: z.string().nullable().default(null),
 });
 export type AttachmentSummaryResponse = z.infer<typeof attachmentSummarySchema>;
 

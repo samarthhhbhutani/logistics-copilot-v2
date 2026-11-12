@@ -9,6 +9,8 @@ export default defineConfig({
   reporter: 'list',
   use: {
     baseURL: 'http://127.0.0.1:4180',
+    ignoreHTTPSErrors: true, // The synthetic image server has an ephemeral self-signed certificate.
+    ...(process.env.PLAYWRIGHT_USE_INSTALLED_CHROME ? { channel: 'chrome' } : {}),
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },

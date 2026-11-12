@@ -8,6 +8,7 @@ import type { FakeGmailOAuth } from './fakeGmailOAuth.test-helper.js';
 import { createFakeGmailWatch } from './fakeGmailWatch.test-helper.js';
 import type { FakeGmailWatch } from './fakeGmailWatch.test-helper.js';
 import { createFakeAttachmentDownloadUrlSigner } from './fakeAttachmentDownloadUrlSigner.test-helper.js';
+import type { AttachmentDownloadUrlSigner } from './emails/attachmentDownloadUrlSigner.js';
 import { createInMemoryRepositories } from './inMemoryRepositories.test-helper.js';
 
 export const testSessionSecret = 'test-session-secret-that-is-at-least-32-chars';
@@ -21,6 +22,8 @@ export interface TestAppOptions {
   consentingAccountEmail?: string;
   /** Default on: a fake signer that returns a recognisable URL. Off exercises the 503 path. */
   attachmentDownloadsEnabled?: boolean;
+  /** Override only for the browser test that serves real synthetic image bytes. */
+  attachmentDownloadUrlSigner?: AttachmentDownloadUrlSigner;
 }
 
 export interface TestApp {
@@ -39,6 +42,7 @@ export function createTestApp({
   frontendUrl,
   consentingAccountEmail = testMailboxEmail,
   attachmentDownloadsEnabled = true,
+  attachmentDownloadUrlSigner,
 }: TestAppOptions = {}): TestApp {
   const config = loadConfig({
     STAGE: stage,
@@ -54,7 +58,7 @@ export function createTestApp({
     config,
     ...repositories,
     attachmentDownloadUrlSigner: attachmentDownloadsEnabled
-      ? createFakeAttachmentDownloadUrlSigner()
+      ? (attachmentDownloadUrlSigner ?? createFakeAttachmentDownloadUrlSigner())
       : undefined,
     gmailOAuth,
     gmailWatch,

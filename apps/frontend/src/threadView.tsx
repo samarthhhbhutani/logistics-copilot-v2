@@ -6,6 +6,7 @@ import type { ClassificationSource, EmailDetailResponse, SessionResponse } from 
 import { errorMessage, frontendApi, FrontendApiError, isUnauthenticated } from './frontendApi.js';
 import { MessageAttachments } from './messageAttachments.js';
 import { ClassificationBadge } from './classificationBadge.js';
+import { EmailBody } from './emailBody.js';
 
 const sourceTitles: Record<ClassificationSource, string> = {
   thread: 'From this conversation',
@@ -118,8 +119,8 @@ export function ThreadView({
             ))}
           </ol>
           <p className="threadFootnote">
-            Plain text view. Remote images and email HTML are not loaded. This conversation contains
-            only messages already stored in your mailbox.
+            Remote images load automatically and may notify the sender. Messages may include quoted
+            history. This conversation contains only messages already stored in your mailbox.
           </p>
         </>
       )}
@@ -215,15 +216,7 @@ function ThreadMessage({
               </span>
             )}
           </div>
-          {email.bodyText.trim() ? (
-            <div className="messageBody">{email.bodyText}</div>
-          ) : (
-            <p className="muted">
-              {email.bodyHtml
-                ? 'No plain-text body is available. HTML is not displayed in this view.'
-                : 'This message has no text body.'}
-            </p>
-          )}
+          <EmailBody email={email} session={session} onSignedOut={onSignedOut} />
           <div className="messageFiles">
             <button
               className="button textButton"

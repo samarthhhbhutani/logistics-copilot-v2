@@ -59,7 +59,7 @@ export function MessageAttachments({
         <p className="muted">No attached files.</p>
       )}
       {attachments.data.attachments.some((attachment) => attachment.isInline) && (
-        <p className="attachmentNote">Inline images and signatures are hidden.</p>
+        <p className="attachmentNote">Stored inline images appear in the message when supported.</p>
       )}
     </>
   );

@@ -266,13 +266,39 @@ Implemented: password login/logout, All mail / Inbox / Sent, 30-row cursor pages
 empty/loading/error states, Gmail connect/reconnect, and explicit success/failure screens.
 Mail rows open a read-only conversation using the deployed detail and thread endpoints. Messages
 are shown latest first, with the latest and selected messages expanded. Each expanded message shows
-sender, recipients, plain-text body and its current classification/source (model confidence when
+sender, recipients, message body and its current classification/source (model confidence when
 present). All mail and Inbox rows show the current classification or an unclassified state, read
-in the list request without fetching each message separately. Files load on demand; inline images
-are hidden and downloads request a fresh signed link. Deploy the API before the frontend: the list
-contract now requires the nullable classification field (no database migration).
-Email HTML is never inserted into the page and remote images are not loaded. HTML-only mail has an
-explicit plain-text-unavailable state. Corrections, sending, search and RFQs are not part of this UI.
+in the list request without fetching each message separately. Files load on demand and downloads
+request a fresh signed link. Messages have one reading view: sanitized HTML when available, plain
+text otherwise. The local prototype uses `react-letter` to preserve supported sender CSS.
+Remote HTTP/HTTPS images and CSS backgrounds load automatically, including tracking pixels;
+opening a message can notify its sender. Scripts, forms, SVG markup and nested frames remain removed.
+Responsive `srcset` images support density/width candidates, `sizes`, and picture source media/type
+selection. Each candidate uses the same remote-URL/CID validation and no-referrer policy as `src`.
+Invalid candidates are dropped; mixed width/density lists are discarded, retaining a safe `src` fallback.
+Duplicate descriptors keep the first candidate. Height-dependent stylesheet media queries and
+responsive image media/sizes are removed to keep automatic frame sizing stable.
+Relative/data/blob image URLs remain unsupported. Browser mixed-content
+rules can still prevent HTTP images on HTTPS pages. CSS imports, unsupported nested rules and
+viewport-height sizing are removed to prevent active resources or auto-height feedback.
+HTML remains in a borderless, opaque sandboxed iframe that grows with its contents, including image
+loads and viewport changes. There is no inner scrolling, reading-mode toggle or expand control.
+The frame cannot access the app origin or navigate the app; explicit HTTP/HTTPS/mailto links open
+separately with no opener/referrer. An exact CSP hash permits only a fixed app-owned layout helper,
+not email code or event handlers. The helper reports height and image-failure counts; the parent
+checks the current frame source, opaque origin and bounded numeric payload. Image origins come from
+validated remote URLs or the scoped attachment signer; image requests send no referrer.
+Letter renders to a string, not into the app DOM; our frame retains CSP and auto-height controls.
+
+Inline images resolve case-sensitive CID references against that message's attachment metadata.
+Only unique inline PNG/JPEG/GIF/WebP parts, up to 10 MB each and 20 per message, are loaded. Unknown,
+ambiguous, unsupported or failed parts remain placeholders. A Retry images action appears only for
+loading failures and reloads the frame, signing fresh CID links when needed; successful images add no reader controls.
+Signed URLs are not persisted, and pending image work is cancelled when the reader closes or the
+session changes. Attachment metadata now includes nullable `contentId`; deploy the API first to
+resolve images. Older API responses still parse, leaving CID images unresolved. No migration or
+Lambda change is required. Full HTML retains quoted history; stored plain text can omit it.
+Corrections, sending, search and RFQs are not part of this UI.
 The query string retains folder, cursor and selected email for browser back/reload. No polling
 or Gmail resync is triggered by the frontend; Refresh reads already-ingested rows.
 The list response includes the cookie's mailboxId and tenantId. The browser rejects a response
@@ -310,5 +336,7 @@ FRONTEND_API_TARGET=http://127.0.0.1:4181 npm run dev -w @lc/frontend -- --port 
 Open `http://127.0.0.1:4180`. Synthetic accounts: `ops@example.com`, `sales@example.com`,
 `new@example.com`; password `frontend-test-password`. These are in-memory fixtures, never real
 accounts. The ops mailbox includes “Clearance charges - Mundra import (inline image sample)”,
-parsed from the real MIME fixture with a CID-linked PNG logo; plain-text reading intentionally
-hides it. Google connect needs the Playwright interception to finish in this synthetic preview.
+parsed from the synthetic MIME fixture with a CID-linked PNG logo. The test API serves that
+image over loopback HTTPS on port 4184 using a short-lived local certificate, so the opaque email
+frame loads actual bytes. Other synthetic attachment URLs have no storage backing. Google connect
+still needs Playwright interception to finish in this synthetic preview.
