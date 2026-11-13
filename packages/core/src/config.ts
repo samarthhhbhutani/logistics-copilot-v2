@@ -26,6 +26,12 @@ const envSchema = z.object({
   SESSION_SECRET: z.string().min(32).optional(),
   /** AES-256-GCM key for secrets at rest (createEncryptionUtil): 32 bytes, base64. Generate: openssl rand -base64 32 */
   TOKEN_ENCRYPTION_KEY: z.string().min(1).optional(),
+  /**
+   * Safe mode for outbound mail: every message is sent to this address instead of its real
+   * recipients. createGoogleGmailSender requires it on staging and refuses it on prod; only the
+   * process that builds a sender (the API) is held to that, Lambdas never send.
+   */
+  OUTBOUND_MAIL_REDIRECT_TO: z.email().optional(),
 });
 
 export type Config = z.infer<typeof envSchema>;

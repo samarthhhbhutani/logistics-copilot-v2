@@ -6,3 +6,4 @@ export * from './gmailApiError.js';
 export * from './gmailHistory.js';
 export * from './gmailMessages.js';
 export * from './mailboxSyncRepository.js';
+export * from './gmailSender.js';
