@@ -3,6 +3,8 @@ import {
   connectFlowErrorSchema,
   gmailConnectResponseSchema,
   mailboxResponseSchema,
+  updateMailboxSignatureRequestSchema,
+  MAILBOX_SIGNATURE_MAX_LENGTH,
 } from './index.js';
 import type { MailboxResponse } from './index.js';
 
@@ -13,6 +15,7 @@ const mailbox: MailboxResponse = {
   gmailConnectionStatus: 'connected',
   gmailConnectedAt: '2026-11-09T12:00:00.000Z',
   watchExpiresAt: '2026-11-15T12:00:00.000Z',
+  signature: 'Ops Desk\nBhatia Logistics',
 };
 
 describe('mailboxResponseSchema', () => {
@@ -77,5 +80,22 @@ describe('connectFlowErrorSchema', () => {
 
   it('rejects an unknown code', () => {
     expect(connectFlowErrorSchema.safeParse('something_else').success).toBe(false);
+  });
+});
+
+describe('updateMailboxSignatureRequestSchema', () => {
+  it('takes plain text or null and refuses anything over the limit', () => {
+    expect(updateMailboxSignatureRequestSchema.parse({ signature: 'Ops Desk' })).toEqual({
+      signature: 'Ops Desk',
+    });
+    expect(updateMailboxSignatureRequestSchema.parse({ signature: null })).toEqual({
+      signature: null,
+    });
+    expect(
+      updateMailboxSignatureRequestSchema.safeParse({
+        signature: 'x'.repeat(MAILBOX_SIGNATURE_MAX_LENGTH + 1),
+      }).success,
+    ).toBe(false);
+    expect(updateMailboxSignatureRequestSchema.safeParse({}).success).toBe(false);
   });
 });

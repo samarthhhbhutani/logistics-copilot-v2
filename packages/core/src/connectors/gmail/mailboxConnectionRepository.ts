@@ -13,6 +13,8 @@ export interface MailboxConnection {
   encryptedRefreshToken: string | null;
   /** When the current Gmail watch lapses; null when not connected. */
   watchExpiresAt: Date | null;
+  /** Plain text appended to every mail sent from this mailbox; null when none is set. */
+  signature: string | null;
 }
 
 /** Everything a successful connect produces: the token and the watch it started. */
@@ -35,6 +37,8 @@ export interface MailboxConnectionRepository {
   /** The refresh token stopped working (invalid_grant): keep the row, ask the owner to reconnect. */
   markGmailNeedsReconnect(scope: MailboxScope): Promise<void>;
   clearGmailConnection(scope: MailboxScope): Promise<void>;
+  /** Replace the stored signature; null removes it. */
+  updateSignature(scope: MailboxScope, signature: string | null): Promise<void>;
 }
 
 // Prisma generates UPPER_CASE enum members; the API and the column speak snake_case.
@@ -66,6 +70,7 @@ export function createPrismaMailboxConnectionRepository(
           gmailConnectedAt: true,
           encryptedRefreshToken: true,
           watchExpiresAt: true,
+          signature: true,
         },
       });
       if (!mailbox) return undefined;
@@ -77,6 +82,7 @@ export function createPrismaMailboxConnectionRepository(
         gmailConnectedAt: mailbox.gmailConnectedAt,
         encryptedRefreshToken: mailbox.encryptedRefreshToken,
         watchExpiresAt: mailbox.watchExpiresAt,
+        signature: mailbox.signature,
       };
     },
 
@@ -116,6 +122,13 @@ export function createPrismaMailboxConnectionRepository(
           lastHistoryId: null,
           watchExpiresAt: null,
         },
+      });
+    },
+
+    async updateSignature({ mailboxId, tenantId }, signature) {
+      await prismaClient.mailbox.updateMany({
+        where: { id: mailboxId, tenantId },
+        data: { signature },
       });
     },
   };

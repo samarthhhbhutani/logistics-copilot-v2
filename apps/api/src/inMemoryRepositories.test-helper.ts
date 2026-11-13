@@ -111,6 +111,7 @@ export function createInMemoryRepositories(): {
           gmailConnectedAt: null,
           encryptedRefreshToken: null,
           watchExpiresAt: null,
+          signature: null,
         });
         return credentials;
       },
@@ -244,6 +245,10 @@ export function createInMemoryRepositories(): {
         connection.gmailConnectionStatus = 'not_connected';
         connection.gmailConnectedAt = null;
         connection.watchExpiresAt = null;
+      },
+      async updateSignature(scope, signature) {
+        const connection = findInTenant(scope);
+        if (connection) connection.signature = signature;
       },
     },
   };

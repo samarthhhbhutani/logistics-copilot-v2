@@ -17,7 +17,11 @@ import type {
   EncryptionUtil,
   TenantRepository,
 } from '@lc/core';
-import type { GmailConnectResponse, MailboxResponse } from '@lc/contract';
+import {
+  updateMailboxSignatureRequestSchema,
+  type GmailConnectResponse,
+  type MailboxResponse,
+} from '@lc/contract';
 import { getSession } from '../auth/requireSession.js';
 import { parseRequestBody } from '../http/parseRequestBody.js';
 import { sendConnectFlowOutcome } from './connectFlowOutcome.js';
@@ -47,6 +51,7 @@ const callbackQuerySchema = z.object({
  *   GET    /gmail/callback Google returns here; no session cookie, the signed `state` names the mailbox.
  *                          Stores the token and starts the Gmail watch on the tenant's Pub/Sub topic
  *   DELETE /gmail          stop the watch, revoke at Google and forget the token
+ *   PATCH  /signature      store the plain-text signature appended to every mail sent from here
  */
 export function createGmailConnectionRouter({
   mailboxConnectionRepository,
@@ -176,6 +181,20 @@ export function createGmailConnectionRouter({
     return finish({ connected: true });
   });
 
+  router.patch('/signature', requireSession, async (request, response) => {
+    const session = getSession(response);
+    const { signature } = parseRequestBody(updateMailboxSignatureRequestSchema, request.body);
+    if (!(await mailboxConnectionRepository.findMailboxConnection(session))) {
+      throw createHttpError(404, 'mailbox_not_found');
+    }
+    // Stored trimmed, and a blank signature is no signature: composeOutboundMime appends nothing for null.
+    const trimmedSignature = signature?.trim() || null;
+    await mailboxConnectionRepository.updateSignature(session, trimmedSignature);
+    const connection = await mailboxConnectionRepository.findMailboxConnection(session);
+    if (!connection) throw createHttpError(404, 'mailbox_not_found');
+    response.json(toMailboxView(connection));
+  });
+
   router.delete('/gmail', requireSession, async (_request, response) => {
     const session = getSession(response);
     const connection = await mailboxConnectionRepository.findMailboxConnection(session);
@@ -214,5 +233,6 @@ function toMailboxView(connection: MailboxConnection): MailboxResponse {
     gmailConnectionStatus: connection.gmailConnectionStatus,
     gmailConnectedAt: connection.gmailConnectedAt?.toISOString() ?? null,
     watchExpiresAt: connection.watchExpiresAt?.toISOString() ?? null,
+    signature: connection.signature,
   };
 }

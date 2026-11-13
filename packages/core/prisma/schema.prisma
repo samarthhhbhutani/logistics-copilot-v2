@@ -67,6 +67,8 @@ model Mailbox {
   gmailConnectedAt      DateTime?             @map("gmail_connected_at") @db.Timestamptz
   lastHistoryId         BigInt?               @map("last_history_id")
   watchExpiresAt        DateTime?             @map("watch_expires_at") @db.Timestamptz
+  /// Plain-text signature appended to every mail sent from this mailbox (after an RFC 3676 "-- " line). Null: none.
+  signature             String?
   createdAt             DateTime              @default(now()) @map("created_at") @db.Timestamptz
   updatedAt             DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
   login                 MailboxLogin?
