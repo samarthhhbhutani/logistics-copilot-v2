@@ -89,6 +89,7 @@ describe('frontendApi', () => {
                 gmailConnectionStatus: 'connected',
                 gmailConnectedAt: null,
                 watchExpiresAt: null,
+                signature: null,
               }),
             ),
           )

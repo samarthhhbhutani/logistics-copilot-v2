@@ -15,8 +15,18 @@ export const mailboxResponseSchema = z.object({
   gmailConnectionStatus: gmailConnectionStatusSchema,
   gmailConnectedAt: z.iso.datetime().nullable(),
   watchExpiresAt: z.iso.datetime().nullable(),
+  /** Plain text appended to every mail sent from this mailbox; null when none is set. */
+  signature: z.string().nullable(),
 });
 export type MailboxResponse = z.infer<typeof mailboxResponseSchema>;
+
+export const MAILBOX_SIGNATURE_MAX_LENGTH = 2000;
+
+/** PATCH /v1/mailbox/signature. Plain text; whitespace-only or null clears it. Responds with MailboxResponse. */
+export const updateMailboxSignatureRequestSchema = z.object({
+  signature: z.string().max(MAILBOX_SIGNATURE_MAX_LENGTH).nullable(),
+});
+export type UpdateMailboxSignatureRequest = z.infer<typeof updateMailboxSignatureRequestSchema>;
 
 const GOOGLE_OAUTH_URL_PREFIX = 'https://accounts.google.com/o/oauth2/';
 
