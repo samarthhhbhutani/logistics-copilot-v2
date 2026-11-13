@@ -23,3 +23,18 @@ describe('loadConfig()', () => {
     );
   });
 });
+
+describe('loadConfig() OUTBOUND_MAIL_REDIRECT_TO', () => {
+  const databaseUrl = 'postgres://u:p@h:5432/db';
+
+  it('is optional and must be an email address when set', () => {
+    expect(loadConfig({ DATABASE_URL: databaseUrl }).OUTBOUND_MAIL_REDIRECT_TO).toBeUndefined();
+    expect(
+      loadConfig({ DATABASE_URL: databaseUrl, OUTBOUND_MAIL_REDIRECT_TO: 'me@tenant.example' })
+        .OUTBOUND_MAIL_REDIRECT_TO,
+    ).toBe('me@tenant.example');
+    expect(() =>
+      loadConfig({ DATABASE_URL: databaseUrl, OUTBOUND_MAIL_REDIRECT_TO: 'nope' }),
+    ).toThrow(/OUTBOUND_MAIL_REDIRECT_TO/);
+  });
+});
