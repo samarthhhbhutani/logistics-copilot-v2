@@ -225,6 +225,63 @@ export function createInMemoryRepositories(): {
         vendors.push(vendor);
         return { outcome: 'created', vendor };
       },
+      async updateVendor(tenantId, vendorId, changes) {
+        const vendor = vendors.find(
+          (candidate) => candidate.id === vendorId && candidate.tenantId === tenantId,
+        );
+        if (!vendor) return { outcome: 'vendor_not_found' };
+        if (
+          changes.vendorName !== undefined &&
+          vendors.some(
+            (candidate) =>
+              candidate.tenantId === tenantId &&
+              candidate.id !== vendorId &&
+              candidate.vendorName.toLowerCase() === changes.vendorName!.toLowerCase(),
+          )
+        ) {
+          return { outcome: 'vendor_name_taken' };
+        }
+        Object.assign(vendor, changes, { updatedAt: new Date() });
+        return { outcome: 'updated', vendor };
+      },
+      async addContact(tenantId, vendorId, contactToAdd) {
+        const vendor = vendors.find(
+          (candidate) => candidate.id === vendorId && candidate.tenantId === tenantId,
+        );
+        if (!vendor) return { outcome: 'vendor_not_found' };
+        if (vendor.contacts.some((contact) => contact.emailAddress === contactToAdd.emailAddress)) {
+          return { outcome: 'contact_email_taken' };
+        }
+        const now = new Date();
+        vendor.contacts.push({
+          id: randomUUID(),
+          ...contactToAdd,
+          active: true,
+          createdAt: now,
+          updatedAt: now,
+        });
+        vendor.contacts.sort((left, right) => left.contactName.localeCompare(right.contactName));
+        return { outcome: 'added', vendor };
+      },
+      async updateContact(tenantId, vendorId, contactId, changes) {
+        const vendor = vendors.find(
+          (candidate) => candidate.id === vendorId && candidate.tenantId === tenantId,
+        );
+        const contact = vendor?.contacts.find((candidate) => candidate.id === contactId);
+        if (!vendor || !contact) return { outcome: 'contact_not_found' };
+        if (
+          changes.emailAddress !== undefined &&
+          vendor.contacts.some(
+            (candidate) =>
+              candidate.id !== contactId && candidate.emailAddress === changes.emailAddress,
+          )
+        ) {
+          return { outcome: 'contact_email_taken' };
+        }
+        Object.assign(contact, changes, { updatedAt: new Date() });
+        vendor.contacts.sort((left, right) => left.contactName.localeCompare(right.contactName));
+        return { outcome: 'updated', vendor };
+      },
     },
     classificationRuleRepository: {
       async listEnabledRules(tenantId) {
