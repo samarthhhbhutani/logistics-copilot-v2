@@ -10,6 +10,7 @@ import type {
   EmailToClassify,
   GmailMessages,
   GmailRawMessage,
+  SentMailRepository,
   MailboxConnectionRepository,
   MailboxForProcessing,
   MailboxSyncRepository,
@@ -56,6 +57,21 @@ const DATELESS_RAW = Buffer.from(
   ['To: vendor@sea.com', 'Subject: Re: RFQ', 'Content-Type: text/plain', '', 'Our offer.'].join(
     '\r\n',
   ),
+);
+
+/** Our own reply as Gmail stores it in SENT: the Message-ID is the one the API minted (`<sentMailId@domain>`). */
+const OUR_SENT_COPY_RAW = Buffer.from(
+  [
+    'From: Ops Desk <ops@desk.com>',
+    'To: Ravi Kumar <ravi@acme.com>',
+    'Subject: Re: RFQ Mumbai to Rotterdam',
+    'Date: Mon, 09 Nov 2026 11:00:00 +0530',
+    'Message-ID: <11111111-1111-4111-8111-111111111111@desk.com>',
+    'In-Reply-To: <rfq-1@acme.com>',
+    'Content-Type: text/plain; charset=utf-8',
+    '',
+    'Rates attached below.',
+  ].join('\r\n'),
 );
 
 /** A Gmail-style reply: the new line on top, the sender's name, then the quoted earlier message. */
@@ -170,6 +186,9 @@ function createTestProcessor(
     classifyOutcome: LLM_CLASSIFIED as ClassifierOutcome,
     attachmentPuts: [] as { key: string; bytes: number }[],
     attachmentPutError: undefined as Error | undefined,
+    healCalls: [] as { rfcMessageId: string; gmailMessageId: string; gmailThreadId: string }[],
+    healResult: { moved: false } as { moved: boolean },
+    healError: undefined as Error | undefined,
     tenantHasClient: true,
   };
   const mailboxSyncRepository: MailboxSyncRepository = {
@@ -242,6 +261,21 @@ function createTestProcessor(
       return state.insertResult;
     },
   };
+  const notUsedByTheProcessor = async (): Promise<never> => {
+    throw new Error('not used by the processor');
+  };
+  const sentMailRepository: SentMailRepository = {
+    createPending: notUsedByTheProcessor,
+    findSentMail: notUsedByTheProcessor,
+    markSending: notUsedByTheProcessor,
+    markSent: notUsedByTheProcessor,
+    markFailed: notUsedByTheProcessor,
+    async markSentByRfcMessageId(_scope, rfcMessageId, gmailIds) {
+      if (state.healError) throw state.healError;
+      state.healCalls.push({ rfcMessageId, ...gmailIds });
+      return state.healResult;
+    },
+  };
   const emailClassifier: EmailClassifier = {
     async classify(email) {
       state.classifyCalls.push(email);
@@ -280,6 +314,7 @@ function createTestProcessor(
     rawMailStore,
     attachmentStore,
     emailIngestRepository,
+    sentMailRepository,
     classificationRuleRepository,
     emailClassifier: overrides.withClassifier ? emailClassifier : undefined,
   });
@@ -523,6 +558,80 @@ describe('emailProcessor', () => {
     await process(sqsEvent(queueMessage));
 
     expect(state.insertedClassifications).toEqual([undefined]);
+  });
+
+  it('heals a sent_mails row left in sending when our own SENT copy is ingested', async () => {
+    const { process, state } = createTestProcessor();
+    state.fetchResult = {
+      ...state.fetchResult,
+      raw: new Uint8Array(OUR_SENT_COPY_RAW),
+      labelIds: ['SENT'],
+    };
+    state.healResult = { moved: true };
+
+    const response = await process(sqsEvent(queueMessage));
+
+    expect(response.batchItemFailures).toEqual([]);
+    expect(state.inserted).toHaveLength(1);
+    expect(state.healCalls).toEqual([
+      {
+        rfcMessageId: '<11111111-1111-4111-8111-111111111111@desk.com>',
+        gmailMessageId: 'gm-1',
+        gmailThreadId: 'thread-1',
+      },
+    ]);
+  });
+
+  it('offers every SENT copy with a Message-ID to the heal, which is a no-op for mail not sent through us', async () => {
+    const { process, state } = createTestProcessor();
+    state.fetchResult = { ...state.fetchResult, labelIds: ['SENT'] };
+
+    const response = await process(sqsEvent(queueMessage));
+
+    expect(response.batchItemFailures).toEqual([]);
+    expect(state.healCalls).toEqual([
+      { rfcMessageId: '<rfq-1@acme.com>', gmailMessageId: 'gm-1', gmailThreadId: 'thread-1' },
+    ]);
+  });
+
+  it('never heals from inbound mail, a SENT copy without a Message-ID, or a row stored by a concurrent run', async () => {
+    const inbound = createTestProcessor();
+    await inbound.process(sqsEvent(queueMessage));
+    expect(inbound.state.healCalls).toEqual([]);
+
+    const noMessageId = createTestProcessor();
+    noMessageId.state.fetchResult = {
+      ...noMessageId.state.fetchResult,
+      raw: new Uint8Array(DATELESS_RAW),
+      labelIds: ['SENT'],
+    };
+    await noMessageId.process(sqsEvent(queueMessage));
+    expect(noMessageId.state.healCalls).toEqual([]);
+
+    const alreadyStored = createTestProcessor();
+    alreadyStored.state.fetchResult = {
+      ...alreadyStored.state.fetchResult,
+      raw: new Uint8Array(OUR_SENT_COPY_RAW),
+      labelIds: ['SENT'],
+    };
+    alreadyStored.state.insertResult = false;
+    await alreadyStored.process(sqsEvent(queueMessage));
+    expect(alreadyStored.state.healCalls).toEqual([]);
+  });
+
+  it('keeps the SENT copy and acks the record when the heal itself fails', async () => {
+    const { process, state } = createTestProcessor();
+    state.fetchResult = {
+      ...state.fetchResult,
+      raw: new Uint8Array(OUR_SENT_COPY_RAW),
+      labelIds: ['SENT'],
+    };
+    state.healError = new Error('connection reset');
+
+    const response = await process(sqsEvent(queueMessage));
+
+    expect(response.batchItemFailures).toEqual([]);
+    expect(state.inserted).toHaveLength(1);
   });
 
   it('does not ask the model when a rule matched', async () => {
