@@ -37,6 +37,8 @@ model Tenant {
   classificationRules         ClassificationRule[]
   classifications             Classification[]
   sentMails                   SentMail[]
+  vendors                     Vendor[]
+  vendorContacts              VendorContact[]
 
   @@map("tenants")
 }
@@ -260,6 +262,54 @@ enum SentMailStatus {
   FAILED  @map("failed")
 
   @@map("sent_mail_status")
+}
+
+enum VendorCategory {
+  CHA     @map("cha")
+  CARRIER @map("carrier")
+
+  @@map("vendor_category")
+}
+
+/// A company the desk sends RFQs to (a customs house agent or a carrier). Tenant-wide, like
+/// classification rules. Never deleted: `active` false archives it so old RFQs stay readable.
+model Vendor {
+  id         String          @id @default(uuid()) @db.Uuid
+  tenantId   String          @map("tenant_id") @db.Uuid
+  tenant     Tenant          @relation(fields: [tenantId], references: [id])
+  vendorName String          @map("vendor_name")
+  category   VendorCategory
+  /// What the desk wants to remember about the company (lanes, modes, how they quote).
+  notes      String?
+  active     Boolean         @default(true)
+  createdAt  DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  contacts   VendorContact[]
+
+  @@unique([tenantId, vendorName])
+  @@index([tenantId, active])
+  @@map("vendors")
+}
+
+/// A person at a vendor an RFQ can be addressed to. tenant_id is repeated so every query stays
+/// tenant-scoped without a join.
+model VendorContact {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  tenant       Tenant   @relation(fields: [tenantId], references: [id])
+  vendorId     String   @map("vendor_id") @db.Uuid
+  vendor       Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  contactName  String   @map("contact_name")
+  emailAddress String   @map("email_address")
+  /// Free text: formats vary too much to validate beyond trim and length.
+  phoneNumber  String?  @map("phone_number")
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([vendorId, emailAddress])
+  @@index([tenantId])
+  @@map("vendor_contacts")
 }
 
 /// Write-ahead record of one mail we send. Written before messages.send, so a timeout or crash

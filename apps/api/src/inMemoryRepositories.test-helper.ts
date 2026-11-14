@@ -4,6 +4,8 @@ import type {
   AttachmentRepository,
   AttachmentSummary,
   ClassificationRule,
+  Vendor,
+  VendorRepository,
   ClassificationRuleRepository,
   EmailClassificationRepository,
   CurrentClassification,
@@ -30,6 +32,7 @@ export function createInMemoryRepositories(): {
   emailReadRepository: EmailReadRepository;
   attachmentRepository: AttachmentRepository;
   classificationRuleRepository: ClassificationRuleRepository;
+  vendorRepository: VendorRepository;
   emailClassificationRepository: EmailClassificationRepository;
   sentMailRepository: SentMailRepository;
   /** Seeds the inbox list directly; the processor's insert path is not part of the API. Detail fields default to empty. */
@@ -55,6 +58,7 @@ export function createInMemoryRepositories(): {
   }
   const attachments: (AttachmentSummary & { tenantId: string })[] = [];
   const classificationRules: (ClassificationRule & { tenantId: string })[] = [];
+  const vendors: (Vendor & { tenantId: string })[] = [];
 
   /** The email must be in the scope's mailbox and tenant, and the attachment row in the same tenant. */
   function attachmentsOf(scope: { mailboxId: string; tenantId: string }, emailId: string) {
@@ -181,6 +185,45 @@ export function createInMemoryRepositories(): {
       },
       async findAttachment(scope, emailId, attachmentId) {
         return attachmentsOf(scope, emailId)?.find((attachment) => attachment.id === attachmentId);
+      },
+    },
+    vendorRepository: {
+      async listVendors(tenantId) {
+        return vendors
+          .filter((vendor) => vendor.tenantId === tenantId)
+          .sort((left, right) => left.vendorName.localeCompare(right.vendorName));
+      },
+      async createVendor(tenantId, vendorToCreate) {
+        const nameTaken = vendors.some(
+          (vendor) =>
+            vendor.tenantId === tenantId &&
+            vendor.vendorName.toLowerCase() === vendorToCreate.vendorName.toLowerCase(),
+        );
+        if (nameTaken) return { outcome: 'vendor_name_taken' };
+        const now = new Date();
+        const vendor: Vendor & { tenantId: string } = {
+          id: randomUUID(),
+          tenantId,
+          vendorName: vendorToCreate.vendorName,
+          category: vendorToCreate.category,
+          notes: vendorToCreate.notes,
+          active: true,
+          contacts: vendorToCreate.contacts
+            .map((contact) => ({
+              id: randomUUID(),
+              contactName: contact.contactName,
+              emailAddress: contact.emailAddress,
+              phoneNumber: contact.phoneNumber,
+              active: true,
+              createdAt: now,
+              updatedAt: now,
+            }))
+            .sort((left, right) => left.contactName.localeCompare(right.contactName)),
+          createdAt: now,
+          updatedAt: now,
+        };
+        vendors.push(vendor);
+        return { outcome: 'created', vendor };
       },
     },
     classificationRuleRepository: {
