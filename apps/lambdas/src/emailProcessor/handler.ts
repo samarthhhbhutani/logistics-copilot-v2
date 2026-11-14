@@ -9,6 +9,7 @@ import {
   createPrismaEmailIngestRepository,
   createPrismaMailboxConnectionRepository,
   createPrismaMailboxSyncRepository,
+  createPrismaSentMailRepository,
   createPrismaTenantRepository,
   initializePrismaClient,
 } from '@lc/core';
@@ -51,6 +52,7 @@ async function buildProcessor(): Promise<GmailMessageProcessor> {
     rawMailStore: createS3RawMailStore({ s3Client, bucketName: config.RAW_MAIL_BUCKET_NAME }),
     attachmentStore: createS3AttachmentStore({ s3Client, bucketName: config.RAW_MAIL_BUCKET_NAME }),
     emailIngestRepository: createPrismaEmailIngestRepository(prismaClient),
+    sentMailRepository: createPrismaSentMailRepository(prismaClient),
     classificationRuleRepository: createPrismaClassificationRuleRepository(prismaClient),
     emailClassifier,
   });

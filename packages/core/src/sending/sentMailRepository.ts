@@ -55,6 +55,17 @@ export interface SentMailRepository {
     sentMailId: string,
     errorCode: string,
   ): Promise<{ moved: boolean }>;
+  /**
+   * Heals a row the API left in `sending` (crash or timeout after Gmail accepted the mail): when the
+   * SENT copy is ingested, its Message-ID is our `<sentMailId@domain>`, so the row is found by
+   * (mailbox, rfcMessageId) and moved to `sent`. Only `sending` qualifies: `pending` never reached
+   * Gmail and `failed` has no SENT copy. Indexed by @@unique([mailboxId, rfcMessageId]).
+   */
+  markSentByRfcMessageId(
+    scope: MailboxScope,
+    rfcMessageId: string,
+    gmailIds: { gmailMessageId: string; gmailThreadId: string },
+  ): Promise<{ moved: boolean }>;
 }
 
 const SENT_MAIL_SELECT = {
@@ -104,16 +115,16 @@ export function createPrismaSentMailRepository(prismaClient: PrismaClient): Sent
     return row ? toSentMail(row) : undefined;
   }
 
-  /** One conditional UPDATE: the row moves only if it is currently in `from`. */
+  /** One conditional UPDATE: the row matching `rowKey` moves only if it is currently in `from`. */
   async function moveTo(
     { mailboxId, tenantId }: MailboxScope,
-    sentMailId: string,
+    rowKey: { id: string } | { rfcMessageId: string },
     transition: { from: SentMailStatus; to: SentMailStatus },
     data: Omit<Prisma.SentMailUpdateManyMutationInput, 'status'>,
   ): Promise<{ moved: boolean }> {
     const result = await prismaClient.sentMail.updateMany({
       where: {
-        id: sentMailId,
+        ...rowKey,
         mailboxId,
         tenantId,
         status: PRISMA_ENUM_BY_SENT_MAIL_STATUS[transition.from],
@@ -156,20 +167,29 @@ export function createPrismaSentMailRepository(prismaClient: PrismaClient): Sent
     findSentMail: findInScope,
 
     markSending(scope, sentMailId) {
-      return moveTo(scope, sentMailId, { from: 'pending', to: 'sending' }, {});
+      return moveTo(scope, { id: sentMailId }, { from: 'pending', to: 'sending' }, {});
     },
 
     markSent(scope, sentMailId, { gmailMessageId, gmailThreadId }) {
       return moveTo(
         scope,
-        sentMailId,
+        { id: sentMailId },
         { from: 'sending', to: 'sent' },
         { gmailMessageId, gmailThreadId, errorCode: null },
       );
     },
 
     markFailed(scope, sentMailId, errorCode) {
-      return moveTo(scope, sentMailId, { from: 'sending', to: 'failed' }, { errorCode });
+      return moveTo(scope, { id: sentMailId }, { from: 'sending', to: 'failed' }, { errorCode });
+    },
+
+    markSentByRfcMessageId(scope, rfcMessageId, { gmailMessageId, gmailThreadId }) {
+      return moveTo(
+        scope,
+        { rfcMessageId },
+        { from: 'sending', to: 'sent' },
+        { gmailMessageId, gmailThreadId, errorCode: null },
+      );
     },
   };
 }

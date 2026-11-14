@@ -19,6 +19,7 @@ import type {
   MailboxScope,
   MailboxSyncRepository,
   ParsedEmail,
+  SentMailRepository,
   StoredAttachment,
   TenantRepository,
   ThreadContext,
@@ -38,6 +39,7 @@ export interface GmailMessageProcessorDependencies {
   rawMailStore: RawMailStore;
   attachmentStore: AttachmentStore;
   emailIngestRepository: EmailIngestRepository;
+  sentMailRepository: SentMailRepository;
   classificationRuleRepository: ClassificationRuleRepository;
   /** Undefined when no OPENAI_API_KEY is configured: mail no rule matches is stored unclassified. */
   emailClassifier: EmailClassifier | undefined;
@@ -81,6 +83,7 @@ export function createGmailMessageProcessor(
     rawMailStore,
     attachmentStore,
     emailIngestRepository,
+    sentMailRepository,
     classificationRuleRepository,
     emailClassifier,
   } = dependencies;
@@ -235,7 +238,48 @@ export function createGmailMessageProcessor(
       attachmentCount: storedAttachments.length,
       ...(inserted && classification ? toClassificationLogFields(classification) : {}),
     });
+    if (inserted && gmailLabel === 'sent' && email.messageId) {
+      await healSentMailLeftSending(
+        scope,
+        email.messageId,
+        { gmailMessageId, gmailThreadId: fetched.threadId },
+        context,
+      );
+    }
     return 'done';
+  }
+
+  /**
+   * A SENT copy whose Message-ID is one of ours proves Gmail accepted a mail the API may not have
+   * been able to mark sent (crash or timeout between messages.send and the status write). Best
+   * effort: the email row is already stored, and a `retry` here would only be answered by
+   * emailExists on redelivery, so a failure is logged and left to the stale-sending sweep.
+   */
+  async function healSentMailLeftSending(
+    scope: MailboxScope,
+    rfcMessageId: string,
+    gmailIds: { gmailMessageId: string; gmailThreadId: string },
+    context: Record<string, string>,
+  ): Promise<void> {
+    try {
+      const { moved } = await sentMailRepository.markSentByRfcMessageId(
+        scope,
+        rfcMessageId,
+        gmailIds,
+      );
+      if (moved) {
+        log('info', 'sent_mails row left in sending healed by its SENT copy', {
+          ...context,
+          rfcMessageId,
+        });
+      }
+    } catch (error) {
+      log('error', 'sent_mails heal failed, row left in sending', {
+        ...context,
+        rfcMessageId,
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   /**

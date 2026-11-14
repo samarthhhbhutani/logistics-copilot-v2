@@ -286,6 +286,21 @@ export function createInMemoryRepositories(): {
         ),
       markFailed: (scope, sentMailId, errorCode) =>
         moveSentMail(scope, sentMailId, { from: 'sending', to: 'failed' }, { errorCode }),
+      async markSentByRfcMessageId(scope, rfcMessageId, gmailIds) {
+        const sentMail = sentMails.find(
+          (candidate) =>
+            candidate.rfcMessageId === rfcMessageId &&
+            candidate.mailboxId === scope.mailboxId &&
+            candidate.tenantId === scope.tenantId,
+        );
+        if (!sentMail) return { moved: false };
+        return moveSentMail(
+          scope,
+          sentMail.id,
+          { from: 'sending', to: 'sent' },
+          { ...gmailIds, errorCode: null },
+        );
+      },
     },
     mailboxConnectionRepository: {
       async findMailboxConnection(scope) {
