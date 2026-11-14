@@ -4,7 +4,8 @@ import type {
 } from '../db/generated/client.js';
 import type { EmailAddress } from '../utils/mime/parsedEmail.js';
 
-export type SentMailKind = 'reply';
+/** reply: answers an inbound mail in its thread. rfq: starts a new thread with one vendor for an RFQ. */
+export type SentMailKind = 'reply' | 'rfq';
 
 /**
  * pending: row written, nothing sent. sending: messages.send in flight. sent: Gmail accepted it.
@@ -53,7 +54,9 @@ export const SENT_MAIL_STATUS_BY_PRISMA_ENUM: Record<PrismaSentMailStatus, SentM
 };
 export const PRISMA_ENUM_BY_SENT_MAIL_KIND: Record<SentMailKind, PrismaSentMailKind> = {
   reply: 'REPLY',
+  rfq: 'RFQ',
 };
 export const SENT_MAIL_KIND_BY_PRISMA_ENUM: Record<PrismaSentMailKind, SentMailKind> = {
   REPLY: 'reply',
+  RFQ: 'rfq',
 };

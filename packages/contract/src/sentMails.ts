@@ -21,7 +21,7 @@ export const sendReplyRequestSchema = z.object({
 });
 export type SendReplyRequest = z.infer<typeof sendReplyRequestSchema>;
 
-export const sentMailKindSchema = z.enum(['reply']);
+export const sentMailKindSchema = z.enum(['reply', 'rfq']);
 export const sentMailStatusSchema = z.enum(['pending', 'sending', 'sent', 'failed']);
 export type SentMailStatus = z.infer<typeof sentMailStatusSchema>;
 
