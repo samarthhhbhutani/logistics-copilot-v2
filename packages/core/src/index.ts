@@ -8,3 +8,4 @@ export * from './connectors/index.js';
 export * from './emails/index.js';
 export * from './classification/index.js';
 export * from './sending/index.js';
+export * from './vendors/index.js';

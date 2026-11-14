@@ -4,6 +4,7 @@ import cookieParser from 'cookie-parser';
 import type {
   AttachmentRepository,
   ClassificationRuleRepository,
+  VendorRepository,
   EmailClassificationRepository,
   Config,
   EmailReadRepository,
@@ -20,6 +21,7 @@ import { createAuthRouter } from './auth/authRouter.js';
 import { createRequireSession, getSession } from './auth/requireSession.js';
 import type { AttachmentDownloadUrlSigner } from './emails/attachmentDownloadUrlSigner.js';
 import { createClassificationRulesRouter } from './classification/classificationRulesRouter.js';
+import { createVendorsRouter } from './vendors/vendorsRouter.js';
 import { createAttachmentsRouter } from './emails/attachmentsRouter.js';
 import { createEmailsRouter } from './emails/emailsRouter.js';
 import { createEmailClassificationsRouter } from './emails/emailClassificationsRouter.js';
@@ -36,6 +38,7 @@ export interface AppDependencies {
   emailReadRepository: EmailReadRepository;
   attachmentRepository: AttachmentRepository;
   classificationRuleRepository: ClassificationRuleRepository;
+  vendorRepository: VendorRepository;
   emailClassificationRepository: EmailClassificationRepository;
   sentMailRepository: SentMailRepository;
   /** Presigns S3 download links; undefined when no bucket is configured, so download links answer 503. */
@@ -67,6 +70,7 @@ export function createAppInstance({
   emailReadRepository,
   attachmentRepository,
   classificationRuleRepository,
+  vendorRepository,
   emailClassificationRepository,
   sentMailRepository,
   attachmentDownloadUrlSigner,
@@ -138,6 +142,7 @@ export function createAppInstance({
     '/mailbox/classification-rules',
     createClassificationRulesRouter({ classificationRuleRepository, requireSession }),
   );
+  v1Router.use('/mailbox/vendors', createVendorsRouter({ vendorRepository, requireSession }));
   // Feature routers mount here as they land: rfqs, agent.
   expressApp.use('/v1', v1Router);
 
