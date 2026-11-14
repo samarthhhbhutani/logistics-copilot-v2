@@ -7,6 +7,8 @@ import { createFakeGmailOAuth } from './fakeGmailOAuth.test-helper.js';
 import type { FakeGmailOAuth } from './fakeGmailOAuth.test-helper.js';
 import { createFakeGmailWatch } from './fakeGmailWatch.test-helper.js';
 import type { FakeGmailWatch } from './fakeGmailWatch.test-helper.js';
+import { createFakeGmailSender } from './fakeGmailSender.test-helper.js';
+import type { FakeGmailSender } from './fakeGmailSender.test-helper.js';
 import { createFakeAttachmentDownloadUrlSigner } from './fakeAttachmentDownloadUrlSigner.test-helper.js';
 import type { AttachmentDownloadUrlSigner } from './emails/attachmentDownloadUrlSigner.js';
 import { createInMemoryRepositories } from './inMemoryRepositories.test-helper.js';
@@ -30,6 +32,7 @@ export interface TestApp {
   app: Express;
   gmailOAuth: FakeGmailOAuth;
   gmailWatch: FakeGmailWatch;
+  gmailSender: FakeGmailSender;
   encryptionUtil: EncryptionUtil;
   repositories: ReturnType<typeof createInMemoryRepositories>;
 }
@@ -53,6 +56,7 @@ export function createTestApp({
   const repositories = createInMemoryRepositories();
   const gmailOAuth = createFakeGmailOAuth(consentingAccountEmail);
   const gmailWatch = createFakeGmailWatch();
+  const gmailSender = createFakeGmailSender();
   const encryptionUtil = createEncryptionUtil(randomBytes(32).toString('base64'));
   const app = createAppInstance({
     config,
@@ -62,10 +66,11 @@ export function createTestApp({
       : undefined,
     gmailOAuth,
     gmailWatch,
+    gmailSender,
     encryptionUtil,
     sessionSecret: testSessionSecret,
   });
-  return { app, gmailOAuth, gmailWatch, encryptionUtil, repositories };
+  return { app, gmailOAuth, gmailWatch, gmailSender, encryptionUtil, repositories };
 }
 
 /** Backwards-compatible shorthand for tests that only need the Express app. */

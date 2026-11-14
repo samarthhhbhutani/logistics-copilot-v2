@@ -98,3 +98,16 @@ export function toGmailApiError(error: unknown): GmailApiError {
       return new GmailApiError('request_failed', httpStatus, detail);
   }
 }
+
+/**
+ * Gmail answered with a 4xx: the request was refused, so whatever it asked for certainly did not
+ * happen. A 5xx or no response at all (timeout, reset) leaves the outcome unknown.
+ */
+export function isDefinitiveGmailRejection(error: unknown): error is GmailApiError {
+  return (
+    error instanceof GmailApiError &&
+    error.httpStatus !== undefined &&
+    error.httpStatus >= 400 &&
+    error.httpStatus < 500
+  );
+}
