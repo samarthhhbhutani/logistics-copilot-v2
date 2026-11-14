@@ -1,6 +1,7 @@
 import { S3Client } from '@aws-sdk/client-s3';
 import {
   createGoogleGmailOAuth,
+  createGoogleGmailSender,
   createGoogleGmailWatch,
   createPrismaAttachmentRepository,
   createPrismaClassificationRuleRepository,
@@ -8,6 +9,7 @@ import {
   createPrismaEmailReadRepository,
   createPrismaMailboxConnectionRepository,
   createPrismaMailboxCredentialsRepository,
+  createPrismaSentMailRepository,
   createPrismaTenantRepository,
   createEncryptionUtil,
   initializePrismaClient,
@@ -44,9 +46,15 @@ const expressApp = createAppInstance({
   attachmentRepository: createPrismaAttachmentRepository(prismaClient),
   classificationRuleRepository: createPrismaClassificationRuleRepository(prismaClient),
   emailClassificationRepository: createPrismaEmailClassificationRepository(prismaClient),
+  sentMailRepository: createPrismaSentMailRepository(prismaClient),
   attachmentDownloadUrlSigner,
   gmailOAuth: createGoogleGmailOAuth({ redirectUri: config.GOOGLE_REDIRECT_URI }),
   gmailWatch: createGoogleGmailWatch(),
+  // Safe mode by stage: staging must set OUTBOUND_MAIL_REDIRECT_TO, prod must not; this throws otherwise.
+  gmailSender: createGoogleGmailSender({
+    stage: config.STAGE,
+    redirectAllMailTo: config.OUTBOUND_MAIL_REDIRECT_TO,
+  }),
   encryptionUtil: createEncryptionUtil(config.TOKEN_ENCRYPTION_KEY),
   sessionSecret: config.SESSION_SECRET,
 });

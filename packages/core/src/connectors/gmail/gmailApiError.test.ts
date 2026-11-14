@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { GmailApiError, toGmailApiError } from './gmailApiError.js';
+import { GmailApiError, isDefinitiveGmailRejection, toGmailApiError } from './gmailApiError.js';
 
 function googleError(status: number, data: unknown): Error {
   return Object.assign(new Error('request failed'), { response: { status, data } });
@@ -69,5 +69,15 @@ describe('toGmailApiError', () => {
     });
     const existing = new GmailApiError('invalid_grant', 400);
     expect(toGmailApiError(existing)).toBe(existing);
+  });
+});
+
+describe('isDefinitiveGmailRejection', () => {
+  it('is true only for a Gmail 4xx; a 5xx, no response or a non-Gmail error leaves the outcome unknown', () => {
+    expect(isDefinitiveGmailRejection(new GmailApiError('rate_limited', 429))).toBe(true);
+    expect(isDefinitiveGmailRejection(new GmailApiError('invalid_grant', 400))).toBe(true);
+    expect(isDefinitiveGmailRejection(new GmailApiError('request_failed', 503))).toBe(false);
+    expect(isDefinitiveGmailRejection(new GmailApiError('request_failed', undefined))).toBe(false);
+    expect(isDefinitiveGmailRejection(new Error('socket hang up'))).toBe(false);
   });
 });
