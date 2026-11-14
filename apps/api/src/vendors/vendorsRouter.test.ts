@@ -216,3 +216,167 @@ describe('GET /v1/mailbox/vendors', () => {
     ).toEqual(['Other Carrier']);
   });
 });
+
+describe('PATCH /v1/mailbox/vendors/:vendorId', () => {
+  async function createdVendor(testApp: TestApp, cookie: string, body: unknown = seaLinesBody) {
+    const created = await request(testApp.app).post(vendorsPath).set('Cookie', cookie).send(body);
+    expect(created.status).toBe(201);
+    return created.body as { id: string; contacts: { id: string; emailAddress: string }[] };
+  }
+
+  it('renames, recategorises, edits notes and archives, answering the whole vendor each time', async () => {
+    const testApp = createTestApp();
+    const { cookie } = await signedInMailbox(testApp);
+    const vendor = await createdVendor(testApp, cookie);
+
+    const renamed = await request(testApp.app)
+      .patch(`${vendorsPath}/${vendor.id}`)
+      .set('Cookie', cookie)
+      .send({ vendorName: ' Sea Lines Ltd ', category: 'cha', notes: '' });
+    expect(renamed.status).toBe(200);
+    expect(renamed.body).toMatchObject({
+      id: vendor.id,
+      vendorName: 'Sea Lines Ltd',
+      category: 'cha',
+      notes: null,
+      active: true,
+    });
+    expect(renamed.body.contacts).toHaveLength(2);
+
+    const archived = await request(testApp.app)
+      .patch(`${vendorsPath}/${vendor.id}`)
+      .set('Cookie', cookie)
+      .send({ active: false });
+    expect(archived.status).toBe(200);
+    expect(archived.body.active).toBe(false);
+
+    const listed = await request(testApp.app).get(vendorsPath).set('Cookie', cookie);
+    expect(listed.body.vendors).toHaveLength(1);
+    expect(listed.body.vendors[0].active).toBe(false);
+  });
+
+  it('refuses a rename onto another vendor of the tenant (any case) but allows re-spelling itself', async () => {
+    const testApp = createTestApp();
+    const { cookie } = await signedInMailbox(testApp);
+    const seaLines = await createdVendor(testApp, cookie);
+    await createdVendor(testApp, cookie, { vendorName: 'Clear Customs', category: 'cha' });
+
+    const clash = await request(testApp.app)
+      .patch(`${vendorsPath}/${seaLines.id}`)
+      .set('Cookie', cookie)
+      .send({ vendorName: 'clear customs' });
+    expect(clash.status).toBe(409);
+    expect(clash.body.error).toBe('vendor_name_taken');
+
+    const respelled = await request(testApp.app)
+      .patch(`${vendorsPath}/${seaLines.id}`)
+      .set('Cookie', cookie)
+      .send({ vendorName: 'SEA LINES PVT LTD' });
+    expect(respelled.status).toBe(200);
+    expect(respelled.body.vendorName).toBe('SEA LINES PVT LTD');
+  });
+
+  it('answers 400 for an empty body and 404 for an unknown, malformed or other-tenant vendor', async () => {
+    const testApp = createTestApp();
+    const { cookie } = await signedInMailbox(testApp);
+    const other = await signedInMailbox(testApp, 'other@desk.com', {
+      ...testTenantBody,
+      name: 'Other Desk',
+    });
+    const vendor = await createdVendor(testApp, cookie);
+
+    const empty = await request(testApp.app)
+      .patch(`${vendorsPath}/${vendor.id}`)
+      .set('Cookie', cookie)
+      .send({});
+    expect(empty.status).toBe(400);
+
+    for (const [label, id, who] of [
+      ['unknown', '00000000-0000-4000-8000-000000000009', cookie],
+      ['malformed', 'not-a-uuid', cookie],
+      ['other tenant', vendor.id, other.cookie],
+    ] as const) {
+      const response = await request(testApp.app)
+        .patch(`${vendorsPath}/${id}`)
+        .set('Cookie', who)
+        .send({ notes: 'x' });
+      expect(response.status, label).toBe(404);
+    }
+
+    const unknownWithClashingName = await request(testApp.app)
+      .patch(`${vendorsPath}/00000000-0000-4000-8000-000000000009`)
+      .set('Cookie', cookie)
+      .send({ vendorName: 'Sea Lines Pvt Ltd' });
+    expect(unknownWithClashingName.status, 'not found beats name taken').toBe(404);
+  });
+
+  it('adds a contact, refuses a duplicate address, and edits or archives a contact', async () => {
+    const testApp = createTestApp();
+    const { cookie } = await signedInMailbox(testApp);
+    const vendor = await createdVendor(testApp, cookie, {
+      vendorName: 'Clear Customs',
+      category: 'cha',
+    });
+
+    const added = await request(testApp.app)
+      .post(`${vendorsPath}/${vendor.id}/contacts`)
+      .set('Cookie', cookie)
+      .send({ contactName: 'Dev Patel', emailAddress: ' Dev@Clear.com ', phoneNumber: '' });
+    expect(added.status).toBe(200);
+    expect(added.body.contacts).toEqual([
+      expect.objectContaining({
+        contactName: 'Dev Patel',
+        emailAddress: 'dev@clear.com',
+        phoneNumber: null,
+        active: true,
+      }),
+    ]);
+    const contactId = added.body.contacts[0].id as string;
+
+    const duplicate = await request(testApp.app)
+      .post(`${vendorsPath}/${vendor.id}/contacts`)
+      .set('Cookie', cookie)
+      .send({ contactName: 'Dev again', emailAddress: 'DEV@clear.com' });
+    expect(duplicate.status).toBe(409);
+    expect(duplicate.body.error).toBe('contact_email_taken');
+
+    const edited = await request(testApp.app)
+      .patch(`${vendorsPath}/${vendor.id}/contacts/${contactId}`)
+      .set('Cookie', cookie)
+      .send({ phoneNumber: '+91 98200 11111', active: false });
+    expect(edited.status).toBe(200);
+    expect(edited.body.contacts[0]).toMatchObject({
+      id: contactId,
+      phoneNumber: '+91 98200 11111',
+      active: false,
+    });
+
+    const unknownVendor = await request(testApp.app)
+      .post(`${vendorsPath}/00000000-0000-4000-8000-000000000009/contacts`)
+      .set('Cookie', cookie)
+      .send({ contactName: 'X', emailAddress: 'x@clear.com' });
+    expect(unknownVendor.status).toBe(404);
+    expect(unknownVendor.body.error).toBe('vendor_not_found');
+
+    const unknownContact = await request(testApp.app)
+      .patch(`${vendorsPath}/${vendor.id}/contacts/00000000-0000-4000-8000-000000000009`)
+      .set('Cookie', cookie)
+      .send({ contactName: 'Y' });
+    expect(unknownContact.status).toBe(404);
+    expect(unknownContact.body.error).toBe('contact_not_found');
+  });
+
+  it('refuses to move a contact onto an address another contact of the vendor already has', async () => {
+    const testApp = createTestApp();
+    const { cookie } = await signedInMailbox(testApp);
+    const vendor = await createdVendor(testApp, cookie);
+    const arjun = vendor.contacts.find((contact) => contact.emailAddress === 'arjun@sealines.com')!;
+
+    const clash = await request(testApp.app)
+      .patch(`${vendorsPath}/${vendor.id}/contacts/${arjun.id}`)
+      .set('Cookie', cookie)
+      .send({ emailAddress: 'priya@sealines.com' });
+    expect(clash.status).toBe(409);
+    expect(clash.body.error).toBe('contact_email_taken');
+  });
+});

@@ -2,9 +2,15 @@ import express from 'express';
 import type { RequestHandler, Router } from 'express';
 import createHttpError from 'http-errors';
 import type { Vendor, VendorContact, VendorRepository } from '@lc/core';
-import { createVendorBodySchema } from '@lc/contract';
+import {
+  createVendorBodySchema,
+  createVendorContactBodySchema,
+  updateVendorBodySchema,
+  updateVendorContactBodySchema,
+} from '@lc/contract';
 import type { ListVendorsResponse, VendorContactResponse, VendorResponse } from '@lc/contract';
 import { getSession } from '../auth/requireSession.js';
+import { parseIdOr404 } from '../http/parseIdOr404.js';
 import { parseRequestBody } from '../http/parseRequestBody.js';
 
 export interface VendorsRouterDependencies {
@@ -43,6 +49,10 @@ export function toVendorResponse(vendor: Vendor): VendorResponse {
  *   GET  /    every vendor with its contacts, archived included, by name
  *   POST /    create one with its contacts; 201 with the stored vendor; 409 vendor_name_taken when
  *             the tenant already has a vendor of that name
+ *   PATCH /:vendorId                        rename, recategorise, edit notes, archive/restore
+ *   POST  /:vendorId/contacts               add a person; 409 contact_email_taken
+ *   PATCH /:vendorId/contacts/:contactId    edit a person, archive/restore
+ * Every write answers 200 with the whole vendor, contacts included. Nothing is ever deleted.
  */
 export function createVendorsRouter({
   vendorRepository,
@@ -64,6 +74,46 @@ export function createVendorsRouter({
     if (createResult.outcome === 'vendor_name_taken')
       throw createHttpError(409, 'vendor_name_taken');
     response.status(201).json(toVendorResponse(createResult.vendor));
+  });
+
+  router.patch('/:vendorId', requireSession, async (request, response) => {
+    const vendorId = parseIdOr404(request.params.vendorId);
+    const changes = parseRequestBody(updateVendorBodySchema, request.body);
+    const { tenantId } = getSession(response);
+    const updateResult = await vendorRepository.updateVendor(tenantId, vendorId, changes);
+    if (updateResult.outcome === 'vendor_not_found') throw createHttpError(404, 'vendor_not_found');
+    if (updateResult.outcome === 'vendor_name_taken')
+      throw createHttpError(409, 'vendor_name_taken');
+    response.json(toVendorResponse(updateResult.vendor));
+  });
+
+  router.post('/:vendorId/contacts', requireSession, async (request, response) => {
+    const vendorId = parseIdOr404(request.params.vendorId);
+    const contactToAdd = parseRequestBody(createVendorContactBodySchema, request.body);
+    const { tenantId } = getSession(response);
+    const addResult = await vendorRepository.addContact(tenantId, vendorId, contactToAdd);
+    if (addResult.outcome === 'vendor_not_found') throw createHttpError(404, 'vendor_not_found');
+    if (addResult.outcome === 'contact_email_taken')
+      throw createHttpError(409, 'contact_email_taken');
+    response.json(toVendorResponse(addResult.vendor));
+  });
+
+  router.patch('/:vendorId/contacts/:contactId', requireSession, async (request, response) => {
+    const vendorId = parseIdOr404(request.params.vendorId);
+    const contactId = parseIdOr404(request.params.contactId);
+    const changes = parseRequestBody(updateVendorContactBodySchema, request.body);
+    const { tenantId } = getSession(response);
+    const updateResult = await vendorRepository.updateContact(
+      tenantId,
+      vendorId,
+      contactId,
+      changes,
+    );
+    if (updateResult.outcome === 'contact_not_found')
+      throw createHttpError(404, 'contact_not_found');
+    if (updateResult.outcome === 'contact_email_taken')
+      throw createHttpError(409, 'contact_email_taken');
+    response.json(toVendorResponse(updateResult.vendor));
   });
 
   return router;

@@ -23,11 +23,49 @@ export type CreateVendorResult =
   /** The tenant already has a vendor of that name, compared case-insensitively; the caller answers 409. */
   | { outcome: 'vendor_name_taken' };
 
+export type VendorChanges = Partial<Pick<Vendor, 'vendorName' | 'category' | 'notes' | 'active'>>;
+export type VendorContactChanges = Partial<
+  Pick<VendorContact, 'contactName' | 'emailAddress' | 'phoneNumber' | 'active'>
+>;
+
+/** Every write answers with the whole vendor, contacts included, so a client has one shape to render. */
+export type UpdateVendorResult =
+  | { outcome: 'updated'; vendor: Vendor }
+  | { outcome: 'vendor_not_found' }
+  | { outcome: 'vendor_name_taken' };
+
+export type AddContactResult =
+  | { outcome: 'added'; vendor: Vendor }
+  | { outcome: 'vendor_not_found' }
+  /** The vendor already has a contact at that address; the caller answers 409. */
+  | { outcome: 'contact_email_taken' };
+
+export type UpdateContactResult =
+  | { outcome: 'updated'; vendor: Vendor }
+  | { outcome: 'contact_not_found' }
+  | { outcome: 'contact_email_taken' };
+
 export interface VendorRepository {
   /** Every vendor of the tenant with its contacts, archived included, by name. */
   listVendors(tenantId: string): Promise<Vendor[]>;
   /** Vendor and contacts in one transaction, so a half-created vendor never exists. */
   createVendor(tenantId: string, vendor: VendorToCreate): Promise<CreateVendorResult>;
+  updateVendor(
+    tenantId: string,
+    vendorId: string,
+    changes: VendorChanges,
+  ): Promise<UpdateVendorResult>;
+  addContact(
+    tenantId: string,
+    vendorId: string,
+    contact: VendorContactToCreate,
+  ): Promise<AddContactResult>;
+  updateContact(
+    tenantId: string,
+    vendorId: string,
+    contactId: string,
+    changes: VendorContactChanges,
+  ): Promise<UpdateContactResult>;
 }
 
 const VENDOR_CONTACT_SELECT = {
@@ -83,6 +121,15 @@ export function toVendor(row: VendorRow): Vendor {
 }
 
 export function createPrismaVendorRepository(prismaClient: PrismaClient): VendorRepository {
+  /** A vendor of the tenant already spelled this name, in any case. */
+  async function vendorNameTaken(tenantId: string, vendorName: string): Promise<boolean> {
+    const sameName = await prismaClient.vendor.findFirst({
+      where: { tenantId, vendorName: { equals: vendorName, mode: 'insensitive' } },
+      select: { id: true },
+    });
+    return sameName !== null;
+  }
+
   return {
     async listVendors(tenantId) {
       const rows = await prismaClient.vendor.findMany({
@@ -96,11 +143,8 @@ export function createPrismaVendorRepository(prismaClient: PrismaClient): Vendor
     async createVendor(tenantId, vendor) {
       // "Sea Lines" and "sea lines" are the same company. The unique index is case-sensitive, so the
       // check is done here; the index still catches two racing creates of the identical spelling.
-      const sameName = await prismaClient.vendor.findFirst({
-        where: { tenantId, vendorName: { equals: vendor.vendorName, mode: 'insensitive' } },
-        select: { id: true },
-      });
-      if (sameName) return { outcome: 'vendor_name_taken' };
+      if (await vendorNameTaken(tenantId, vendor.vendorName))
+        return { outcome: 'vendor_name_taken' };
       try {
         const row = await prismaClient.vendor.create({
           data: {
@@ -109,28 +153,98 @@ export function createPrismaVendorRepository(prismaClient: PrismaClient): Vendor
             category: PRISMA_ENUM_BY_VENDOR_CATEGORY[vendor.category],
             notes: vendor.notes,
             contacts: {
-              create: vendor.contacts.map((contact) => ({
-                tenantId,
-                contactName: contact.contactName,
-                emailAddress: contact.emailAddress,
-                phoneNumber: contact.phoneNumber,
-              })),
+              create: vendor.contacts.map((contact) => ({ tenantId, ...contact })),
             },
           },
           select: VENDOR_SELECT,
         });
         return { outcome: 'created', vendor: toVendor(row) };
       } catch (error) {
-        // The nested create is one statement set inside Prisma's implicit transaction, so a duplicate
-        // name leaves nothing behind. Duplicate contact addresses within one request are rejected by
-        // the contract schema before reaching here.
         if (isUniqueViolation(error)) return { outcome: 'vendor_name_taken' };
+        throw error;
+      }
+    },
+
+    async updateVendor(tenantId, vendorId, changes) {
+      if (changes.vendorName !== undefined) {
+        // One query answers both questions for a rename: is this vendor in the tenant, and does another
+        // vendor of the tenant already spell that name (in any case)? Existence is decided first, so an
+        // unknown id is always "not found", never a 409 that tells the caller which names exist.
+        const candidates = await prismaClient.vendor.findMany({
+          where: {
+            tenantId,
+            OR: [
+              { id: vendorId },
+              { vendorName: { equals: changes.vendorName, mode: 'insensitive' } },
+            ],
+          },
+          select: { id: true },
+        });
+        if (!candidates.some((candidate) => candidate.id === vendorId)) {
+          return { outcome: 'vendor_not_found' };
+        }
+        if (candidates.some((candidate) => candidate.id !== vendorId)) {
+          return { outcome: 'vendor_name_taken' };
+        }
+      }
+      try {
+        const row = await prismaClient.vendor.update({
+          where: { id: vendorId, tenantId },
+          data: {
+            ...changes,
+            category: changes.category && PRISMA_ENUM_BY_VENDOR_CATEGORY[changes.category],
+          },
+          select: VENDOR_SELECT,
+        });
+        return { outcome: 'updated', vendor: toVendor(row) };
+      } catch (error) {
+        if (isRecordNotFound(error)) return { outcome: 'vendor_not_found' };
+        if (isUniqueViolation(error)) return { outcome: 'vendor_name_taken' };
+        throw error;
+      }
+    },
+
+    async addContact(tenantId, vendorId, contact) {
+      try {
+        // Written through the parent so the one statement checks the vendor is in the tenant,
+        // inserts the contact and returns the vendor with all its contacts.
+        const row = await prismaClient.vendor.update({
+          where: { id: vendorId, tenantId },
+          data: { contacts: { create: { tenantId, ...contact } } },
+          select: VENDOR_SELECT,
+        });
+        return { outcome: 'added', vendor: toVendor(row) };
+      } catch (error) {
+        if (isRecordNotFound(error)) return { outcome: 'vendor_not_found' };
+        if (isUniqueViolation(error)) return { outcome: 'contact_email_taken' };
+        throw error;
+      }
+    },
+
+    async updateContact(tenantId, vendorId, contactId, changes) {
+      try {
+        const row = await prismaClient.vendor.update({
+          where: { id: vendorId, tenantId },
+          data: { contacts: { update: { where: { id: contactId }, data: changes } } },
+          select: VENDOR_SELECT,
+        });
+        return { outcome: 'updated', vendor: toVendor(row) };
+      } catch (error) {
+        // Either the vendor is not in the tenant or the contact is not under that vendor.
+        if (isRecordNotFound(error)) return { outcome: 'contact_not_found' };
+        if (isUniqueViolation(error)) return { outcome: 'contact_email_taken' };
         throw error;
       }
     },
   };
 }
 
+/** Prisma's code for a unique-index violation. */
 function isUniqueViolation(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+}
+
+/** Prisma's code for an update whose `where` matched no row (the vendor, or the nested contact). */
+function isRecordNotFound(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025';
 }
