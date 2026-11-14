@@ -8,10 +8,12 @@ import type {
   Config,
   EmailReadRepository,
   GmailOAuth,
+  GmailSender,
   GmailWatch,
   MailboxConnectionRepository,
   MailboxCredentialsRepository,
   EncryptionUtil,
+  SentMailRepository,
   TenantRepository,
 } from '@lc/core';
 import { createAuthRouter } from './auth/authRouter.js';
@@ -23,6 +25,7 @@ import { createEmailsRouter } from './emails/emailsRouter.js';
 import { createEmailClassificationsRouter } from './emails/emailClassificationsRouter.js';
 import { createThreadsRouter } from './emails/threadsRouter.js';
 import { createGmailConnectionRouter } from './gmail/gmailConnectionRouter.js';
+import { createEmailRepliesRouter } from './sending/emailRepliesRouter.js';
 import { createTenantsRouter } from './tenants/tenantsRouter.js';
 
 export interface AppDependencies {
@@ -34,12 +37,15 @@ export interface AppDependencies {
   attachmentRepository: AttachmentRepository;
   classificationRuleRepository: ClassificationRuleRepository;
   emailClassificationRepository: EmailClassificationRepository;
+  sentMailRepository: SentMailRepository;
   /** Presigns S3 download links; undefined when no bucket is configured, so download links answer 503. */
   attachmentDownloadUrlSigner: AttachmentDownloadUrlSigner | undefined;
   /** Google OAuth operations; the real one in index.ts, an in-memory fake in tests. */
   gmailOAuth: GmailOAuth;
   /** Gmail users.watch / users.stop; same real-or-fake split as gmailOAuth. */
   gmailWatch: GmailWatch;
+  /** Gmail messages.send, built with the stage's safe-mode setting; same real-or-fake split. */
+  gmailSender: GmailSender;
   /** Encrypts refresh tokens and tenant client secrets before they reach the database. */
   encryptionUtil: EncryptionUtil;
   /** HMAC key for session cookies; required here rather than optional on Config so index.ts fails fast. */
@@ -62,9 +68,11 @@ export function createAppInstance({
   attachmentRepository,
   classificationRuleRepository,
   emailClassificationRepository,
+  sentMailRepository,
   attachmentDownloadUrlSigner,
   gmailOAuth,
   gmailWatch,
+  gmailSender,
   encryptionUtil,
   sessionSecret,
 }: AppDependencies): Express {
@@ -113,6 +121,18 @@ export function createAppInstance({
   v1Router.use(
     '/mailbox/emails',
     createEmailClassificationsRouter({ emailClassificationRepository, requireSession }),
+  );
+  v1Router.use(
+    '/mailbox/emails',
+    createEmailRepliesRouter({
+      emailReadRepository,
+      mailboxConnectionRepository,
+      tenantRepository,
+      sentMailRepository,
+      gmailSender,
+      encryptionUtil,
+      requireSession,
+    }),
   );
   v1Router.use(
     '/mailbox/classification-rules',

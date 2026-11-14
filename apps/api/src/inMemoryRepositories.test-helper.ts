@@ -14,6 +14,9 @@ import type {
   MailboxConnectionRepository,
   MailboxCredentials,
   MailboxCredentialsRepository,
+  SentMail,
+  SentMailRepository,
+  SentMailStatus,
   TenantGoogleClient,
   TenantPubsubPush,
   TenantRepository,
@@ -28,6 +31,7 @@ export function createInMemoryRepositories(): {
   attachmentRepository: AttachmentRepository;
   classificationRuleRepository: ClassificationRuleRepository;
   emailClassificationRepository: EmailClassificationRepository;
+  sentMailRepository: SentMailRepository;
   /** Seeds the inbox list directly; the processor's insert path is not part of the API. Detail fields default to empty. */
   addEmail(
     email: Omit<EmailSummary, 'classification'> &
@@ -44,6 +48,7 @@ export function createInMemoryRepositories(): {
   const credentialsByEmail = new Map<string, MailboxCredentials>();
   const connectionByMailboxId = new Map<string, MailboxConnection>();
   const emails: (EmailDetail & { mailboxId: string; tenantId: string })[] = [];
+  const sentMails: (SentMail & { mailboxId: string; tenantId: string })[] = [];
 
   function emailsInScope({ mailboxId, tenantId }: { mailboxId: string; tenantId: string }) {
     return emails.filter((email) => email.mailboxId === mailboxId && email.tenantId === tenantId);
@@ -63,6 +68,25 @@ export function createInMemoryRepositories(): {
     return attachments.filter(
       (attachment) => attachment.emailId === emailId && attachment.tenantId === scope.tenantId,
     );
+  }
+
+  /** Same guard as the Prisma repository: the row moves only if it is currently in `from`. */
+  async function moveSentMail(
+    scope: { mailboxId: string; tenantId: string },
+    sentMailId: string,
+    transition: { from: SentMailStatus; to: SentMailStatus },
+    changes: Partial<Pick<SentMail, 'gmailMessageId' | 'gmailThreadId' | 'errorCode'>>,
+  ): Promise<{ moved: boolean }> {
+    const sentMail = sentMails.find(
+      (candidate) =>
+        candidate.id === sentMailId &&
+        candidate.mailboxId === scope.mailboxId &&
+        candidate.tenantId === scope.tenantId &&
+        candidate.status === transition.from,
+    );
+    if (!sentMail) return { moved: false };
+    Object.assign(sentMail, changes, { status: transition.to, updatedAt: new Date() });
+    return { moved: true };
   }
 
   function findInTenant(scope: { mailboxId: string; tenantId: string }) {
@@ -221,6 +245,48 @@ export function createInMemoryRepositories(): {
     },
     addAttachment(attachment) {
       attachments.push(attachment);
+    },
+    sentMailRepository: {
+      async createPending(scope, sentMail) {
+        const existing = sentMails.find((candidate) => candidate.id === sentMail.id);
+        if (existing) {
+          return existing.mailboxId === scope.mailboxId && existing.tenantId === scope.tenantId
+            ? { outcome: 'already_exists', sentMail: existing }
+            : { outcome: 'id_taken' };
+        }
+        const now = new Date();
+        const created = {
+          ...sentMail,
+          ...scope,
+          status: 'pending' as const,
+          gmailMessageId: null,
+          sentEmailId: null,
+          errorCode: null,
+          createdAt: now,
+          updatedAt: now,
+        };
+        sentMails.push(created);
+        return { outcome: 'created', sentMail: created };
+      },
+      async findSentMail(scope, sentMailId) {
+        return sentMails.find(
+          (candidate) =>
+            candidate.id === sentMailId &&
+            candidate.mailboxId === scope.mailboxId &&
+            candidate.tenantId === scope.tenantId,
+        );
+      },
+      markSending: (scope, sentMailId) =>
+        moveSentMail(scope, sentMailId, { from: 'pending', to: 'sending' }, {}),
+      markSent: (scope, sentMailId, gmailIds) =>
+        moveSentMail(
+          scope,
+          sentMailId,
+          { from: 'sending', to: 'sent' },
+          { ...gmailIds, errorCode: null },
+        ),
+      markFailed: (scope, sentMailId, errorCode) =>
+        moveSentMail(scope, sentMailId, { from: 'sending', to: 'failed' }, { errorCode }),
     },
     mailboxConnectionRepository: {
       async findMailboxConnection(scope) {
