@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { createEncryptionUtil, loadConfig } from '@lc/core';
-import type { EncryptionUtil, RfqSuggester } from '@lc/core';
+import type { EncryptionUtil, RfqMailDrafter, RfqSuggester } from '@lc/core';
 import type { Express } from 'express';
 import { createAppInstance } from './createAppInstance.js';
 import { createFakeGmailOAuth } from './fakeGmailOAuth.test-helper.js';
@@ -31,6 +31,8 @@ export interface TestAppOptions {
   rfqSuggester?: RfqSuggester;
   /** Default none: the suggester gets text only. */
   attachmentContentReader?: AttachmentContentReader;
+  /** Default none, which exercises the 503 path. */
+  rfqMailDrafter?: RfqMailDrafter;
 }
 
 export interface TestApp {
@@ -53,6 +55,7 @@ export function createTestApp({
   attachmentDownloadUrlSigner,
   rfqSuggester,
   attachmentContentReader,
+  rfqMailDrafter,
 }: TestAppOptions = {}): TestApp {
   const config = loadConfig({
     STAGE: stage,
@@ -73,6 +76,7 @@ export function createTestApp({
       : undefined,
     rfqSuggester,
     attachmentContentReader,
+    rfqMailDrafter,
     gmailOAuth,
     gmailWatch,
     gmailSender,

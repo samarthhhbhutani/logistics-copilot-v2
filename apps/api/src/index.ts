@@ -4,6 +4,7 @@ import {
   createGoogleGmailSender,
   createGoogleGmailWatch,
   createOpenAiClient,
+  createOpenAiRfqMailDrafter,
   createOpenAiRfqSuggester,
   createPrismaAttachmentRepository,
   createPrismaClassificationRuleRepository,
@@ -44,14 +45,15 @@ const attachmentContentReader =
   config.LLM_SUGGEST_RFQ_INCLUDE_ATTACHMENTS && config.RAW_MAIL_BUCKET_NAME
     ? createS3AttachmentContentReader({ s3Client, bucketName: config.RAW_MAIL_BUCKET_NAME })
     : undefined;
-// Optional: without a key the RFQ form has no prefill and the suggestion route answers 503.
-const rfqSuggester = config.OPENAI_API_KEY
-  ? createOpenAiRfqSuggester({
-      openAiClient: createOpenAiClient(config.OPENAI_API_KEY),
-      model: config.MODEL_SUGGEST_RFQ,
-    })
+// Optional: without a key the RFQ page has no prefill and no drafts; both routes answer 503.
+const openAiClient = config.OPENAI_API_KEY ? createOpenAiClient(config.OPENAI_API_KEY) : undefined;
+const rfqSuggester = openAiClient
+  ? createOpenAiRfqSuggester({ openAiClient, model: config.MODEL_SUGGEST_RFQ })
   : undefined;
-if (!rfqSuggester) console.warn('OPENAI_API_KEY unset: RFQ suggestions disabled');
+const rfqMailDrafter = openAiClient
+  ? createOpenAiRfqMailDrafter({ openAiClient, model: config.MODEL_DRAFT_RFQ })
+  : undefined;
+if (!openAiClient) console.warn('OPENAI_API_KEY unset: RFQ suggestions and drafts disabled');
 const expressApp = createAppInstance({
   config,
   tenantRepository: createPrismaTenantRepository(prismaClient),
@@ -66,6 +68,7 @@ const expressApp = createAppInstance({
   attachmentDownloadUrlSigner,
   rfqSuggester,
   attachmentContentReader,
+  rfqMailDrafter,
   gmailOAuth: createGoogleGmailOAuth({ redirectUri: config.GOOGLE_REDIRECT_URI }),
   gmailWatch: createGoogleGmailWatch(),
   // Safe mode by stage: staging must set OUTBOUND_MAIL_REDIRECT_TO, prod must not; this throws otherwise.

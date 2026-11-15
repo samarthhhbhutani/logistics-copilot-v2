@@ -22,6 +22,8 @@ const envSchema = z.object({
   MODEL_SUGGEST_RFQ: z.string().default('gpt-6-luna'),
   /** Fetch the mail's PDF and image attachments from the raw-mail bucket and send them along. Off: mail text only. */
   LLM_SUGGEST_RFQ_INCLUDE_ATTACHMENTS: z.stringbool().default(false),
+  /** Writes the vendor mails the operator edits before sending (POST /v1/mailbox/rfqs/drafts). */
+  MODEL_DRAFT_RFQ: z.string().default('gpt-6-luna'),
   /** Send PDF and image attachments to the classifier along with the mail. Off: mail text only (token cost). */
   LLM_CLASSIFY_INCLUDE_ATTACHMENTS: z.stringbool().default(false),
   MODEL_AGENT: z.string().default('gpt-6.1-sol'),
