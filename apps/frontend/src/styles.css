@@ -1023,9 +1023,6 @@ a.emailRow:focus-visible {
   margin-top: 28px;
   padding-top: 10px;
 }
-.messageFiles > .textButton {
-  padding-left: 0;
-}
 .attachmentList {
   list-style: none;
   padding: 0;

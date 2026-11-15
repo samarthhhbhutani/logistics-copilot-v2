@@ -23,10 +23,11 @@ export function MessageAttachments({
     if (expired) onSignedOut();
   }, [expired, onSignedOut]);
   if (expired) return null;
+  // Same one-line footprint as the "No attachments" line below, so the message does not jump.
   if (attachments.isPending)
     return (
       <p role="status" className="muted">
-        Loading files…
+        Checking attachments…
       </p>
     );
   // Hide stale files on errors: an expired account must never leave an actionable download behind.
@@ -57,7 +58,7 @@ export function MessageAttachments({
           ))}
         </ul>
       ) : (
-        <p className="muted">No attached files.</p>
+        <p className="muted">No attachments</p>
       )}
       {attachments.data.attachments.some((attachment) => attachment.isInline) && (
         <p className="attachmentNote">Stored inline images appear in the message when supported.</p>
