@@ -38,6 +38,22 @@ describe('email frame document', () => {
     expect(document.body.textContent).not.toContain('parent.alert');
   });
 
+  it('folds a reply quote behind a toggle after sanitising, leaving the own text in place', () => {
+    const document = new DOMParser().parseFromString(
+      createEmailDocument(
+        sanitizeEmailHtml(
+          '<div dir="ltr">Confirmed, thanks.</div><div class="gmail_quote"><div>On Mon wrote:</div><blockquote>Original text</blockquote></div>',
+        ),
+      ),
+      'text/html',
+    );
+    const details = document.querySelector('details.quotedHistory');
+    expect(details?.querySelector('summary')?.textContent).toBe('Show quoted textHide quoted text');
+    expect(details?.textContent).toContain('Original text');
+    expect(document.body.textContent).toContain('Confirmed, thanks.');
+    expect(document.querySelector('style')?.textContent).toContain('details.quotedHistory');
+  });
+
   it.each([
     undefined,
     null,
