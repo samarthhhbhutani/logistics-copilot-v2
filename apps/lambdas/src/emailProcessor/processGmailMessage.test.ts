@@ -234,6 +234,9 @@ function createTestProcessor(
       if (error) throw error;
       return state.fetchResult;
     },
+    async findSentMessageByRfcMessageId() {
+      throw new Error('the processor never searches Gmail');
+    },
   };
   const rawMailStore: RawMailStore = {
     async putRawEmail(scope, gmailMessageId, raw) {

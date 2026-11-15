@@ -14,7 +14,7 @@ import type { GmailWatchRenewer } from './renewGmailWatches.js';
 /**
  * EventBridge target, every 12 hours (infra GmailWatchRenewerSchedule). Composition root: built
  * once per container, on the first invocation, so a failing secret fetch fails that invocation
- * and is retried on the next. The stale-`sending` sweep (roadmap 4.5) gets its own Lambda.
+ * and is retried on the next. The stale-`sending` sweep is the sentMailSweeper Lambda.
  */
 let renewerPromise: Promise<GmailWatchRenewer> | undefined;
 

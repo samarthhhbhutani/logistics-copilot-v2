@@ -13,7 +13,8 @@ import {
 } from './stageConfig.js';
 import type { Stage } from './stageConfig.js';
 
-export type PipelineLambdaName = 'gmailPushReceiver' | 'emailProcessor' | 'gmailWatchRenewer';
+export type PipelineLambdaName =
+  'gmailPushReceiver' | 'emailProcessor' | 'gmailWatchRenewer' | 'sentMailSweeper';
 
 export interface PipelineLambdaProps {
   stage: Stage;
