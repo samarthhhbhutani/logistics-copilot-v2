@@ -329,7 +329,6 @@ test('file download survives two storage resets and sends no referrer or cookies
   );
   await signIn(page);
   await messageLink(page, subject).click();
-  await page.getByRole('button', { name: 'Show files' }).first().click();
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Download sailing-offer.pdf' }).click();
   const download = await downloadPromise;
@@ -369,7 +368,6 @@ test('a mailbox switch while file bytes transfer signs out without saving the fi
   });
   await signIn(page);
   await messageLink(page, subject).click();
-  await page.getByRole('button', { name: 'Show files' }).first().click();
   await page.getByRole('button', { name: 'Download sailing-offer.pdf' }).click();
   await expect(page.getByRole('heading', { name: 'Welcome back.' })).toBeVisible();
   await expect(page.getByText('Thanks for the quote.')).toHaveCount(0);
@@ -392,7 +390,6 @@ test('navigating away during retry backoff stops further download requests', asy
   );
   await signIn(page);
   await messageLink(page, subject).click();
-  await page.getByRole('button', { name: 'Show files' }).first().click();
   const firstFailure = page.waitForResponse('**/download-url');
   await page.getByRole('button', { name: 'Download sailing-offer.pdf' }).click();
   await firstFailure;

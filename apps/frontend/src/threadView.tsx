@@ -151,7 +151,6 @@ function ThreadMessage({
   onRefresh: () => Promise<boolean>;
 }) {
   const [open, setOpen] = useState(initiallyOpen);
-  const [showFiles, setShowFiles] = useState(false);
   const classification = email.classification;
   const sender = email.sender.name || email.sender.email || 'Unknown sender';
   return (
@@ -235,16 +234,7 @@ function ThreadMessage({
           </div>
           <EmailBody email={email} session={session} onSignedOut={onSignedOut} />
           <div className="messageFiles">
-            <button
-              className="button textButton"
-              aria-expanded={showFiles}
-              onClick={() => setShowFiles(!showFiles)}
-            >
-              {showFiles ? 'Hide files' : 'Show files'}
-            </button>
-            {showFiles && (
-              <MessageAttachments emailId={email.id} session={session} onSignedOut={onSignedOut} />
-            )}
+            <MessageAttachments emailId={email.id} session={session} onSignedOut={onSignedOut} />
           </div>
         </div>
       )}

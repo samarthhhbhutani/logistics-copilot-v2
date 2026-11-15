@@ -286,7 +286,6 @@ test('opens latest-first conversation with labels, recipients and files; keyboar
   await page.keyboard.press('Enter');
   await expect(page.getByText('Customer request', { exact: true })).toBeVisible();
   await expect(page.getByText('AI classification · 94% confidence')).toBeVisible();
-  await messages.nth(0).getByRole('button', { name: 'Show files' }).click();
   await expect(page.getByText('sailing-offer.pdf', { exact: true })).toBeVisible();
   await expect(page.getByText('signature.png', { exact: true })).toHaveCount(0);
   await expect(
@@ -369,12 +368,11 @@ test('hostile and HTML-only messages read seamlessly without reader toggles and 
   await expect(page.getByText('Rate card', { exact: true })).toBeVisible();
   await expect(page.getByText('Sender rule', { exact: true })).toBeVisible();
   await expectSeamlessMessageFrame(page);
-  const showFiles = page.getByRole('button', { name: 'Show files' });
-  await showFiles.scrollIntoViewIfNeeded();
-  await expect(showFiles).toBeVisible();
-  await showFiles.click();
-  await expect(page.getByRole('button', { name: 'Hide files' })).toBeVisible();
-  await expect(page.getByText('No attached files.')).toBeVisible();
+  // Attachments are listed with the message, no toggle: an empty mail says so outright.
+  const noAttachments = page.getByText('No attachments', { exact: true });
+  await noAttachments.scrollIntoViewIfNeeded();
+  await expect(noAttachments).toBeVisible();
+  await expect(page.getByRole('button', { name: /files/i })).toHaveCount(0);
   await page.getByRole('link', { name: 'Back to All mail' }).click();
   await messageLink(page, '(No subject)').click();
   await expect(page.getByRole('heading', { name: '(No subject)', exact: true })).toBeVisible();
@@ -431,12 +429,11 @@ test('thread loading, failures, retry, cached refresh, 404 and expired-session s
 test('file errors retry and downloads do not continue after navigating away', async ({ page }) => {
   const downloadedFiles: string[] = [];
   page.on('download', (download) => downloadedFiles.push(download.suggestedFilename()));
-  await signIn(page);
-  await openThread(page);
   await page.route('**/attachments', (route) =>
     route.fulfill({ status: 503, json: { error: 'unavailable' } }),
   );
-  await page.getByRole('button', { name: 'Show files' }).click();
+  await signIn(page);
+  await openThread(page);
   await expect(page.getByRole('alert')).toContainText('Files could not be loaded');
   await page.unroute('**/attachments');
   await page.getByRole('button', { name: 'Retry files' }).click();
@@ -592,7 +589,6 @@ test('inline-image sample shows the stored CID logo from storage without remote 
   expect(bucketReferrers.length).toBeGreaterThan(0);
   expect(bucketReferrers).toEqual(bucketReferrers.map(() => null));
   expect(remoteRequests.filter((url) => !url.startsWith('https://127.0.0.1:4184/'))).toEqual([]);
-  await page.getByRole('button', { name: 'Show files' }).click();
   await expect(
     page.getByText('Stored inline images appear in the message when supported.'),
   ).toBeVisible();
