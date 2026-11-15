@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_VENDORS_PER_RFQ, draftRfqMailsBodySchema, rfqDetailsSchema } from './index.js';
+import {
+  MAX_CONTACTS_PER_RFQ,
+  MAX_VENDORS_PER_RFQ,
+  draftRfqMailsBodySchema,
+  rfqDetailsSchema,
+  sendRfqBodySchema,
+} from './index.js';
 
 describe('rfqDetailsSchema', () => {
   it('needs only the two ports and fills every other field with null or an empty list', () => {
@@ -81,5 +87,58 @@ describe('draftRfqMailsBodySchema', () => {
       (_, index) => `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
     );
     expect(draftRfqMailsBodySchema.safeParse({ ...base, vendorIds: tooMany }).success).toBe(false);
+  });
+});
+
+describe('sendRfqBodySchema', () => {
+  const vendorId = '00000000-0000-4000-8000-00000000000a';
+  const contactId = '00000000-0000-4000-8000-0000000000c1';
+  const base = {
+    sourceEmailId: '00000000-0000-4000-8000-000000000001',
+    details: { originPort: 'Hazira', destinationPort: 'Jebel Ali', incoterm: 'fob' },
+    recipients: [{ vendorId, contactIds: [contactId] }],
+    mails: [{ category: 'carrier', subject: ' RFQ: Hazira to Jebel Ali ', bodyText: 'Dear Team,' }],
+  };
+
+  it('accepts one vendor with one contact and one text, trimming the text', () => {
+    const parsed = sendRfqBodySchema.parse(base);
+    expect(parsed.details.incoterm).toBe('FOB');
+    expect(parsed.mails[0]!.subject).toBe('RFQ: Hazira to Jebel Ali');
+  });
+
+  it('rejects a vendor without contacts, repeated contacts, repeated vendors and two texts for one category', () => {
+    expect(
+      sendRfqBodySchema.safeParse({ ...base, recipients: [{ vendorId, contactIds: [] }] }).success,
+    ).toBe(false);
+    expect(
+      sendRfqBodySchema.safeParse({
+        ...base,
+        recipients: [{ vendorId, contactIds: [contactId, contactId] }],
+      }).success,
+    ).toBe(false);
+    expect(
+      sendRfqBodySchema.safeParse({
+        ...base,
+        recipients: [base.recipients[0], base.recipients[0]],
+      }).success,
+    ).toBe(false);
+    expect(
+      sendRfqBodySchema.safeParse({ ...base, mails: [base.mails[0], base.mails[0]] }).success,
+    ).toBe(false);
+  });
+
+  it('rejects blank text and more contacts than the cap', () => {
+    expect(
+      sendRfqBodySchema.safeParse({ ...base, mails: [{ ...base.mails[0], bodyText: '  ' }] })
+        .success,
+    ).toBe(false);
+    const tooMany = Array.from(
+      { length: MAX_CONTACTS_PER_RFQ + 1 },
+      (_, index) => `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+    );
+    expect(
+      sendRfqBodySchema.safeParse({ ...base, recipients: [{ vendorId, contactIds: tooMany }] })
+        .success,
+    ).toBe(false);
   });
 });

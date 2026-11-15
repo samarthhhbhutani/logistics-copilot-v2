@@ -12,10 +12,7 @@ import type {
   EmailReadRepository,
   EncryptionUtil,
   GmailSender,
-  GoogleOAuthClientCredentials,
-  MailboxConnection,
   MailboxConnectionRepository,
-  MailboxScope,
   SentMailRepository,
   TenantRepository,
 } from '@lc/core';
@@ -24,6 +21,7 @@ import type { SendReplyFailedResponse } from '@lc/contract';
 import { getSession } from '../auth/requireSession.js';
 import { parseIdOr404 } from '../http/parseIdOr404.js';
 import { parseRequestBody } from '../http/parseRequestBody.js';
+import { loadSendingMailbox } from './loadSendingMailbox.js';
 import { toSentMailResponse } from './sentMailResponses.js';
 
 export interface EmailRepliesRouterDependencies {
@@ -62,28 +60,6 @@ export function createEmailRepliesRouter({
 }: EmailRepliesRouterDependencies): Router {
   const router = express.Router();
 
-  async function loadSendingMailbox(scope: MailboxScope): Promise<{
-    connection: MailboxConnection;
-    credentials: GoogleOAuthClientCredentials;
-    refreshToken: string;
-  }> {
-    const connection = await mailboxConnectionRepository.findMailboxConnection(scope);
-    if (!connection) throw createHttpError(404, 'mailbox_not_found');
-    if (connection.gmailConnectionStatus !== 'connected' || !connection.encryptedRefreshToken) {
-      throw createHttpError(409, 'mailbox_not_connected');
-    }
-    const tenantClient = await tenantRepository.findTenantGoogleClient(scope.tenantId);
-    if (!tenantClient) throw createHttpError(409, 'google_client_not_configured');
-    return {
-      connection,
-      credentials: {
-        clientId: tenantClient.clientId,
-        clientSecret: encryptionUtil.decryptSecret(tenantClient.encryptedClientSecret),
-      },
-      refreshToken: encryptionUtil.decryptSecret(connection.encryptedRefreshToken),
-    };
-  }
-
   router.post('/:emailId/replies', requireSession, async (request, response) => {
     const scope = getSession(response);
     const answeredEmailId = parseIdOr404(request.params.emailId);
@@ -93,7 +69,10 @@ export function createEmailRepliesRouter({
     if (!answeredEmail) throw createHttpError(404, 'not_found');
     if (answeredEmail.gmailLabel !== 'inbox') throw createHttpError(409, 'not_inbound');
     if (!answeredEmail.senderEmail) throw createHttpError(409, 'no_sender');
-    const { connection, credentials, refreshToken } = await loadSendingMailbox(scope);
+    const { connection, credentials, refreshToken } = await loadSendingMailbox(
+      { mailboxConnectionRepository, tenantRepository, encryptionUtil },
+      scope,
+    );
 
     const threadEmails = await emailReadRepository.listThreadEmails(
       scope,
@@ -104,6 +83,9 @@ export function createEmailRepliesRouter({
       id: replyRequest.sentMailId,
       kind: 'reply',
       inReplyToEmailId: answeredEmail.id,
+      rfqId: null,
+      vendorId: null,
+      vendorContactId: null,
       gmailThreadId: answeredEmail.gmailThreadId,
       rfcMessageId,
       toRecipients: [{ name: answeredEmail.senderName, address: answeredEmail.senderEmail }],

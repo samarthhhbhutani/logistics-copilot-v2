@@ -26,6 +26,10 @@ export interface SentMail {
   kind: SentMailKind;
   status: SentMailStatus;
   inReplyToEmailId: string | null;
+  /** The RFQ, vendor and contact an `rfq` mail was sent for; all null for a reply. */
+  rfqId: string | null;
+  vendorId: string | null;
+  vendorContactId: string | null;
   gmailThreadId: string | null;
   /** `<id@mailbox-domain>`; what the SENT copy carries as its Message-ID. */
   rfcMessageId: string;

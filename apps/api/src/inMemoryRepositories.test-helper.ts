@@ -16,6 +16,8 @@ import type {
   MailboxConnectionRepository,
   MailboxCredentials,
   MailboxCredentialsRepository,
+  Rfq,
+  RfqRepository,
   SentMail,
   SentMailRepository,
   SentMailStatus,
@@ -35,6 +37,7 @@ export function createInMemoryRepositories(): {
   vendorRepository: VendorRepository;
   emailClassificationRepository: EmailClassificationRepository;
   sentMailRepository: SentMailRepository;
+  rfqRepository: RfqRepository;
   /** Seeds the inbox list directly; the processor's insert path is not part of the API. Detail fields default to empty. */
   addEmail(
     email: Omit<EmailSummary, 'classification'> &
@@ -52,6 +55,7 @@ export function createInMemoryRepositories(): {
   const connectionByMailboxId = new Map<string, MailboxConnection>();
   const emails: (EmailDetail & { mailboxId: string; tenantId: string })[] = [];
   const sentMails: (SentMail & { mailboxId: string; tenantId: string })[] = [];
+  const rfqs: (Rfq & { mailboxId: string; tenantId: string })[] = [];
 
   function emailsInScope({ mailboxId, tenantId }: { mailboxId: string; tenantId: string }) {
     return emails.filter((email) => email.mailboxId === mailboxId && email.tenantId === tenantId);
@@ -375,8 +379,42 @@ export function createInMemoryRepositories(): {
             candidate.tenantId === scope.tenantId,
         );
       },
+      async createPendingRfqMails(scope, mailsToCreate) {
+        const rfqId = mailsToCreate[0]?.rfqId;
+        if (!rfqId) throw new Error('createPendingRfqMails needs one rfqId');
+        for (const mailToCreate of mailsToCreate) {
+          // Same guard as the unique (rfq_id, vendor_contact_id): the contact's existing row stays.
+          const duplicate = sentMails.some(
+            (candidate) =>
+              candidate.rfqId === rfqId &&
+              candidate.vendorContactId === mailToCreate.vendorContactId,
+          );
+          if (duplicate) continue;
+          const now = new Date();
+          sentMails.push({
+            ...mailToCreate,
+            ...scope,
+            status: 'pending',
+            gmailMessageId: null,
+            errorCode: null,
+            createdAt: now,
+            updatedAt: now,
+          });
+        }
+        return this.listRfqMails(scope, rfqId);
+      },
+      async listRfqMails(scope, rfqId) {
+        return sentMails.filter(
+          (candidate) =>
+            candidate.rfqId === rfqId &&
+            candidate.mailboxId === scope.mailboxId &&
+            candidate.tenantId === scope.tenantId,
+        );
+      },
       markSending: (scope, sentMailId) =>
         moveSentMail(scope, sentMailId, { from: 'pending', to: 'sending' }, {}),
+      markSendingAfterFailure: (scope, sentMailId) =>
+        moveSentMail(scope, sentMailId, { from: 'failed', to: 'sending' }, { errorCode: null }),
       markSent: (scope, sentMailId, gmailIds) =>
         moveSentMail(
           scope,
@@ -399,6 +437,34 @@ export function createInMemoryRepositories(): {
           sentMail.id,
           { from: 'sending', to: 'sent' },
           { ...gmailIds, errorCode: null },
+        );
+      },
+    },
+    rfqRepository: {
+      async createRfq(scope, rfqToCreate) {
+        const existing = rfqs.find((candidate) => candidate.id === rfqToCreate.id);
+        if (existing) {
+          return existing.mailboxId === scope.mailboxId && existing.tenantId === scope.tenantId
+            ? { outcome: 'already_exists', rfq: existing }
+            : { outcome: 'id_taken' };
+        }
+        const now = new Date();
+        const created = {
+          ...rfqToCreate,
+          ...scope,
+          status: 'open' as const,
+          createdAt: now,
+          updatedAt: now,
+        };
+        rfqs.push(created);
+        return { outcome: 'created', rfq: created };
+      },
+      async findRfq(scope, rfqId) {
+        return rfqs.find(
+          (candidate) =>
+            candidate.id === rfqId &&
+            candidate.mailboxId === scope.mailboxId &&
+            candidate.tenantId === scope.tenantId,
         );
       },
     },
