@@ -271,6 +271,48 @@ describe('scoped mail 404 after an account switch', () => {
       await expect(pending).rejects.toMatchObject({ code: 'session_changed', status: 401 });
     },
   );
+  it('posts for an RFQ suggestion, parses it and verifies the session afterwards', async () => {
+    const suggestion = {
+      originPort: 'Nhava Sheva',
+      destinationPort: null,
+      senderAddress: null,
+      receiverAddress: null,
+      mode: 'sea_freight',
+      containers: [{ type: '40ft', quantity: 1 }],
+      commodity: null,
+      grossWeightKg: null,
+      volumeCbm: null,
+      incoterm: 'FOB',
+      readyDate: null,
+      specialInstructions: null,
+      model: 'm',
+      promptVersion: 'v1',
+    };
+    const fetchMock = mockResponses(suggestion, session);
+    expect(await frontendApi.rfqSuggestion(session, emailId)).toEqual(suggestion);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      `/v1/mailbox/emails/${emailId}/rfq-suggestion`,
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/v1/me', expect.anything());
+    mockResponses(suggestion, { ...session, mailboxId: emailId });
+    await expect(frontendApi.rfqSuggestion(session, emailId)).rejects.toMatchObject({
+      code: 'session_changed',
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ error: 'suggestion_failed' }), { status: 422 }),
+        ),
+    );
+    await expect(frontendApi.rfqSuggestion(session, emailId)).rejects.toMatchObject({
+      status: 422,
+      code: 'suggestion_failed',
+    });
+  });
   it('preserves a genuine 404 when the cookie still belongs to the same account', async () => {
     vi.stubGlobal(
       'fetch',

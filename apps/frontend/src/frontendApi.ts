@@ -7,6 +7,7 @@ import {
   gmailConnectResponseSchema,
   listEmailsResponseSchema,
   mailboxResponseSchema,
+  rfqSuggestionResponseSchema,
   sessionResponseSchema,
 } from '@lc/contract';
 import type { ClassificationLabel, GmailLabel, SessionResponse } from '@lc/contract';
@@ -75,6 +76,8 @@ async function readJsonBody(response: Response): Promise<unknown> {
 
 /** These POSTs only set or clear the session cookie or return an OAuth URL, so a replay is harmless. */
 const REPLAY_SAFE_POST: RequestRetryOptions = { replaySafe: true };
+/** The suggestion POST stores nothing: a replay costs one more model call and nothing else. */
+const REPLAY_SAFE_SUGGESTION_POST: RequestRetryOptions = { replaySafe: true };
 
 function requireMatchingSession<ResponseBody extends SessionResponse>(
   body: ResponseBody,
@@ -94,9 +97,11 @@ async function requestMailJson<ResponseBody>(
   path: string,
   schema: { parse(value: unknown): ResponseBody },
   signal?: AbortSignal,
+  options: RequestInit = {},
+  retryOptions?: RequestRetryOptions,
 ): Promise<ResponseBody> {
   try {
-    return await requestJson(path, schema, { signal });
+    return await requestJson(path, schema, { ...options, signal }, retryOptions);
   } catch (error) {
     if (error instanceof FrontendApiError && error.status === 404) {
       requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
@@ -260,6 +265,20 @@ export const frontendApi = {
     requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
     return body;
   },
+  /** What the model read out of the customer mail, as prefill for the RFQ form. Nothing is stored. */
+  async rfqSuggestion(session: SessionResponse, emailId: string, signal?: AbortSignal) {
+    const suggestion = await requestMailJson(
+      session,
+      `/mailbox/emails/${encodeURIComponent(emailId)}/rfq-suggestion`,
+      rfqSuggestionResponseSchema,
+      signal,
+      { method: 'POST' },
+      REPLAY_SAFE_SUGGESTION_POST,
+    );
+    // The suggestion carries no mailbox identity; make sure the cookie still belongs to this session.
+    requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
+    return suggestion;
+  },
   connect(signal?: AbortSignal) {
     return requestJson(
       '/mailbox/gmail/connect',
@@ -290,6 +309,10 @@ export function errorMessage(error: unknown): string {
     }
     if (error.code === 'invalid_cursor')
       return 'This page link is no longer valid. Return to the newest mail.';
+    if (error.code === 'suggestion_unavailable')
+      return 'Shipment details could not be suggested right now. Fill them in by hand or try again.';
+    if (error.code === 'suggestion_failed')
+      return 'We could not read shipment details from this message. Fill them in by hand.';
   }
   return 'We could not reach your workspace. Check your connection and try again.';
 }

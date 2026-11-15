@@ -1104,3 +1104,132 @@ a.emailRow:focus-visible {
 .inlineImageStatus .textButton {
   padding-left: 0;
 }
+
+.rfqPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 22px;
+}
+.rfqPanel > .button {
+  align-self: flex-start;
+}
+.rfqForm {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f5f8f1;
+}
+.rfqForm .eyebrow {
+  margin: 0;
+}
+.rfqSuggestionStatus {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.87rem;
+}
+.rfqFieldGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px 18px;
+}
+.rfqField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.rfqFieldWide {
+  grid-column: 1 / -1;
+}
+.rfqField label,
+.rfqContainers legend,
+.rfqContainerRows label span {
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 0.84rem;
+}
+.rfqField input,
+.rfqField select,
+.rfqField textarea,
+.rfqContainerRows input {
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid #cdd7cd;
+  border-radius: 5px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+}
+.rfqField textarea {
+  resize: vertical;
+}
+.rfqField input[aria-invalid='true'] {
+  border-color: #a33223;
+}
+.rfqField .formError,
+.rfqContainers .formError {
+  margin: 0;
+}
+.rfqContainers {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.rfqContainers legend {
+  padding: 0;
+  margin-bottom: 6px;
+}
+.rfqContainerQuickAdd {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.rfqContainerQuickAdd .textButton {
+  min-height: 36px;
+  padding: 6px 10px;
+}
+.rfqContainerRows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.rfqContainerRows li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+.rfqContainerRows label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.rfqContainerRows label:first-child {
+  flex: 1 1 200px;
+}
+.rfqContainerRows input[type='number'] {
+  width: 96px;
+}
+.rfqActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.rfqActions [role='status'] {
+  color: var(--muted);
+  font-size: 0.87rem;
+}

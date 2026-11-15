@@ -8,6 +8,7 @@ import { MessageAttachments } from './messageAttachments.js';
 import { ClassificationBadge } from './classificationBadge.js';
 import { EmailBody } from './emailBody.js';
 import { ClassificationCorrection } from './classificationCorrection.js';
+import { RfqPanel } from './rfqPanel.js';
 
 const sourceTitles: Record<ClassificationSource, string> = {
   thread: 'From this conversation',
@@ -36,8 +37,8 @@ export function ThreadView({
   });
   const expired = isUnauthenticated(thread.error);
   const missing = thread.error instanceof FrontendApiError && thread.error.status === 404;
-  const subject =
-    thread.data?.emails.find((email) => email.id === emailId)?.subject || '(No subject)';
+  const openedEmail = thread.data?.emails.find((email) => email.id === emailId);
+  const subject = openedEmail?.subject || '(No subject)';
   useEffect(() => {
     if (expired) onSignedOut();
   }, [expired, onSignedOut]);
@@ -106,6 +107,9 @@ export function ThreadView({
             <p className="inlineAlert" role="alert">
               Conversation refresh failed. Showing saved messages. {errorMessage(thread.error)}
             </p>
+          )}
+          {openedEmail && (
+            <RfqPanel email={openedEmail} session={session} onSignedOut={onSignedOut} />
           )}
           <ol className="threadMessages">
             {[...thread.data.emails].reverse().map((email, index) => (
