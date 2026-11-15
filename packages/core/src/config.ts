@@ -18,6 +18,10 @@ const envSchema = z.object({
   /** Unset: the LLM classifier is off and unmatched inbound mail stays unclassified. */
   OPENAI_API_KEY: z.string().min(1).optional(),
   MODEL_CLASSIFY: z.string().default('gpt-6-luna'),
+  /** Reads shipment details out of a customer mail for the RFQ form (POST .../rfq-suggestion). */
+  MODEL_SUGGEST_RFQ: z.string().default('gpt-6-luna'),
+  /** Fetch the mail's PDF and image attachments from the raw-mail bucket and send them along. Off: mail text only. */
+  LLM_SUGGEST_RFQ_INCLUDE_ATTACHMENTS: z.stringbool().default(false),
   /** Send PDF and image attachments to the classifier along with the mail. Off: mail text only (token cost). */
   LLM_CLASSIFY_INCLUDE_ATTACHMENTS: z.stringbool().default(false),
   MODEL_AGENT: z.string().default('gpt-6.1-sol'),

@@ -14,11 +14,13 @@ import type {
   MailboxConnectionRepository,
   MailboxCredentialsRepository,
   EncryptionUtil,
+  RfqSuggester,
   SentMailRepository,
   TenantRepository,
 } from '@lc/core';
 import { createAuthRouter } from './auth/authRouter.js';
 import { createRequireSession, getSession } from './auth/requireSession.js';
+import type { AttachmentContentReader } from './emails/attachmentContentReader.js';
 import type { AttachmentDownloadUrlSigner } from './emails/attachmentDownloadUrlSigner.js';
 import { createClassificationRulesRouter } from './classification/classificationRulesRouter.js';
 import { createVendorsRouter } from './vendors/vendorsRouter.js';
@@ -27,6 +29,7 @@ import { createEmailsRouter } from './emails/emailsRouter.js';
 import { createEmailClassificationsRouter } from './emails/emailClassificationsRouter.js';
 import { createThreadsRouter } from './emails/threadsRouter.js';
 import { createGmailConnectionRouter } from './gmail/gmailConnectionRouter.js';
+import { createRfqSuggestionsRouter } from './rfqs/rfqSuggestionsRouter.js';
 import { createEmailRepliesRouter } from './sending/emailRepliesRouter.js';
 import { createTenantsRouter } from './tenants/tenantsRouter.js';
 
@@ -43,6 +46,10 @@ export interface AppDependencies {
   sentMailRepository: SentMailRepository;
   /** Presigns S3 download links; undefined when no bucket is configured, so download links answer 503. */
   attachmentDownloadUrlSigner: AttachmentDownloadUrlSigner | undefined;
+  /** Reads shipment details out of a customer mail; undefined without an OpenAI key, so the route answers 503. */
+  rfqSuggester: RfqSuggester | undefined;
+  /** Fetches attachment bytes for the suggester; undefined when that switch is off or no bucket is configured. */
+  attachmentContentReader: AttachmentContentReader | undefined;
   /** Google OAuth operations; the real one in index.ts, an in-memory fake in tests. */
   gmailOAuth: GmailOAuth;
   /** Gmail users.watch / users.stop; same real-or-fake split as gmailOAuth. */
@@ -74,6 +81,8 @@ export function createAppInstance({
   emailClassificationRepository,
   sentMailRepository,
   attachmentDownloadUrlSigner,
+  rfqSuggester,
+  attachmentContentReader,
   gmailOAuth,
   gmailWatch,
   gmailSender,
@@ -125,6 +134,16 @@ export function createAppInstance({
   v1Router.use(
     '/mailbox/emails',
     createEmailClassificationsRouter({ emailClassificationRepository, requireSession }),
+  );
+  v1Router.use(
+    '/mailbox/emails',
+    createRfqSuggestionsRouter({
+      emailReadRepository,
+      attachmentRepository,
+      rfqSuggester,
+      attachmentContentReader,
+      requireSession,
+    }),
   );
   v1Router.use(
     '/mailbox/emails',

@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { createEncryptionUtil, loadConfig } from '@lc/core';
-import type { EncryptionUtil } from '@lc/core';
+import type { EncryptionUtil, RfqSuggester } from '@lc/core';
 import type { Express } from 'express';
 import { createAppInstance } from './createAppInstance.js';
 import { createFakeGmailOAuth } from './fakeGmailOAuth.test-helper.js';
@@ -10,6 +10,7 @@ import type { FakeGmailWatch } from './fakeGmailWatch.test-helper.js';
 import { createFakeGmailSender } from './fakeGmailSender.test-helper.js';
 import type { FakeGmailSender } from './fakeGmailSender.test-helper.js';
 import { createFakeAttachmentDownloadUrlSigner } from './fakeAttachmentDownloadUrlSigner.test-helper.js';
+import type { AttachmentContentReader } from './emails/attachmentContentReader.js';
 import type { AttachmentDownloadUrlSigner } from './emails/attachmentDownloadUrlSigner.js';
 import { createInMemoryRepositories } from './inMemoryRepositories.test-helper.js';
 
@@ -26,6 +27,10 @@ export interface TestAppOptions {
   attachmentDownloadsEnabled?: boolean;
   /** Override only for the browser test that serves real synthetic image bytes. */
   attachmentDownloadUrlSigner?: AttachmentDownloadUrlSigner;
+  /** Default none, which exercises the 503 path; tests pass a fake that answers what they need. */
+  rfqSuggester?: RfqSuggester;
+  /** Default none: the suggester gets text only. */
+  attachmentContentReader?: AttachmentContentReader;
 }
 
 export interface TestApp {
@@ -46,6 +51,8 @@ export function createTestApp({
   consentingAccountEmail = testMailboxEmail,
   attachmentDownloadsEnabled = true,
   attachmentDownloadUrlSigner,
+  rfqSuggester,
+  attachmentContentReader,
 }: TestAppOptions = {}): TestApp {
   const config = loadConfig({
     STAGE: stage,
@@ -64,6 +71,8 @@ export function createTestApp({
     attachmentDownloadUrlSigner: attachmentDownloadsEnabled
       ? (attachmentDownloadUrlSigner ?? createFakeAttachmentDownloadUrlSigner())
       : undefined,
+    rfqSuggester,
+    attachmentContentReader,
     gmailOAuth,
     gmailWatch,
     gmailSender,

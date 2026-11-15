@@ -3,6 +3,8 @@ import {
   createGoogleGmailOAuth,
   createGoogleGmailSender,
   createGoogleGmailWatch,
+  createOpenAiClient,
+  createOpenAiRfqSuggester,
   createPrismaAttachmentRepository,
   createPrismaClassificationRuleRepository,
   createPrismaVendorRepository,
@@ -17,6 +19,7 @@ import {
   loadConfig,
 } from '@lc/core';
 import { createAppInstance } from './createAppInstance.js';
+import { createS3AttachmentContentReader } from './emails/attachmentContentReader.js';
 import { createS3AttachmentDownloadUrlSigner } from './emails/attachmentDownloadUrlSigner.js';
 import { shutdownTelemetry } from './instrumentation.js';
 
@@ -30,14 +33,25 @@ if (!config.GOOGLE_REDIRECT_URI) throw new Error('GOOGLE_REDIRECT_URI is require
 const prismaClient = initializePrismaClient(config, { maxConnections: 4 });
 // Optional: without a bucket the API still lists attachments, and download links answer 503.
 // Credentials come from the standard AWS_* variables (the infra RailwayApiUser's access key).
+const s3Client = new S3Client({ region: config.AWS_REGION });
 const attachmentDownloadUrlSigner = config.RAW_MAIL_BUCKET_NAME
-  ? createS3AttachmentDownloadUrlSigner({
-      s3Client: new S3Client({ region: config.AWS_REGION }),
-      bucketName: config.RAW_MAIL_BUCKET_NAME,
-    })
+  ? createS3AttachmentDownloadUrlSigner({ s3Client, bucketName: config.RAW_MAIL_BUCKET_NAME })
   : undefined;
 if (!attachmentDownloadUrlSigner)
   console.warn('RAW_MAIL_BUCKET_NAME unset: attachment downloads disabled');
+// Optional: the suggester reads PDF and image attachments only when switched on and the bucket is known.
+const attachmentContentReader =
+  config.LLM_SUGGEST_RFQ_INCLUDE_ATTACHMENTS && config.RAW_MAIL_BUCKET_NAME
+    ? createS3AttachmentContentReader({ s3Client, bucketName: config.RAW_MAIL_BUCKET_NAME })
+    : undefined;
+// Optional: without a key the RFQ form has no prefill and the suggestion route answers 503.
+const rfqSuggester = config.OPENAI_API_KEY
+  ? createOpenAiRfqSuggester({
+      openAiClient: createOpenAiClient(config.OPENAI_API_KEY),
+      model: config.MODEL_SUGGEST_RFQ,
+    })
+  : undefined;
+if (!rfqSuggester) console.warn('OPENAI_API_KEY unset: RFQ suggestions disabled');
 const expressApp = createAppInstance({
   config,
   tenantRepository: createPrismaTenantRepository(prismaClient),
@@ -50,6 +64,8 @@ const expressApp = createAppInstance({
   emailClassificationRepository: createPrismaEmailClassificationRepository(prismaClient),
   sentMailRepository: createPrismaSentMailRepository(prismaClient),
   attachmentDownloadUrlSigner,
+  rfqSuggester,
+  attachmentContentReader,
   gmailOAuth: createGoogleGmailOAuth({ redirectUri: config.GOOGLE_REDIRECT_URI }),
   gmailWatch: createGoogleGmailWatch(),
   // Safe mode by stage: staging must set OUTBOUND_MAIL_REDIRECT_TO, prod must not; this throws otherwise.
