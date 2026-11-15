@@ -1,6 +1,10 @@
 import { Prisma } from '../db/generated/client.js';
 import type { PrismaClient } from '../db/prismaClient.js';
-import type { MailboxScope } from '../connectors/gmail/mailboxConnectionRepository.js';
+import { mapToSnakeCaseStatus } from '../connectors/gmail/mailboxConnectionRepository.js';
+import type {
+  GmailConnectionStatus,
+  MailboxScope,
+} from '../connectors/gmail/mailboxConnectionRepository.js';
 import { fromJsonAddresses, toJsonAddresses } from '../emails/emailModels.js';
 import type { EmailAddress } from '../utils/mime/parsedEmail.js';
 import {
@@ -35,7 +39,18 @@ export type CreatePendingSentMailResult =
   /** The id exists but belongs to another mailbox or tenant; the client must pick a new one. */
   | { outcome: 'id_taken' };
 
-/** The write-ahead log of outbound mail. Every method is scoped to the session's mailbox and tenant. */
+/** A row stuck in `sending`, with what the sweeper needs to ask Gmail about it. */
+export interface StaleSendingMail extends MailboxScope {
+  sentMailId: string;
+  rfcMessageId: string;
+  /** When the row entered `sending`; decides between "ask again later" and "give up". */
+  updatedAt: Date;
+  mailboxEmailAddress: string;
+  gmailConnectionStatus: GmailConnectionStatus;
+  encryptedRefreshToken: string | null;
+}
+
+/** The write-ahead log of outbound mail. Every method is scoped to the session's mailbox and tenant, except the sweep. */
 export interface SentMailRepository {
   createPending(
     scope: MailboxScope,
@@ -79,6 +94,20 @@ export interface SentMailRepository {
     rfcMessageId: string,
     gmailIds: { gmailMessageId: string; gmailThreadId: string },
   ): Promise<{ moved: boolean }>;
+  /**
+   * sending -> failed for a row Gmail has no SENT copy of after the sweeper's give-up window: the
+   * mail never went out, so the row may be retried. Same conditional UPDATE as the other moves.
+   */
+  markFailedByRfcMessageId(
+    scope: MailboxScope,
+    rfcMessageId: string,
+    errorCode: string,
+  ): Promise<{ moved: boolean }>;
+  /**
+   * Across every mailbox: rows in `sending` since before `olderThan`, oldest first, at most `limit`.
+   * The one unscoped read, for the scheduled sweep; each row carries its own scope.
+   */
+  listStaleSending(olderThan: Date, limit: number): Promise<StaleSendingMail[]>;
 }
 
 const SENT_MAIL_SELECT = {
@@ -255,6 +284,42 @@ export function createPrismaSentMailRepository(prismaClient: PrismaClient): Sent
         { from: 'sending', to: 'sent' },
         { gmailMessageId, gmailThreadId, errorCode: null },
       );
+    },
+
+    markFailedByRfcMessageId(scope, rfcMessageId, errorCode) {
+      return moveTo(scope, { rfcMessageId }, { from: 'sending', to: 'failed' }, { errorCode });
+    },
+
+    async listStaleSending(olderThan, limit) {
+      const rows = await prismaClient.sentMail.findMany({
+        where: { status: 'SENDING', updatedAt: { lt: olderThan } },
+        orderBy: { updatedAt: 'asc' },
+        take: limit,
+        select: {
+          id: true,
+          tenantId: true,
+          mailboxId: true,
+          rfcMessageId: true,
+          updatedAt: true,
+          mailbox: {
+            select: {
+              emailAddress: true,
+              gmailConnectionStatus: true,
+              encryptedRefreshToken: true,
+            },
+          },
+        },
+      });
+      return rows.map((row) => ({
+        sentMailId: row.id,
+        tenantId: row.tenantId,
+        mailboxId: row.mailboxId,
+        rfcMessageId: row.rfcMessageId,
+        updatedAt: row.updatedAt,
+        mailboxEmailAddress: row.mailbox.emailAddress,
+        gmailConnectionStatus: mapToSnakeCaseStatus(row.mailbox.gmailConnectionStatus),
+        encryptedRefreshToken: row.mailbox.encryptedRefreshToken,
+      }));
     },
   };
 }

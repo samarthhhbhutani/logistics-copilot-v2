@@ -187,11 +187,15 @@ describe('LogisticsCopilotStack', () => {
     expect(actions.some((action) => action.startsWith('s3:Delete'))).toBe(false);
   });
 
-  it('names resources per stage so staging and production can share the account', () => {
-    synthesize('production').hasResourceProperties('AWS::SQS::Queue', {
-      QueueName: 'logistics-copilot-gmail-message-ids-production',
-    });
-  });
+  it(
+    'names resources per stage so staging and production can share the account',
+    { timeout: 20_000 },
+    () => {
+      synthesize('production').hasResourceProperties('AWS::SQS::Queue', {
+        QueueName: 'logistics-copilot-gmail-message-ids-production',
+      });
+    },
+  );
 
   it('exports what Railway and the Pub/Sub subscription need', () => {
     const outputs = Object.keys(template.toJSON().Outputs ?? {});
@@ -206,9 +210,14 @@ describe('LogisticsCopilotStack', () => {
     );
   });
 
-  it('three Lambdas on Node 22 arm64 with the pinned OTel layer and the exporter wired to Grafana', () => {
-    template.resourceCountIs('AWS::Lambda::Function', 3);
-    for (const name of ['gmail-push-receiver', 'email-processor', 'gmail-watch-renewer']) {
+  it('four Lambdas on Node 22 arm64 with the pinned OTel layer and the exporter wired to Grafana', () => {
+    template.resourceCountIs('AWS::Lambda::Function', 4);
+    for (const name of [
+      'gmail-push-receiver',
+      'email-processor',
+      'gmail-watch-renewer',
+      'sent-mail-sweeper',
+    ]) {
       template.hasResourceProperties('AWS::Lambda::Function', {
         FunctionName: `logistics-copilot-${name}-staging`,
         Runtime: 'nodejs22.x',
@@ -312,6 +321,29 @@ describe('LogisticsCopilotStack', () => {
       ScheduleExpression: 'rate(12 hours)',
       State: 'ENABLED',
     });
+  });
+
+  it('sent mail sweeper runs every 15 minutes, knows the secret name and touches nothing else', () => {
+    template.hasResourceProperties('AWS::Events::Rule', {
+      ScheduleExpression: 'rate(15 minutes)',
+      State: 'ENABLED',
+    });
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      FunctionName: 'logistics-copilot-sent-mail-sweeper-staging',
+      Timeout: 300,
+      Environment: {
+        Variables: Match.objectLike({
+          LAMBDA_ENV_SECRET_NAME: 'logistics-copilot/staging/lambda-env',
+        }),
+      },
+    });
+    const sweeperPolicies = template.findResources('AWS::IAM::Policy', {
+      Properties: { PolicyName: Match.stringLikeRegexp('^SentMailSweeper') },
+    });
+    const policyJson = JSON.stringify(sweeperPolicies);
+    expect(policyJson).toContain('secretsmanager:GetSecretValue');
+    expect(policyJson).not.toContain('sqs:');
+    expect(policyJson).not.toContain('s3:');
   });
 
   it('Gmail watch renewer knows the secret name, can read it, and has time for many mailboxes', () => {

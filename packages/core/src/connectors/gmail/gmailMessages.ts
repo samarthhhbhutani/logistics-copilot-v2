@@ -26,6 +26,25 @@ export interface GmailMessages {
     refreshToken: string;
     gmailMessageId: string;
   }): Promise<GmailRawMessage>;
+  /**
+   * messages.list with q=rfc822msgid:<id> in SENT: does Gmail hold a mail we sent under that
+   * Message-ID? Undefined when it does not. Throws GmailApiError like every other Gmail call.
+   */
+  findSentMessageByRfcMessageId(input: {
+    credentials: GoogleOAuthClientCredentials;
+    refreshToken: string;
+    rfcMessageId: string;
+  }): Promise<GmailSentMessageIds | undefined>;
+}
+
+export interface GmailSentMessageIds {
+  gmailMessageId: string;
+  gmailThreadId: string;
+}
+
+interface MessageListResponse {
+  messages?: { id: string; threadId: string }[];
+  resultSizeEstimate?: number;
 }
 
 interface MessageGetResponse {
@@ -74,5 +93,34 @@ export function createGoogleGmailMessages(): GmailMessages {
         };
       });
     },
+
+    findSentMessageByRfcMessageId({ credentials, refreshToken, rfcMessageId }) {
+      return runInsideSpan('gmail.messages.list', async (span) => {
+        const oauthClient = new OAuth2Client({
+          clientId: credentials.clientId,
+          clientSecret: credentials.clientSecret,
+        });
+        oauthClient.setCredentials({ refresh_token: refreshToken });
+        let list: MessageListResponse;
+        try {
+          const response = await oauthClient.request<MessageListResponse>({
+            url: GMAIL_MESSAGES_URL,
+            method: 'GET',
+            params: { q: sentCopySearchQuery(rfcMessageId), labelIds: 'SENT', maxResults: 1 },
+          });
+          list = response.data;
+        } catch (error) {
+          throw toGmailApiError(error);
+        }
+        const found = list.messages?.[0];
+        span.setAttributes({ 'gmail.messages.found': found ? 1 : 0 });
+        return found ? { gmailMessageId: found.id, gmailThreadId: found.threadId } : undefined;
+      });
+    },
   };
+}
+
+/** Gmail's search operator for a Message-ID header; it wants the value without the angle brackets. */
+export function sentCopySearchQuery(rfcMessageId: string): string {
+  return `rfc822msgid:${rfcMessageId.replace(/^<|>$/g, '')}`;
 }
