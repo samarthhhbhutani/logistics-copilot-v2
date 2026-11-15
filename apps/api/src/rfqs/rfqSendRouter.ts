@@ -2,12 +2,12 @@ import { randomUUID } from 'node:crypto';
 import express from 'express';
 import type { RequestHandler, Router } from 'express';
 import createHttpError from 'http-errors';
-import pLimit from 'p-limit';
 import {
   GmailApiError,
   buildOutboundMessageId,
   buildRfqMailMessage,
   isDefinitiveGmailRejection,
+  mapWithConcurrency,
 } from '@lc/core';
 import type {
   EmailReadRepository,
@@ -125,50 +125,46 @@ export function createRfqSendRouter({
     scope: MailboxScope,
     { connection, credentials, refreshToken }: SendingMailbox,
   ): Promise<void> {
-    const limitConcurrentSends = pLimit(CONCURRENT_GMAIL_SENDS);
     let mailboxNeedsReconnect = false;
-    await Promise.all(
-      rfqMails
-        .filter((mail) => mail.status === 'pending' || mail.status === 'failed')
-        .map((mail) =>
-          limitConcurrentSends(async () => {
-            if (mailboxNeedsReconnect) return;
-            const { moved: claimedForSending } =
-              mail.status === 'failed'
-                ? await sentMailRepository.markSendingAfterFailure(scope, mail.id)
-                : await sentMailRepository.markSending(scope, mail.id);
-            // Another request for this RFQ is sending this one right now; it will report it.
-            if (!claimedForSending) return;
-            let gmailSendResult;
-            try {
-              gmailSendResult = await gmailSender.sendMessage({
-                credentials,
-                refreshToken,
-                message: buildRfqMailMessage(mail, connection),
-              });
-            } catch (error) {
-              // Only a 4xx proves Gmail did not take the mail; anything else leaves the row in
-              // `sending` for the SENT copy (or the operator) to resolve, never `failed`.
-              if (isDefinitiveGmailRejection(error)) {
-                await sentMailRepository.markFailed(scope, mail.id, error.code);
-              } else {
-                console.error('rfq send: outcome unknown, row left in sending', {
-                  sentMailId: mail.id,
-                  reason: error instanceof GmailApiError ? error.code : String(error),
-                });
-              }
-              if (error instanceof GmailApiError && error.code === 'invalid_grant') {
-                mailboxNeedsReconnect = true;
-                await mailboxConnectionRepository.markGmailNeedsReconnect(scope);
-              }
-              return;
-            }
-            // Gmail has the mail from here on. Outside the try on purpose, as in emailRepliesRouter:
-            // if this write fails the row stays `sending` (healed by the SENT copy), never `failed`.
-            await sentMailRepository.markSent(scope, mail.id, gmailSendResult);
-          }),
-        ),
+    const mailsToSend = rfqMails.filter(
+      (mail) => mail.status === 'pending' || mail.status === 'failed',
     );
+    await mapWithConcurrency(mailsToSend, CONCURRENT_GMAIL_SENDS, async (mail) => {
+      if (mailboxNeedsReconnect) return;
+      const { moved: claimedForSending } =
+        mail.status === 'failed'
+          ? await sentMailRepository.markSendingAfterFailure(scope, mail.id)
+          : await sentMailRepository.markSending(scope, mail.id);
+      // Another request for this RFQ is sending this one right now; it will report it.
+      if (!claimedForSending) return;
+      let gmailSendResult;
+      try {
+        gmailSendResult = await gmailSender.sendMessage({
+          credentials,
+          refreshToken,
+          message: buildRfqMailMessage(mail, connection),
+        });
+      } catch (error) {
+        // Only a 4xx proves Gmail did not take the mail; anything else leaves the row in
+        // `sending` for the SENT copy (or the operator) to resolve, never `failed`.
+        if (isDefinitiveGmailRejection(error)) {
+          await sentMailRepository.markFailed(scope, mail.id, error.code);
+        } else {
+          console.error('rfq send: outcome unknown, row left in sending', {
+            sentMailId: mail.id,
+            reason: error instanceof GmailApiError ? error.code : String(error),
+          });
+        }
+        if (error instanceof GmailApiError && error.code === 'invalid_grant') {
+          mailboxNeedsReconnect = true;
+          await mailboxConnectionRepository.markGmailNeedsReconnect(scope);
+        }
+        return;
+      }
+      // Gmail has the mail from here on. Outside the try on purpose, as in emailRepliesRouter:
+      // if this write fails the row stays `sending` (healed by the SENT copy), never `failed`.
+      await sentMailRepository.markSent(scope, mail.id, gmailSendResult);
+    });
   }
 
   return router;
