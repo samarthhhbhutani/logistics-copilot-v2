@@ -1,10 +1,29 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { RefreshCw } from 'lucide-react';
-import { SUGGESTED_CONTAINER_TYPES } from '@lc/contract';
-import type { EmailDetailResponse, FreightMode, RfqDetails, SessionResponse } from '@lc/contract';
+import {
+  MAX_RFQ_MAIL_BODY_LENGTH,
+  MAX_RFQ_MAIL_SUBJECT_LENGTH,
+  SUGGESTED_CONTAINER_TYPES,
+} from '@lc/contract';
+import type {
+  DraftRfqMailsResponse,
+  EmailDetailResponse,
+  FreightMode,
+  RfqDetails,
+  SessionResponse,
+  VendorCategory,
+} from '@lc/contract';
 import { errorMessage, frontendApi, isUnauthenticated } from './frontendApi.js';
+import {
+  VENDOR_CATEGORIES,
+  categoriesOfRecipients,
+  recipientsError,
+  toRfqRecipients,
+  vendorCategoryTitles,
+} from './rfqRecipients.js';
+import { RfqRecipientsPicker } from './rfqRecipientsPicker.js';
 import {
   EMPTY_RFQ_DETAILS_FORM,
   freightModeTitles,
@@ -20,11 +39,27 @@ import type {
 
 const FREIGHT_MODES: FreightMode[] = ['sea_freight', 'air_freight', 'road'];
 
+/** The operator's editable text for one category, started from the model's draft. */
+interface RfqMailDraftValues {
+  subject: string;
+  bodyText: string;
+}
+type RfqMailDrafts = Partial<Record<VendorCategory, RfqMailDraftValues>>;
+
+function draftsFromResponse(response: DraftRfqMailsResponse): RfqMailDrafts {
+  const drafts: RfqMailDrafts = {};
+  for (const draft of response.drafts) {
+    drafts[draft.category] = { subject: draft.subject, bodyText: draft.bodyText };
+  }
+  return drafts;
+}
+
 /**
  * "Request vendor quotes" on the opened inbox mail, whatever its classification (a misclassified
  * request must still be quotable): opens the RFQ details form prefilled by the model's reading of
- * that message, for the operator to correct. Saving the details is the first step; vendor
- * selection, drafting and sending follow on the same panel in later changes.
+ * that message, for the operator to correct, with the desk's vendors to tick underneath. "Write
+ * vendor mails" drafts one mail per vendor category for the operator to edit on the same screen.
+ * Nothing is stored or sent here; sending follows in a later change.
  */
 export function RfqPanel({
   email,
@@ -39,9 +74,12 @@ export function RfqPanel({
   const [values, setValues] = useState<RfqDetailsFormValues>(EMPTY_RFQ_DETAILS_FORM);
   const [prefilled, setPrefilled] = useState(false);
   const [errors, setErrors] = useState<RfqDetailsFormErrors>({});
-  const [savedDetails, setSavedDetails] = useState<RfqDetails | null>(null);
+  const [selectedContactIds, setSelectedContactIds] = useState<ReadonlySet<string>>(new Set());
+  const [recipientsMessage, setRecipientsMessage] = useState<string | null>(null);
+  const [drafts, setDrafts] = useState<RfqMailDrafts | null>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const form = useRef<HTMLFormElement>(null);
+  const draftsHeading = useRef<HTMLHeadingElement>(null);
 
   const suggestion = useQuery({
     queryKey: ['rfqSuggestion', session.tenantId, session.mailboxId, email.id],
@@ -56,28 +94,86 @@ export function RfqPanel({
       setPrefilled(true);
     }
   }, [suggestion.data, prefilled]);
+  const vendors = useQuery({
+    queryKey: ['vendors', session.tenantId, session.mailboxId],
+    queryFn: ({ signal }) => frontendApi.vendors(session, signal),
+    enabled: open,
+    staleTime: 60_000,
+  });
+  const writeDrafts = useMutation({
+    mutationFn: ({ details, vendorIds }: { details: RfqDetails; vendorIds: string[] }) =>
+      frontendApi.rfqDrafts(session, { sourceEmailId: email.id, details, vendorIds }),
+    onSuccess: (response) => {
+      setDrafts(draftsFromResponse(response));
+      requestAnimationFrame(() => draftsHeading.current?.focus());
+    },
+    retry: false,
+  });
   useEffect(() => {
-    if (isUnauthenticated(suggestion.error)) onSignedOut();
-  }, [suggestion.error, onSignedOut]);
+    if (
+      isUnauthenticated(suggestion.error) ||
+      isUnauthenticated(vendors.error) ||
+      isUnauthenticated(writeDrafts.error)
+    ) {
+      onSignedOut();
+    }
+  }, [suggestion.error, vendors.error, writeDrafts.error, onSignedOut]);
 
   if (email.gmailLabel !== 'inbox') return null;
 
   function update<Field extends RfqDetailsField>(field: Field, value: RfqDetailsFormValues[Field]) {
     setValues((current) => ({ ...current, [field]: value }));
     setErrors((current) => (current[field] ? { ...current, [field]: undefined } : current));
-    setSavedDetails(null);
+  }
+
+  function updateDraft(category: VendorCategory, patch: Partial<RfqMailDraftValues>) {
+    setDrafts((current) => {
+      const draft = current?.[category];
+      return draft ? { ...current, [category]: { ...draft, ...patch } } : current;
+    });
   }
 
   function close() {
+    if (writeDrafts.isPending) return;
     setOpen(false);
     setErrors({});
+    setRecipientsMessage(null);
     requestAnimationFrame(() => trigger.current?.focus());
+  }
+
+  function submit() {
+    const parsed = parseRfqDetailsForm(values);
+    const recipients = toRfqRecipients(vendors.data?.vendors ?? [], selectedContactIds);
+    const recipientsProblem = recipientsError(recipients);
+    setErrors(parsed.ok ? {} : parsed.errors);
+    setRecipientsMessage(recipientsProblem);
+    if (!parsed.ok || recipientsProblem) {
+      const firstInvalid = parsed.ok
+        ? 'recipients'
+        : ((Object.keys(parsed.errors) as RfqDetailsField[])[0] ?? 'recipients');
+      requestAnimationFrame(() =>
+        form.current?.querySelector<HTMLElement>(`#${fieldId(firstInvalid)}`)?.focus(),
+      );
+      return;
+    }
+    writeDrafts.mutate({
+      details: parsed.details,
+      vendorIds: recipients.map((recipient) => recipient.vendorId),
+    });
   }
 
   const suggesting = open && !prefilled && suggestion.isFetching;
   const suggestionFailed =
     open && !prefilled && suggestion.isError && !isUnauthenticated(suggestion.error);
-  const fieldId = (field: RfqDetailsField) => `rfq-${field}-${email.id}`;
+  const fieldId = (field: RfqDetailsField | 'recipients') => `rfq-${field}-${email.id}`;
+  const busy = suggesting || writeDrafts.isPending;
+  // What is ticked now (for the pending text and the "no draft for this category yet" warning)...
+  const selectedCategories = categoriesOfRecipients(
+    vendors.data?.vendors ?? [],
+    toRfqRecipients(vendors.data?.vendors ?? [], selectedContactIds),
+  );
+  // ...versus what the model actually returned, which is what the draft editors show.
+  const draftedCategories = VENDOR_CATEGORIES.filter((category) => drafts?.[category]);
   const fieldError = (field: RfqDetailsField) =>
     errors[field] ? (
       <p id={`${fieldId(field)}-error`} className="formError" role="alert">
@@ -103,24 +199,11 @@ export function RfqPanel({
           ref={form}
           className="rfqForm"
           aria-label="Vendor quote request"
-          aria-busy={suggesting}
+          aria-busy={busy}
           noValidate
           onSubmit={(event) => {
             event.preventDefault();
-            const result = parseRfqDetailsForm(values);
-            if (result.ok) {
-              setErrors({});
-              setSavedDetails(result.details);
-              return;
-            }
-            setErrors(result.errors);
-            setSavedDetails(null);
-            const firstInvalid = (Object.keys(result.errors) as RfqDetailsField[])[0];
-            if (firstInvalid) {
-              requestAnimationFrame(() =>
-                form.current?.querySelector<HTMLElement>(`#${fieldId(firstInvalid)}`)?.focus(),
-              );
-            }
+            if (!busy) submit();
           }}
         >
           <p className="eyebrow">Shipment details</p>
@@ -150,7 +233,7 @@ export function RfqPanel({
               describedBy={describedBy}
               onChange={update}
               required
-              disabled={suggesting}
+              disabled={busy}
             >
               {fieldError('originPort')}
             </TextField>
@@ -161,7 +244,7 @@ export function RfqPanel({
               describedBy={describedBy}
               onChange={update}
               required
-              disabled={suggesting}
+              disabled={busy}
             >
               {fieldError('destinationPort')}
             </TextField>
@@ -170,7 +253,7 @@ export function RfqPanel({
               <select
                 id={fieldId('mode')}
                 value={values.mode}
-                disabled={suggesting}
+                disabled={busy}
                 onChange={(event) => update('mode', event.target.value as FreightMode | '')}
               >
                 <option value="">Not stated</option>
@@ -187,7 +270,7 @@ export function RfqPanel({
               fieldId={fieldId}
               describedBy={describedBy}
               onChange={update}
-              disabled={suggesting}
+              disabled={busy}
               placeholder="FOB, CIF, EXW…"
             >
               {fieldError('incoterm')}
@@ -198,7 +281,7 @@ export function RfqPanel({
               fieldId={fieldId}
               describedBy={describedBy}
               onChange={update}
-              disabled={suggesting}
+              disabled={busy}
             >
               {fieldError('commodity')}
             </TextField>
@@ -208,7 +291,7 @@ export function RfqPanel({
               fieldId={fieldId}
               describedBy={describedBy}
               onChange={update}
-              disabled={suggesting}
+              disabled={busy}
               placeholder="As the customer put it, e.g. end of November"
             >
               {fieldError('readyDate')}
@@ -219,7 +302,7 @@ export function RfqPanel({
               fieldId={fieldId}
               describedBy={describedBy}
               onChange={update}
-              disabled={suggesting}
+              disabled={busy}
               inputMode="decimal"
             >
               {fieldError('grossWeightKg')}
@@ -230,7 +313,7 @@ export function RfqPanel({
               fieldId={fieldId}
               describedBy={describedBy}
               onChange={update}
-              disabled={suggesting}
+              disabled={busy}
               inputMode="decimal"
             >
               {fieldError('volumeCbm')}
@@ -241,7 +324,7 @@ export function RfqPanel({
               fieldId={fieldId}
               describedBy={describedBy}
               onChange={update}
-              disabled={suggesting}
+              disabled={busy}
               placeholder="When the rate must include pickup (EXW, FCA)"
             >
               {fieldError('senderAddress')}
@@ -252,7 +335,7 @@ export function RfqPanel({
               fieldId={fieldId}
               describedBy={describedBy}
               onChange={update}
-              disabled={suggesting}
+              disabled={busy}
               placeholder="When the rate must include delivery (DAP, DDP)"
             >
               {fieldError('receiverAddress')}
@@ -261,7 +344,7 @@ export function RfqPanel({
           <ContainerRows
             values={values}
             fieldId={fieldId}
-            disabled={suggesting}
+            disabled={busy}
             onChange={(containers) => update('containers', containers)}
           >
             {fieldError('containers')}
@@ -274,31 +357,123 @@ export function RfqPanel({
               id={fieldId('specialInstructions')}
               rows={3}
               value={values.specialInstructions}
-              disabled={suggesting}
+              disabled={busy}
               aria-describedby={describedBy('specialInstructions')}
               onChange={(event) => update('specialInstructions', event.target.value)}
             />
             {fieldError('specialInstructions')}
           </div>
+          {vendors.isPending ? (
+            <p className="rfqSuggestionStatus" role="status">
+              <RefreshCw size={16} aria-hidden="true" className="spinning" />
+              Loading vendors…
+            </p>
+          ) : vendors.isError && !isUnauthenticated(vendors.error) ? (
+            <p className="inlineAlert" role="alert">
+              Vendors could not be loaded. {errorMessage(vendors.error)}{' '}
+              <button
+                type="button"
+                className="button textButton"
+                onClick={() => void vendors.refetch()}
+              >
+                Try again
+              </button>
+            </p>
+          ) : (
+            <RfqRecipientsPicker
+              vendors={vendors.data?.vendors ?? []}
+              selectedContactIds={selectedContactIds}
+              disabled={busy}
+              legendId={fieldId('recipients')}
+              onChange={(next) => {
+                setSelectedContactIds(next);
+                setRecipientsMessage(null);
+              }}
+            >
+              {recipientsMessage && (
+                <p className="formError" role="alert">
+                  {recipientsMessage}
+                </p>
+              )}
+            </RfqRecipientsPicker>
+          )}
           <div className="rfqActions">
-            <button type="submit" className="button primary" disabled={suggesting}>
-              Save details
+            <button type="submit" className="button primary" disabled={busy}>
+              {writeDrafts.isPending
+                ? 'Drafting vendor mails…'
+                : drafts
+                  ? 'Redraft vendor mails'
+                  : 'Write vendor mails'}
             </button>
-            <button type="button" className="button textButton" onClick={close}>
+            <button
+              type="button"
+              className="button textButton"
+              onClick={close}
+              disabled={writeDrafts.isPending}
+            >
               Cancel
             </button>
-            {savedDetails && (
+            {writeDrafts.isPending && (
               <span role="status">
-                Details saved: {savedDetails.originPort} → {savedDetails.destinationPort}
-                {savedDetails.containers.length > 0
-                  ? `, ${savedDetails.containers
-                      .map((container) => `${container.quantity} × ${container.type}`)
-                      .join(', ')}`
-                  : ''}
-                . Choosing vendors comes next.
+                One mail per category:{' '}
+                {selectedCategories.map((category) => vendorCategoryTitles[category]).join(', ')}.
               </span>
             )}
           </div>
+          {writeDrafts.isError && !isUnauthenticated(writeDrafts.error) && (
+            <p className="inlineAlert" role="alert">
+              {errorMessage(writeDrafts.error)}
+            </p>
+          )}
+          {drafts && (
+            <section className="rfqDrafts" aria-labelledby={`rfq-drafts-${email.id}`}>
+              <h2 id={`rfq-drafts-${email.id}`} ref={draftsHeading} tabIndex={-1}>
+                Vendor mails
+              </h2>
+              <p className="muted">
+                One mail per vendor category; every ticked contact of that category receives your
+                edited text. Nothing has been sent yet.
+              </p>
+              {draftedCategories.map((category) => {
+                const draft = drafts[category];
+                if (!draft) return null;
+                return (
+                  <div key={category} className="rfqDraft">
+                    <h3>{vendorCategoryTitles[category]}</h3>
+                    <div className="rfqField">
+                      <label htmlFor={`rfq-draft-subject-${category}-${email.id}`}>Subject</label>
+                      <input
+                        id={`rfq-draft-subject-${category}-${email.id}`}
+                        type="text"
+                        maxLength={MAX_RFQ_MAIL_SUBJECT_LENGTH}
+                        value={draft.subject}
+                        disabled={busy}
+                        onChange={(event) => updateDraft(category, { subject: event.target.value })}
+                      />
+                    </div>
+                    <div className="rfqField">
+                      <label htmlFor={`rfq-draft-body-${category}-${email.id}`}>Message</label>
+                      <textarea
+                        id={`rfq-draft-body-${category}-${email.id}`}
+                        rows={12}
+                        maxLength={MAX_RFQ_MAIL_BODY_LENGTH}
+                        value={draft.bodyText}
+                        disabled={busy}
+                        onChange={(event) =>
+                          updateDraft(category, { bodyText: event.target.value })
+                        }
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+              {selectedCategories.some((category) => !drafts[category]) && (
+                <p className="inlineAlert" role="alert">
+                  You ticked a vendor of a category that has no draft yet. Redraft the vendor mails.
+                </p>
+              )}
+            </section>
+          )}
         </form>
       )}
     </div>

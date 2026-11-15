@@ -1,8 +1,10 @@
 import {
   attachmentDownloadUrlResponseSchema,
   currentClassificationSchema,
+  draftRfqMailsResponseSchema,
   emailDetailSchema,
   listAttachmentsResponseSchema,
+  listVendorsResponseSchema,
   threadResponseSchema,
   gmailConnectResponseSchema,
   listEmailsResponseSchema,
@@ -10,7 +12,12 @@ import {
   rfqSuggestionResponseSchema,
   sessionResponseSchema,
 } from '@lc/contract';
-import type { ClassificationLabel, GmailLabel, SessionResponse } from '@lc/contract';
+import type {
+  ClassificationLabel,
+  DraftRfqMailsBody,
+  GmailLabel,
+  SessionResponse,
+} from '@lc/contract';
 import { readNetworkResponse, requestWithRetry } from './frontendRequest.js';
 import type { RequestRetryOptions } from './frontendRequest.js';
 
@@ -76,8 +83,8 @@ async function readJsonBody(response: Response): Promise<unknown> {
 
 /** These POSTs only set or clear the session cookie or return an OAuth URL, so a replay is harmless. */
 const REPLAY_SAFE_POST: RequestRetryOptions = { replaySafe: true };
-/** The suggestion POST stores nothing: a replay costs one more model call and nothing else. */
-const REPLAY_SAFE_SUGGESTION_POST: RequestRetryOptions = { replaySafe: true };
+/** The suggestion and drafts POSTs store nothing: a replay costs one more model call and nothing else. */
+const REPLAY_SAFE_LLM_POST: RequestRetryOptions = { replaySafe: true };
 
 function requireMatchingSession<ResponseBody extends SessionResponse>(
   body: ResponseBody,
@@ -273,11 +280,30 @@ export const frontendApi = {
       rfqSuggestionResponseSchema,
       signal,
       { method: 'POST' },
-      REPLAY_SAFE_SUGGESTION_POST,
+      REPLAY_SAFE_LLM_POST,
     );
     // The suggestion carries no mailbox identity; make sure the cookie still belongs to this session.
     requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
     return suggestion;
+  },
+  /** Every vendor of the desk with its contacts, archived included; the picker filters. */
+  async vendors(session: SessionResponse, signal?: AbortSignal) {
+    const body = await requestJson('/mailbox/vendors', listVendorsResponseSchema, { signal });
+    requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
+    return body;
+  },
+  /** One draft mail per vendor category for the corrected details. Nothing is stored or sent. */
+  async rfqDrafts(session: SessionResponse, body: DraftRfqMailsBody, signal?: AbortSignal) {
+    const drafts = await requestMailJson(
+      session,
+      '/mailbox/rfqs/drafts',
+      draftRfqMailsResponseSchema,
+      signal,
+      { method: 'POST', body: JSON.stringify(body) },
+      REPLAY_SAFE_LLM_POST,
+    );
+    requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
+    return drafts;
   },
   connect(signal?: AbortSignal) {
     return requestJson(
@@ -313,6 +339,12 @@ export function errorMessage(error: unknown): string {
       return 'Shipment details could not be suggested right now. Fill them in by hand or try again.';
     if (error.code === 'suggestion_failed')
       return 'We could not read shipment details from this message. Fill them in by hand.';
+    if (error.code === 'drafts_unavailable')
+      return 'Vendor mails could not be drafted right now. Try again in a moment.';
+    if (error.code === 'drafts_failed')
+      return 'We could not draft the vendor mails from these details. Adjust them and try again.';
+    if (error.code === 'vendor_not_found')
+      return 'A chosen vendor is no longer available. Reload the vendor list and choose again.';
   }
   return 'We could not reach your workspace. Check your connection and try again.';
 }
