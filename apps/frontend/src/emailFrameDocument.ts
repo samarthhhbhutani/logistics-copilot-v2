@@ -1,3 +1,4 @@
+import { collapseQuotedHistory, QUOTED_HISTORY_CLASS } from './collapseQuotedHistory.js';
 import type { sanitizeEmailHtml } from './sanitizeEmailHtml.js';
 
 /** The only executable code in the opaque frame. Never interpolate email content into this script. */
@@ -50,7 +51,10 @@ export function parseEmailFrameLayout(
   return { height: Math.max(1, layout.height), failedImageCount: layout.failedImageCount };
 }
 
-/** No same-origin access. CSP permits only the fixed layout helper, never email scripts/handlers. */
+/**
+ * No same-origin access. CSP permits only the fixed layout helper, never email scripts/handlers.
+ * Quoted history is folded here, after sanitising, so the toggle markup never passes through DOMPurify.
+ */
 export function createEmailDocument(sanitized: ReturnType<typeof sanitizeEmailHtml>): string {
   const imageSources = sanitized.imageOrigins.length ? sanitized.imageOrigins.join(' ') : "'none'";
   const policy = `default-src 'none'; script-src '${emailFrameLayoutScriptHash}'; script-src-attr 'none'; style-src 'unsafe-inline'; img-src ${imageSources}; base-uri 'none'; form-action 'none'; object-src 'none'`;
@@ -59,5 +63,7 @@ export function createEmailDocument(sanitized: ReturnType<typeof sanitizeEmailHt
     img { max-width: 100% !important; height: auto !important; } table { max-width: 100% !important; table-layout: auto; border-collapse: collapse; } :where(table:not([width]):not([style*="width"])) { width: 100%; } td, th { overflow-wrap: anywhere; }
     :where(div, p, pre, blockquote, center, ul, ol, li, h1, h2, h3, h4, h5, h6) { max-width: 100%; box-sizing: border-box !important; }
     pre { white-space: pre-wrap; } blockquote { margin: 12px 0; padding-left: 14px; border-left: 2px solid #dce2d7; } a { color: #24583c; } p:first-child { margin-top: 0; } p:last-child { margin-bottom: 0; }
-  </style></head><body>${sanitized.html}<script>${emailFrameLayoutScript}</script></body></html>`;
+    details.${QUOTED_HISTORY_CLASS} { margin-top: 12px; } details.${QUOTED_HISTORY_CLASS} > summary { cursor: pointer; color: #24583c; font-size: 13px; list-style: none; width: max-content; } details.${QUOTED_HISTORY_CLASS} > summary::-webkit-details-marker { display: none; }
+    details.${QUOTED_HISTORY_CLASS} > summary .hide { display: none; } details.${QUOTED_HISTORY_CLASS}[open] > summary .show { display: none; } details.${QUOTED_HISTORY_CLASS}[open] > summary .hide { display: inline; }
+  </style></head><body>${collapseQuotedHistory(sanitized.html)}<script>${emailFrameLayoutScript}</script></body></html>`;
 }
