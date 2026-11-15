@@ -90,3 +90,28 @@ export const rfqResponseSchema = z.object({
   updatedAt: z.iso.datetime(),
 });
 export type RfqResponse = z.infer<typeof rfqResponseSchema>;
+
+/**
+ * POST /v1/mailbox/emails/:emailId/rfq-suggestion: the shipment details an LLM read out of the mail,
+ * for the operator to correct on the form. Same keys as rfqDetails; the ports are nullable here
+ * because a suggestion may not find them, and nothing is validated against the form's limits
+ * (the form does that when the operator submits). 503 suggestion_unavailable when the LLM is not
+ * configured or not reachable right now; 422 suggestion_failed when it could not read the mail.
+ */
+export const rfqSuggestionResponseSchema = z.object({
+  originPort: z.string().nullable(),
+  destinationPort: z.string().nullable(),
+  senderAddress: z.string().nullable(),
+  receiverAddress: z.string().nullable(),
+  mode: freightModeSchema.nullable(),
+  containers: z.array(z.object({ type: z.string(), quantity: z.number().int() })),
+  commodity: z.string().nullable(),
+  grossWeightKg: z.number().nullable(),
+  volumeCbm: z.number().nullable(),
+  incoterm: z.string().nullable(),
+  readyDate: z.string().nullable(),
+  specialInstructions: z.string().nullable(),
+  model: z.string(),
+  promptVersion: z.string(),
+});
+export type RfqSuggestionResponse = z.infer<typeof rfqSuggestionResponseSchema>;

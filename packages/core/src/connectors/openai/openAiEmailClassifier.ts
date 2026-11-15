@@ -30,9 +30,7 @@ export interface EmailToClassify {
  * stores the mail unclassified and logs, because a broken prompt must never lose mail.
  */
 export type ClassifierOutcome =
-  | { outcome: 'classified'; classification: LlmClassification }
-  | { outcome: 'retry'; detail: string }
-  | { outcome: 'failed'; detail: string };
+  { outcome: 'classified'; classification: LlmClassification } | LlmFailureOutcome;
 
 export interface EmailClassifier {
   classify(email: EmailToClassify): Promise<ClassifierOutcome>;
@@ -41,8 +39,18 @@ export interface EmailClassifier {
 /** Per-request ceiling; SQS owns retries, so the SDK must not retry on its own. */
 export const CLASSIFY_REQUEST_TIMEOUT_MS = 20_000;
 /** Files the model reads natively. Anything else is named but not sent. */
-const NATIVE_FILE_CONTENT_TYPES = new Set(['application/pdf']);
-const NATIVE_IMAGE_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+export const NATIVE_FILE_CONTENT_TYPES = new Set(['application/pdf']);
+export const NATIVE_IMAGE_CONTENT_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+]);
+
+/** Whether the model can read this file itself; anything else is only ever named. */
+export function isNativeAttachmentContentType(contentType: string): boolean {
+  return NATIVE_FILE_CONTENT_TYPES.has(contentType) || NATIVE_IMAGE_CONTENT_TYPES.has(contentType);
+}
 /**
  * Caps on what one classification may upload, measured as base64 (what the request carries, a third
  * larger than the file): tokens cost money, a retry pays again and the request has a size limit.
@@ -107,7 +115,7 @@ export function createOpenAiEmailClassifier({
           },
         };
       } catch (error) {
-        return toClassifierOutcome(error);
+        return toLlmFailureOutcome(error);
       }
     },
   };
@@ -121,11 +129,12 @@ export function createOpenAiEmailClassifier({
 export function buildUserContent(
   email: EmailToClassify,
   includeAttachments: boolean,
+  maxBodyCharacters: number = CLASSIFY_EMAIL_MAX_BODY_CHARACTERS,
 ): ResponseInputContent[] {
   const realFiles = email.attachments.filter((attachment) => !attachment.isInline);
   const bodyText = asEmailData(
-    email.bodyText.length > CLASSIFY_EMAIL_MAX_BODY_CHARACTERS
-      ? `${email.bodyText.slice(0, CLASSIFY_EMAIL_MAX_BODY_CHARACTERS)}\n[truncated]`
+    email.bodyText.length > maxBodyCharacters
+      ? `${email.bodyText.slice(0, maxBodyCharacters)}\n[truncated]`
       : email.bodyText,
   );
   const attachmentLines = realFiles.map(
@@ -183,7 +192,7 @@ function asHeaderField(text: string): string {
 }
 
 /** Why a successful response carried no parsed answer: cut off, refused, or simply empty. */
-function describeMissingOutput(response: Response): string {
+export function describeMissingOutput(response: Response): string {
   if (response.incomplete_details?.reason)
     return `incomplete: ${response.incomplete_details.reason}`;
   for (const item of response.output) {
@@ -198,8 +207,12 @@ function describeMissingOutput(response: Response): string {
 /** 429 is also what an account out of credit gets; that does not pass with time. */
 const OUT_OF_CREDIT_ERROR_CODE = 'insufficient_quota';
 
+/** What every structured-output call shares when it fails: retry the provider's faults, give up on ours. */
+export type LlmFailureOutcome =
+  { outcome: 'retry'; detail: string } | { outcome: 'failed'; detail: string };
+
 /** 429 (rate limit) and 5xx are the provider's problem and worth another attempt; anything else is ours. */
-function toClassifierOutcome(error: unknown): ClassifierOutcome {
+export function toLlmFailureOutcome(error: unknown): LlmFailureOutcome {
   // Covers APIConnectionTimeoutError, a subclass.
   if (error instanceof APIConnectionError) return { outcome: 'retry', detail: error.message };
   if (error instanceof APIError) {
