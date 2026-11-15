@@ -14,6 +14,7 @@ import type {
   MailboxConnectionRepository,
   MailboxCredentialsRepository,
   EncryptionUtil,
+  RfqMailDrafter,
   RfqSuggester,
   SentMailRepository,
   TenantRepository,
@@ -29,6 +30,7 @@ import { createEmailsRouter } from './emails/emailsRouter.js';
 import { createEmailClassificationsRouter } from './emails/emailClassificationsRouter.js';
 import { createThreadsRouter } from './emails/threadsRouter.js';
 import { createGmailConnectionRouter } from './gmail/gmailConnectionRouter.js';
+import { createRfqDraftsRouter } from './rfqs/rfqDraftsRouter.js';
 import { createRfqSuggestionsRouter } from './rfqs/rfqSuggestionsRouter.js';
 import { createEmailRepliesRouter } from './sending/emailRepliesRouter.js';
 import { createTenantsRouter } from './tenants/tenantsRouter.js';
@@ -50,6 +52,8 @@ export interface AppDependencies {
   rfqSuggester: RfqSuggester | undefined;
   /** Fetches attachment bytes for the suggester; undefined when that switch is off or no bucket is configured. */
   attachmentContentReader: AttachmentContentReader | undefined;
+  /** Writes the vendor mails for the RFQ page; undefined without an OpenAI key, so the route answers 503. */
+  rfqMailDrafter: RfqMailDrafter | undefined;
   /** Google OAuth operations; the real one in index.ts, an in-memory fake in tests. */
   gmailOAuth: GmailOAuth;
   /** Gmail users.watch / users.stop; same real-or-fake split as gmailOAuth. */
@@ -83,6 +87,7 @@ export function createAppInstance({
   attachmentDownloadUrlSigner,
   rfqSuggester,
   attachmentContentReader,
+  rfqMailDrafter,
   gmailOAuth,
   gmailWatch,
   gmailSender,
@@ -162,7 +167,16 @@ export function createAppInstance({
     createClassificationRulesRouter({ classificationRuleRepository, requireSession }),
   );
   v1Router.use('/mailbox/vendors', createVendorsRouter({ vendorRepository, requireSession }));
-  // Feature routers mount here as they land: rfqs, agent.
+  v1Router.use(
+    '/mailbox/rfqs',
+    createRfqDraftsRouter({
+      emailReadRepository,
+      vendorRepository,
+      rfqMailDrafter,
+      requireSession,
+    }),
+  );
+  // Feature routers mount here as they land: rfq send, agent.
   expressApp.use('/v1', v1Router);
 
   expressApp.use((request, response) => {

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { vendorCategorySchema } from './vendors.js';
 
 export const MAX_PORT_LENGTH = 200;
 export const MAX_COMMODITY_LENGTH = 500;
@@ -115,3 +116,37 @@ export const rfqSuggestionResponseSchema = z.object({
   promptVersion: z.string(),
 });
 export type RfqSuggestionResponse = z.infer<typeof rfqSuggestionResponseSchema>;
+
+export const MAX_VENDORS_PER_RFQ = 20;
+
+/**
+ * POST /v1/mailbox/rfqs/drafts: write the vendor mails for the operator to edit on the page. Nothing
+ * is stored or sent. `details` is the corrected form (ground truth); the source mail is context.
+ * 404 vendor_not_found for an id outside the tenant or archived; 404 email_not_found; 503
+ * drafts_unavailable when the LLM is off or down; 422 drafts_failed when it could not write.
+ */
+export const draftRfqMailsBodySchema = z.object({
+  sourceEmailId: z.uuid(),
+  details: rfqDetailsSchema,
+  vendorIds: z
+    .array(z.uuid())
+    .min(1)
+    .max(MAX_VENDORS_PER_RFQ)
+    .refine((ids) => new Set(ids).size === ids.length, 'vendorIds must be distinct'),
+});
+export type DraftRfqMailsBody = z.input<typeof draftRfqMailsBodySchema>;
+
+/** One draft per vendor category among the selected vendors; every contact of that category gets the edited text. */
+export const rfqMailDraftResponseSchema = z.object({
+  category: vendorCategorySchema,
+  subject: z.string(),
+  bodyText: z.string(),
+  model: z.string(),
+  promptVersion: z.string(),
+});
+export type RfqMailDraftResponse = z.infer<typeof rfqMailDraftResponseSchema>;
+
+export const draftRfqMailsResponseSchema = z.object({
+  drafts: z.array(rfqMailDraftResponseSchema),
+});
+export type DraftRfqMailsResponse = z.infer<typeof draftRfqMailsResponseSchema>;

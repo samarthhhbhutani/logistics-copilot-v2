@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { rfqDetailsSchema } from './index.js';
+import { MAX_VENDORS_PER_RFQ, draftRfqMailsBodySchema, rfqDetailsSchema } from './index.js';
 
 describe('rfqDetailsSchema', () => {
   it('needs only the two ports and fills every other field with null or an empty list', () => {
@@ -52,5 +52,34 @@ describe('rfqDetailsSchema', () => {
       rfqDetailsSchema.safeParse({ ...base, containers: [{ type: '20ft', quantity: 0 }] }).success,
     ).toBe(false);
     expect(rfqDetailsSchema.safeParse({ ...base, mode: 'rail' }).success).toBe(false);
+  });
+});
+
+describe('draftRfqMailsBodySchema', () => {
+  const base = {
+    sourceEmailId: '00000000-0000-4000-8000-000000000001',
+    details: { originPort: 'Hazira', destinationPort: 'Jebel Ali' },
+    vendorIds: ['00000000-0000-4000-8000-00000000000a'],
+  };
+
+  it('accepts a minimal body and normalises the details', () => {
+    const parsed = draftRfqMailsBodySchema.parse(base);
+    expect(parsed.details.containers).toEqual([]);
+    expect(parsed.details.incoterm).toBeNull();
+  });
+
+  it('rejects no vendors, repeated vendors and more than the cap', () => {
+    expect(draftRfqMailsBodySchema.safeParse({ ...base, vendorIds: [] }).success).toBe(false);
+    expect(
+      draftRfqMailsBodySchema.safeParse({
+        ...base,
+        vendorIds: [base.vendorIds[0], base.vendorIds[0]],
+      }).success,
+    ).toBe(false);
+    const tooMany = Array.from(
+      { length: MAX_VENDORS_PER_RFQ + 1 },
+      (_, index) => `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+    );
+    expect(draftRfqMailsBodySchema.safeParse({ ...base, vendorIds: tooMany }).success).toBe(false);
   });
 });
