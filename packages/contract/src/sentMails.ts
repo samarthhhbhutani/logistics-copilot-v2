@@ -31,6 +31,10 @@ export const sentMailResponseSchema = z.object({
   kind: sentMailKindSchema,
   status: sentMailStatusSchema,
   inReplyToEmailId: z.uuid().nullable(),
+  /** The RFQ, vendor and contact an `rfq` mail was sent for; all null for a reply. */
+  rfqId: z.uuid().nullable(),
+  vendorId: z.uuid().nullable(),
+  vendorContactId: z.uuid().nullable(),
   gmailThreadId: z.string().nullable(),
   rfcMessageId: z.string(),
   toRecipients: z.array(z.object({ name: z.string(), address: z.string() })),

@@ -1,0 +1,94 @@
+import { Prisma } from '../db/generated/client.js';
+import type { PrismaClient } from '../db/prismaClient.js';
+import type { MailboxScope } from '../connectors/gmail/mailboxConnectionRepository.js';
+import { RFQ_STATUS_BY_PRISMA_ENUM } from './rfqModels.js';
+import type { Rfq } from './rfqModels.js';
+
+export interface RfqToCreate {
+  /** Client-generated UUID; the idempotency key. */
+  id: string;
+  sourceEmailId: string;
+  originPort: string;
+  destinationPort: string;
+  incoterm: string | null;
+}
+
+export type CreateRfqResult =
+  | { outcome: 'created'; rfq: Rfq }
+  /** The same id was already written by this mailbox: an idempotent replay of the send request. */
+  | { outcome: 'already_exists'; rfq: Rfq }
+  /** The id exists but belongs to another mailbox or tenant; the client must pick a new one. */
+  | { outcome: 'id_taken' };
+
+/** RFQs of the session's mailbox and tenant; every method is scoped to both. */
+export interface RfqRepository {
+  createRfq(scope: MailboxScope, rfq: RfqToCreate): Promise<CreateRfqResult>;
+  findRfq(scope: MailboxScope, rfqId: string): Promise<Rfq | undefined>;
+}
+
+const RFQ_SELECT = {
+  id: true,
+  sourceEmailId: true,
+  originPort: true,
+  destinationPort: true,
+  incoterm: true,
+  status: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.RfqSelect;
+
+type RfqRow = Prisma.RfqGetPayload<{ select: typeof RFQ_SELECT }>;
+
+export function toRfq(row: RfqRow): Rfq {
+  return {
+    id: row.id,
+    sourceEmailId: row.sourceEmailId,
+    originPort: row.originPort,
+    destinationPort: row.destinationPort,
+    incoterm: row.incoterm,
+    status: RFQ_STATUS_BY_PRISMA_ENUM[row.status],
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+export function createPrismaRfqRepository(prismaClient: PrismaClient): RfqRepository {
+  async function findInScope({ mailboxId, tenantId }: MailboxScope, rfqId: string) {
+    const row = await prismaClient.rfq.findFirst({
+      where: { id: rfqId, mailboxId, tenantId },
+      select: RFQ_SELECT,
+    });
+    return row ? toRfq(row) : undefined;
+  }
+
+  return {
+    async createRfq(scope, rfq) {
+      try {
+        const row = await prismaClient.rfq.create({
+          data: {
+            id: rfq.id,
+            tenantId: scope.tenantId,
+            mailboxId: scope.mailboxId,
+            sourceEmailId: rfq.sourceEmailId,
+            originPort: rfq.originPort,
+            destinationPort: rfq.destinationPort,
+            incoterm: rfq.incoterm,
+          },
+          select: RFQ_SELECT,
+        });
+        return { outcome: 'created', rfq: toRfq(row) };
+      } catch (error) {
+        if (!isUniqueViolation(error)) throw error;
+        // Insert first, look up on conflict: two concurrent requests with the same id cannot both create.
+        const existing = await findInScope(scope, rfq.id);
+        return existing ? { outcome: 'already_exists', rfq: existing } : { outcome: 'id_taken' };
+      }
+    },
+
+    findRfq: findInScope,
+  };
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+}

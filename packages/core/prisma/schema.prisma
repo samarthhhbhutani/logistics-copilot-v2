@@ -276,8 +276,8 @@ model Rfq {
   tenant          Tenant     @relation(fields: [tenantId], references: [id])
   mailboxId       String     @map("mailbox_id") @db.Uuid
   mailbox         Mailbox    @relation(fields: [mailboxId], references: [id])
-  /// The customer request this answers; one RFQ per customer mail.
-  sourceEmailId   String     @unique @map("source_email_id") @db.Uuid
+  /// The customer request this answers. Not unique: a mail processed twice gives two RFQs.
+  sourceEmailId   String     @map("source_email_id") @db.Uuid
   sourceEmail     Email      @relation("RfqSourceEmail", fields: [sourceEmailId], references: [id])
   originPort      String     @map("origin_port")
   destinationPort String     @map("destination_port")
@@ -289,6 +289,7 @@ model Rfq {
   sentMails       SentMail[]
 
   @@index([mailboxId, createdAt])
+  @@index([sourceEmailId])
   @@index([tenantId])
   @@map("rfqs")
 }
@@ -349,6 +350,8 @@ model VendorContact {
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
+  sentMails SentMail[]
+
   @@unique([vendorId, emailAddress])
   @@index([tenantId])
   @@map("vendor_contacts")
@@ -373,6 +376,9 @@ model SentMail {
   rfq              Rfq?           @relation(fields: [rfqId], references: [id])
   vendorId         String?        @map("vendor_id") @db.Uuid
   vendor           Vendor?        @relation(fields: [vendorId], references: [id])
+  /// The person the `rfq` mail went to; with rfqId it keys one mail per contact per RFQ.
+  vendorContactId  String?        @map("vendor_contact_id") @db.Uuid
+  vendorContact    VendorContact? @relation(fields: [vendorContactId], references: [id])
   /// Known up front for a reply; filled from Gmail's response for a new thread.
   gmailThreadId    String?        @map("gmail_thread_id")
   rfcMessageId     String         @map("rfc_message_id")
@@ -390,6 +396,7 @@ model SentMail {
   updatedAt        DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   @@unique([mailboxId, rfcMessageId])
+  @@unique([rfqId, vendorContactId])
   @@index([mailboxId, inReplyToEmailId])
   @@index([rfqId])
   @@index([tenantId])

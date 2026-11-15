@@ -4,20 +4,21 @@ import cookieParser from 'cookie-parser';
 import type {
   AttachmentRepository,
   ClassificationRuleRepository,
-  VendorRepository,
-  EmailClassificationRepository,
   Config,
+  EmailClassificationRepository,
   EmailReadRepository,
+  EncryptionUtil,
   GmailOAuth,
   GmailSender,
   GmailWatch,
   MailboxConnectionRepository,
   MailboxCredentialsRepository,
-  EncryptionUtil,
   RfqMailDrafter,
+  RfqRepository,
   RfqSuggester,
   SentMailRepository,
   TenantRepository,
+  VendorRepository,
 } from '@lc/core';
 import { createAuthRouter } from './auth/authRouter.js';
 import { createRequireSession, getSession } from './auth/requireSession.js';
@@ -31,6 +32,7 @@ import { createEmailClassificationsRouter } from './emails/emailClassificationsR
 import { createThreadsRouter } from './emails/threadsRouter.js';
 import { createGmailConnectionRouter } from './gmail/gmailConnectionRouter.js';
 import { createRfqDraftsRouter } from './rfqs/rfqDraftsRouter.js';
+import { createRfqSendRouter } from './rfqs/rfqSendRouter.js';
 import { createRfqSuggestionsRouter } from './rfqs/rfqSuggestionsRouter.js';
 import { createEmailRepliesRouter } from './sending/emailRepliesRouter.js';
 import { createTenantsRouter } from './tenants/tenantsRouter.js';
@@ -46,6 +48,7 @@ export interface AppDependencies {
   vendorRepository: VendorRepository;
   emailClassificationRepository: EmailClassificationRepository;
   sentMailRepository: SentMailRepository;
+  rfqRepository: RfqRepository;
   /** Presigns S3 download links; undefined when no bucket is configured, so download links answer 503. */
   attachmentDownloadUrlSigner: AttachmentDownloadUrlSigner | undefined;
   /** Reads shipment details out of a customer mail; undefined without an OpenAI key, so the route answers 503. */
@@ -84,6 +87,7 @@ export function createAppInstance({
   vendorRepository,
   emailClassificationRepository,
   sentMailRepository,
+  rfqRepository,
   attachmentDownloadUrlSigner,
   rfqSuggester,
   attachmentContentReader,
@@ -176,7 +180,21 @@ export function createAppInstance({
       requireSession,
     }),
   );
-  // Feature routers mount here as they land: rfq send, agent.
+  v1Router.use(
+    '/mailbox/rfqs',
+    createRfqSendRouter({
+      emailReadRepository,
+      vendorRepository,
+      rfqRepository,
+      sentMailRepository,
+      mailboxConnectionRepository,
+      tenantRepository,
+      gmailSender,
+      encryptionUtil,
+      requireSession,
+    }),
+  );
+  // Feature routers mount here as they land: agent.
   expressApp.use('/v1', v1Router);
 
   expressApp.use((request, response) => {

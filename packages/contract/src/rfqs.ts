@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { sentMailResponseSchema } from './sentMails.js';
 import { vendorCategorySchema } from './vendors.js';
 
 export const MAX_PORT_LENGTH = 200;
@@ -150,3 +151,66 @@ export const draftRfqMailsResponseSchema = z.object({
   drafts: z.array(rfqMailDraftResponseSchema),
 });
 export type DraftRfqMailsResponse = z.infer<typeof draftRfqMailsResponseSchema>;
+
+export const MAX_CONTACTS_PER_RFQ = 100;
+export const MAX_RFQ_MAIL_SUBJECT_LENGTH = 200;
+export const MAX_RFQ_MAIL_BODY_LENGTH = 20_000;
+
+const distinct = (values: string[]) => new Set(values).size === values.length;
+
+/** One vendor and the people there the RFQ goes to; every contact gets their own mail and thread. */
+export const rfqRecipientSchema = z.object({
+  vendorId: z.uuid(),
+  contactIds: z.array(z.uuid()).min(1).refine(distinct, 'contactIds must be distinct'),
+});
+export type RfqRecipient = z.infer<typeof rfqRecipientSchema>;
+
+/** The operator's final text for one vendor category, after editing the draft (or writing it by hand). */
+export const rfqMailTextSchema = z.object({
+  category: vendorCategorySchema,
+  subject: z.string().trim().min(1).max(MAX_RFQ_MAIL_SUBJECT_LENGTH),
+  bodyText: z.string().trim().min(1).max(MAX_RFQ_MAIL_BODY_LENGTH),
+});
+export type RfqMailText = z.infer<typeof rfqMailTextSchema>;
+
+/**
+ * PUT /v1/mailbox/rfqs/:rfqId/send: create the RFQ and send one mail per contact. `rfqId` is minted by
+ * the client (crypto.randomUUID) and is the idempotency key: the same PUT again sends only the mails
+ * still pending or failed and reports the rest as they are, and a contact added to `recipients` on
+ * a later call gets a mail then. Every recipient vendor's category needs an entry in `mails`.
+ *   200 SendRfqResponse (rfq + one sent mail per contact, each with its own status)
+ *   400 missing_mail_text (a recipient's category has no text) | invalid_body
+ *   404 email_not_found | vendor_not_found (unknown or archived) | contact_not_found (unknown, archived
+ *       or not of that vendor)
+ *   409 rfq_id_taken (id used by another mailbox, or with another source mail) | mailbox_not_connected |
+ *       google_client_not_configured
+ */
+export const sendRfqBodySchema = z.object({
+  sourceEmailId: z.uuid(),
+  details: rfqDetailsSchema,
+  recipients: z
+    .array(rfqRecipientSchema)
+    .min(1)
+    .max(MAX_VENDORS_PER_RFQ)
+    .refine(
+      (recipients) => distinct(recipients.map((recipient) => recipient.vendorId)),
+      'recipient vendorIds must be distinct',
+    )
+    .refine(
+      (recipients) =>
+        recipients.flatMap((recipient) => recipient.contactIds).length <= MAX_CONTACTS_PER_RFQ,
+      `at most ${MAX_CONTACTS_PER_RFQ} contacts per RFQ`,
+    ),
+  mails: z
+    .array(rfqMailTextSchema)
+    .min(1)
+    .refine((mails) => distinct(mails.map((mail) => mail.category)), 'one text per category'),
+});
+export type SendRfqBody = z.input<typeof sendRfqBodySchema>;
+
+export const sendRfqResponseSchema = z.object({
+  rfq: rfqResponseSchema,
+  /** One per contact, oldest first; status sent | failed | pending (not reached this time) | sending (outcome unknown). */
+  mails: z.array(sentMailResponseSchema),
+});
+export type SendRfqResponse = z.infer<typeof sendRfqResponseSchema>;
