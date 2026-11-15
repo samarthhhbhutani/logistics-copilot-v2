@@ -313,6 +313,46 @@ describe('scoped mail 404 after an account switch', () => {
       code: 'suggestion_failed',
     });
   });
+  it('lists vendors and drafts RFQ mails, verifying the session after each', async () => {
+    const vendors = { vendors: [] };
+    let fetchMock = mockResponses(vendors, session);
+    expect(await frontendApi.vendors(session)).toEqual(vendors);
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/v1/mailbox/vendors', expect.anything());
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/v1/me', expect.anything());
+    mockResponses(vendors, { ...session, tenantId: emailId });
+    await expect(frontendApi.vendors(session)).rejects.toMatchObject({ code: 'session_changed' });
+
+    const body = {
+      sourceEmailId: emailId,
+      details: { originPort: 'A', destinationPort: 'B' },
+      vendorIds: ['00000000-0000-4000-8000-000000000021'],
+    };
+    const drafts = {
+      drafts: [
+        { category: 'carrier', subject: 'RFQ', bodyText: 'Hello', model: 'm', promptVersion: 'v1' },
+      ],
+    };
+    fetchMock = mockResponses(drafts, session);
+    expect(await frontendApi.rfqDrafts(session, body)).toEqual(drafts);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      '/v1/mailbox/rfqs/drafts',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify(body) }),
+    );
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ error: 'vendor_not_found' }), { status: 404 }),
+        )
+        .mockResolvedValueOnce(new Response(JSON.stringify(session))),
+    );
+    await expect(frontendApi.rfqDrafts(session, body)).rejects.toMatchObject({
+      status: 404,
+      code: 'vendor_not_found',
+    });
+  });
   it('preserves a genuine 404 when the cookie still belongs to the same account', async () => {
     vi.stubGlobal(
       'fetch',
