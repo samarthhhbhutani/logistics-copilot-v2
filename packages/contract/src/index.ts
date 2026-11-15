@@ -5,3 +5,4 @@ export * from './mailbox.js';
 export * from './classificationRules.js';
 export * from './sentMails.js';
 export * from './vendors.js';
+export * from './rfqs.js';
