@@ -208,9 +208,21 @@ export const sendRfqBodySchema = z.object({
 });
 export type SendRfqBody = z.input<typeof sendRfqBodySchema>;
 
-export const sendRfqResponseSchema = z.object({
+/** An RFQ with every mail it produced, one per contact, oldest first. */
+export const rfqWithMailsResponseSchema = z.object({
   rfq: rfqResponseSchema,
-  /** One per contact, oldest first; status sent | failed | pending (not reached this time) | sending (outcome unknown). */
+  /** Status sent | failed | pending (not reached this time) | sending (outcome unknown, resolved later by the sweeper). */
   mails: z.array(sentMailResponseSchema),
 });
-export type SendRfqResponse = z.infer<typeof sendRfqResponseSchema>;
+export type RfqWithMailsResponse = z.infer<typeof rfqWithMailsResponseSchema>;
+
+export const sendRfqResponseSchema = rfqWithMailsResponseSchema;
+export type SendRfqResponse = RfqWithMailsResponse;
+
+/**
+ * GET /v1/mailbox/rfqs/:rfqId: the RFQ and its mails as they stand now. The client polls this while
+ * a mail is still `sending`, to see the sweeper resolve it.
+ *   200 RfqWithMailsResponse
+ *   404 rfq_not_found (unknown, or of another mailbox or tenant)
+ */
+export const getRfqResponseSchema = rfqWithMailsResponseSchema;

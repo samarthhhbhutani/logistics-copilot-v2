@@ -26,7 +26,12 @@ import type {
   VendorRepository,
 } from '@lc/core';
 import { sendRfqBodySchema } from '@lc/contract';
-import type { RfqMailText, RfqRecipient, SendRfqResponse } from '@lc/contract';
+import type {
+  RfqMailText,
+  RfqRecipient,
+  RfqWithMailsResponse,
+  SendRfqResponse,
+} from '@lc/contract';
 import { getSession } from '../auth/requireSession.js';
 import { parseIdOr404 } from '../http/parseIdOr404.js';
 import { parseRequestBody } from '../http/parseRequestBody.js';
@@ -51,8 +56,9 @@ export interface RfqSendRouterDependencies {
 const CONCURRENT_GMAIL_SENDS = 2;
 
 /**
- * Sending an RFQ to vendors, mounted at /v1/mailbox/rfqs.
+ * Sending an RFQ to vendors and reading it back, mounted at /v1/mailbox/rfqs.
  *   PUT /:rfqId/send  { sourceEmailId, details, recipients, mails }   see sendRfqBodySchema for codes
+ *   GET /:rfqId       the rfq and its mails as they stand; polled while a mail is still `sending`
  *
  * One `sent_mails` row and one fresh Gmail thread per contact. Write-ahead as for replies: the rfq
  * and its pending rows are written first, then each row moves pending -> sending -> sent | failed.
@@ -108,12 +114,25 @@ export function createRfqSendRouter({
 
     await sendPendingAndFailedMails(rfqMails, scope, sendingMailbox);
 
-    const responseBody: SendRfqResponse = {
+    const responseBody: SendRfqResponse = await rfqWithMails(scope, rfq);
+    response.status(200).json(responseBody);
+  });
+
+  router.get('/:rfqId', requireSession, async (request, response) => {
+    const scope = getSession(response);
+    const rfqId = parseIdOr404(request.params.rfqId);
+    const rfq = await rfqRepository.findRfq(scope, rfqId);
+    if (!rfq) throw createHttpError(404, 'rfq_not_found');
+    const responseBody: RfqWithMailsResponse = await rfqWithMails(scope, rfq);
+    response.status(200).json(responseBody);
+  });
+
+  async function rfqWithMails(scope: MailboxScope, rfq: Rfq): Promise<RfqWithMailsResponse> {
+    return {
       rfq: toRfqResponse(rfq),
       mails: (await sentMailRepository.listRfqMails(scope, rfq.id)).map(toSentMailResponse),
     };
-    response.status(200).json(responseBody);
-  });
+  }
 
   /**
    * Sends every mail still pending or failed, CONCURRENT_GMAIL_SENDS at a time. A dead refresh token
