@@ -118,39 +118,45 @@ enum GmailLabel {
 /// message lives in S3 at raw_email_s3_key; headers not stored here can be re-read from it.
 /// to_recipients / cc_recipients are EmailAddress[] ({ name, address }, address lowercased).
 model Email {
-  id              String           @id @default(uuid()) @db.Uuid
-  tenantId        String           @map("tenant_id") @db.Uuid
-  tenant          Tenant           @relation(fields: [tenantId], references: [id])
-  mailboxId       String           @map("mailbox_id") @db.Uuid
-  mailbox         Mailbox          @relation(fields: [mailboxId], references: [id])
-  gmailMessageId  String           @map("gmail_message_id")
-  gmailThreadId   String           @map("gmail_thread_id")
-  gmailLabel      GmailLabel       @map("gmail_label")
+  id                String           @id @default(uuid()) @db.Uuid
+  tenantId          String           @map("tenant_id") @db.Uuid
+  tenant            Tenant           @relation(fields: [tenantId], references: [id])
+  mailboxId         String           @map("mailbox_id") @db.Uuid
+  mailbox           Mailbox          @relation(fields: [mailboxId], references: [id])
+  gmailMessageId    String           @map("gmail_message_id")
+  gmailThreadId     String           @map("gmail_thread_id")
+  gmailLabel        GmailLabel       @map("gmail_label")
   /// The Message-ID header; how our own sent RFQs are recognised when their SENT copy arrives.
-  rfcMessageId    String?          @map("rfc_message_id")
+  rfcMessageId      String?          @map("rfc_message_id")
   /// Empty string when the From header had only an address; null address when From was missing.
-  senderName      String           @map("sender_name")
-  senderEmail     String?          @map("sender_email")
-  toRecipients    Json             @map("to_recipients")
-  ccRecipients    Json             @map("cc_recipients")
-  subject         String
+  senderName        String           @map("sender_name")
+  senderEmail       String?          @map("sender_email")
+  toRecipients      Json             @map("to_recipients")
+  ccRecipients      Json             @map("cc_recipients")
+  subject           String
   /// Gmail's own short plain-text preview, for list views that must not load body_text.
-  snippet         String
-  bodyText        String           @map("body_text")
-  bodyHtml        String?          @map("body_html")
-  rawEmailS3Key   String           @map("raw_email_s3_key")
+  snippet           String
+  bodyText          String           @map("body_text")
+  bodyHtml          String?          @map("body_html")
+  rawEmailS3Key     String           @map("raw_email_s3_key")
+  /// The mail of ours this message answers (matched by the processor on the Gmail thread, else the
+  /// In-Reply-To/References headers); null when it answers nothing we sent. Several inbound mails
+  /// may answer one sent mail (acknowledgement, then the quote), so the RFQ view lists them all.
+  answersSentMailId String?          @map("answers_sent_mail_id") @db.Uuid
+  answersSentMail   SentMail?        @relation("EmailAnswersSentMail", fields: [answersSentMailId], references: [id])
   /// The Date header, or Gmail's internalDate when the header is missing or unparseable.
-  receivedAt      DateTime         @map("received_at") @db.Timestamptz
-  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz
-  attachments     Attachment[]
-  classifications Classification[]
-  repliesSent     SentMail[]       @relation("SentMailInReplyTo")
+  receivedAt        DateTime         @map("received_at") @db.Timestamptz
+  createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  attachments       Attachment[]
+  classifications   Classification[]
+  repliesSent       SentMail[]       @relation("SentMailInReplyTo")
   /// At most one (rfqs.source_email_id is unique); a list only because Prisma has no optional one-to-one from this side.
-  rfqs            Rfq[]            @relation("RfqSourceEmail")
+  rfqs              Rfq[]            @relation("RfqSourceEmail")
 
   @@unique([mailboxId, gmailMessageId])
   @@index([mailboxId, receivedAt])
   @@index([mailboxId, gmailThreadId])
+  @@index([answersSentMailId])
   @@index([tenantId])
   @@map("emails")
 }
@@ -371,6 +377,8 @@ model SentMail {
   /// The inbound mail a reply answers; null for mails that start a thread.
   inReplyToEmailId String?        @map("in_reply_to_email_id") @db.Uuid
   inReplyToEmail   Email?         @relation("SentMailInReplyTo", fields: [inReplyToEmailId], references: [id])
+  /// Inbound mails that answered this one (roadmap 5.1); set by the processor, read by GET rfq.
+  repliesReceived  Email[]        @relation("EmailAnswersSentMail")
   /// The RFQ and the vendor an `rfq` mail was sent for; both null for a reply.
   rfqId            String?        @map("rfq_id") @db.Uuid
   rfq              Rfq?           @relation(fields: [rfqId], references: [id])
