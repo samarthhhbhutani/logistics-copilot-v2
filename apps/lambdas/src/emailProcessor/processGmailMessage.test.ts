@@ -93,6 +93,21 @@ const REPLY_RAW = Buffer.from(
   ].join('\r\n'),
 );
 
+/** A vendor answering one of our RFQ mails: In-Reply-To names our Message-ID. */
+const VENDOR_REPLY_RAW = Buffer.from(
+  [
+    'From: Quotes <quotes@sea.com>',
+    'To: ops@desk.com',
+    'Subject: Re: RFQ Mumbai to Rotterdam',
+    'Date: Tue, 10 Nov 2026 12:00:00 +0530',
+    'Message-ID: <quote-1@sea.com>',
+    'In-Reply-To: <22222222-2222-4222-8222-222222222222@desk.com>',
+    'Content-Type: text/plain; charset=utf-8',
+    '',
+    'USD 1450 per 40ft, valid 7 days.',
+  ].join('\r\n'),
+);
+
 const PDF_BYTES = Buffer.from('%PDF-1.4 fake rate card');
 const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -189,6 +204,9 @@ function createTestProcessor(
     healCalls: [] as { rfcMessageId: string; gmailMessageId: string; gmailThreadId: string }[],
     healResult: { moved: false } as { moved: boolean },
     healError: undefined as Error | undefined,
+    answeredLookups: [] as { gmailThreadId: string; inReplyToMessageId: string | undefined }[],
+    answeredSentMailId: undefined as string | undefined,
+    answeredLookupError: undefined as Error | undefined,
     tenantHasClient: true,
   };
   const mailboxSyncRepository: MailboxSyncRepository = {
@@ -277,6 +295,11 @@ function createTestProcessor(
       if (state.healError) throw state.healError;
       state.healCalls.push({ rfcMessageId, ...gmailIds });
       return state.healResult;
+    },
+    async findAnsweredSentMail(_scope, inbound) {
+      if (state.answeredLookupError) throw state.answeredLookupError;
+      state.answeredLookups.push(inbound);
+      return state.answeredSentMailId ? { sentMailId: state.answeredSentMailId } : undefined;
     },
   };
   const emailClassifier: EmailClassifier = {
@@ -635,6 +658,64 @@ describe('emailProcessor', () => {
 
     expect(response.batchItemFailures).toEqual([]);
     expect(state.inserted).toHaveLength(1);
+  });
+
+  it('stores an inbound mail with the sent mail it answers, asking by its In-Reply-To and its thread', async () => {
+    const { process, state } = createTestProcessor();
+    state.fetchResult = {
+      ...state.fetchResult,
+      raw: new Uint8Array(VENDOR_REPLY_RAW),
+      threadId: 'thread-rfq',
+    };
+    state.answeredSentMailId = '22222222-2222-4222-8222-222222222222';
+
+    const response = await process(sqsEvent(queueMessage));
+
+    expect(response.batchItemFailures).toEqual([]);
+    expect(state.answeredLookups).toEqual([
+      {
+        gmailThreadId: 'thread-rfq',
+        inReplyToMessageId: '<22222222-2222-4222-8222-222222222222@desk.com>',
+      },
+    ]);
+    expect(state.inserted[0]?.answersSentMailId).toBe('22222222-2222-4222-8222-222222222222');
+  });
+
+  it('stores inbound mail unlinked when we sent no RFQ mail it answers', async () => {
+    const { process, state } = createTestProcessor();
+
+    await process(sqsEvent(queueMessage));
+
+    expect(state.answeredLookups).toEqual([
+      { gmailThreadId: 'thread-1', inReplyToMessageId: undefined },
+    ]);
+    expect(state.inserted[0]?.answersSentMailId).toBeUndefined();
+  });
+
+  it('never looks up an answered mail for a SENT copy', async () => {
+    const { process, state } = createTestProcessor();
+    state.fetchResult = {
+      ...state.fetchResult,
+      raw: new Uint8Array(OUR_SENT_COPY_RAW),
+      labelIds: ['SENT'],
+    };
+    state.answeredSentMailId = 'must-not-be-used';
+
+    await process(sqsEvent(queueMessage));
+
+    expect(state.answeredLookups).toEqual([]);
+    expect(state.inserted[0]?.answersSentMailId).toBeUndefined();
+  });
+
+  it('stores the mail unlinked and acks the record when the answered lookup fails', async () => {
+    const { process, state } = createTestProcessor();
+    state.answeredLookupError = new Error('connection reset');
+
+    const response = await process(sqsEvent(queueMessage));
+
+    expect(response.batchItemFailures).toEqual([]);
+    expect(state.inserted).toHaveLength(1);
+    expect(state.inserted[0]?.answersSentMailId).toBeUndefined();
   });
 
   it('does not ask the model when a rule matched', async () => {

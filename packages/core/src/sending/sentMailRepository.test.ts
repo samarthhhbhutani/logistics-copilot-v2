@@ -54,3 +54,66 @@ describe('markSent', () => {
     expect(calls[0]?.where).toEqual({ id: 'sent-mail-1', ...scope, status: 'SENDING' });
   });
 });
+
+describe('findAnsweredSentMail', () => {
+  const inThread = { gmailThreadId: 'thread-9', inReplyToMessageId: undefined };
+
+  /** Answers sentMail.findMany with the given rows (already in createdAt order) and records the where clause. */
+  function stubFindMany(rows: { id: string; rfcMessageId: string }[]) {
+    const calls: Record<string, unknown>[] = [];
+    const prismaClient = {
+      sentMail: {
+        async findMany(args: Record<string, unknown>) {
+          calls.push(args);
+          return rows;
+        },
+      },
+    } as unknown as PrismaClient;
+    return { prismaClient, calls };
+  }
+
+  it('prefers the mail the In-Reply-To names over an earlier one in the thread', async () => {
+    const { prismaClient, calls } = stubFindMany([
+      { id: 'rfq-mail', rfcMessageId: '<rfq@desk.com>' },
+      { id: 'follow-up', rfcMessageId: '<follow-up@desk.com>' },
+    ]);
+    const result = await createPrismaSentMailRepository(prismaClient).findAnsweredSentMail(scope, {
+      gmailThreadId: 'thread-9',
+      inReplyToMessageId: '<follow-up@desk.com>',
+    });
+    expect(result).toEqual({ sentMailId: 'follow-up' });
+    expect(calls[0]?.where).toEqual({
+      ...scope,
+      kind: 'RFQ',
+      status: { not: 'FAILED' },
+      OR: [{ gmailThreadId: 'thread-9' }, { rfcMessageId: '<follow-up@desk.com>' }],
+    });
+  });
+
+  it('falls back to the earliest mail we sent in the thread when In-Reply-To matches none', async () => {
+    const { prismaClient, calls } = stubFindMany([
+      { id: 'rfq-mail', rfcMessageId: '<rfq@desk.com>' },
+      { id: 'follow-up', rfcMessageId: '<follow-up@desk.com>' },
+    ]);
+    const result = await createPrismaSentMailRepository(prismaClient).findAnsweredSentMail(
+      scope,
+      inThread,
+    );
+    expect(result).toEqual({ sentMailId: 'rfq-mail' });
+    expect(calls[0]?.where).toEqual({
+      ...scope,
+      kind: 'RFQ',
+      status: { not: 'FAILED' },
+      OR: [{ gmailThreadId: 'thread-9' }],
+    });
+  });
+
+  it('finds nothing when we sent no RFQ mail the message could answer (plain replies never qualify)', async () => {
+    const { prismaClient } = stubFindMany([]);
+    const result = await createPrismaSentMailRepository(prismaClient).findAnsweredSentMail(
+      scope,
+      inThread,
+    );
+    expect(result).toBeUndefined();
+  });
+});

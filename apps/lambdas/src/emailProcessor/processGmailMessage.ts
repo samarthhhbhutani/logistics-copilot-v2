@@ -3,6 +3,7 @@ import {
   extractNewContent,
   matchClassificationRule,
   parseRawEmail,
+  inReplyToMessageId,
   toGmailApiError,
 } from '@lc/core';
 import type {
@@ -198,6 +199,11 @@ export function createGmailMessageProcessor(
     for (const attachment of email.attachments) {
       storedAttachments.push(await attachmentStore.uploadAttachmentToS3(scope, attachment));
     }
+    // Before classifying: whether this answers an RFQ of ours is itself a classification input.
+    const answersSentMailId =
+      gmailLabel === 'inbox'
+        ? await findAnsweredSentMailId(scope, email, fetched.threadId, context)
+        : undefined;
     const classification =
       gmailLabel === 'inbox'
         ? await classifyInboundEmail(
@@ -227,6 +233,7 @@ export function createGmailMessageProcessor(
         bodyHtml: email.html,
         rawEmailS3Key,
         receivedAt,
+        answersSentMailId,
       },
       storedAttachments,
       classification,
@@ -237,6 +244,7 @@ export function createGmailMessageProcessor(
       sizeBytes: fetched.raw.byteLength,
       attachmentCount: storedAttachments.length,
       ...(inserted && classification ? toClassificationLogFields(classification) : {}),
+      ...(inserted && answersSentMailId ? { answersSentMailId } : {}),
     });
     if (inserted && gmailLabel === 'sent' && email.messageId) {
       await healSentMailLeftSending(
@@ -247,6 +255,33 @@ export function createGmailMessageProcessor(
       );
     }
     return 'done';
+  }
+
+  /**
+   * Inbound mail only: a SENT copy is ours and answers nothing. Which RFQ mail of ours this one replies
+   * to, by the Message-ID its In-Reply-To names or, failing that, by its Gmail thread (roadmap 5.1). Best
+   * effort like the heal below: the mail must be stored even when the lookup fails, so an error is
+   * logged and the row goes in unlinked.
+   */
+  async function findAnsweredSentMailId(
+    scope: MailboxScope,
+    email: ParsedEmail,
+    gmailThreadId: string,
+    context: Record<string, string>,
+  ): Promise<string | undefined> {
+    try {
+      const answered = await sentMailRepository.findAnsweredSentMail(scope, {
+        gmailThreadId,
+        inReplyToMessageId: inReplyToMessageId(email),
+      });
+      return answered?.sentMailId;
+    } catch (error) {
+      log('error', 'answered sent mail lookup failed, message stored unlinked', {
+        ...context,
+        detail: error instanceof Error ? error.message : String(error),
+      });
+      return undefined;
+    }
   }
 
   /**

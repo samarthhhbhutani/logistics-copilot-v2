@@ -51,6 +51,13 @@ export interface StaleSendingMail extends MailboxScope {
 }
 
 /** The write-ahead log of outbound mail. Every method is scoped to the session's mailbox and tenant, except the sweep. */
+/** What an inbound mail carries that can tie it to a mail we sent. */
+export interface InboundMailReferences {
+  gmailThreadId: string;
+  /** The In-Reply-To header as a bracketed Message-ID (see inReplyToMessageId); undefined when absent. */
+  inReplyToMessageId: string | undefined;
+}
+
 export interface SentMailRepository {
   createPending(
     scope: MailboxScope,
@@ -108,6 +115,19 @@ export interface SentMailRepository {
    * The one unscoped read, for the scheduled sweep; each row carries its own scope.
    */
   listStaleSending(olderThan: Date, limit: number): Promise<StaleSendingMail[]>;
+  /**
+   * The RFQ mail of ours an inbound message answers, for emails.answers_sent_mail_id. Only `rfq`
+   * mails qualify: the one consumer is the RFQ view listing each vendor's replies, and a customer
+   * answering a plain reply of ours has no reader. The mail whose Message-ID the inbound's
+   * In-Reply-To names wins, because that is the sender's own statement of what they replied to;
+   * otherwise the earliest RFQ mail we sent in the same Gmail thread, for clients that strip the
+   * header. `failed` rows never went out, so nothing can answer them. Undefined when we sent no RFQ
+   * mail the message could answer.
+   */
+  findAnsweredSentMail(
+    scope: MailboxScope,
+    inbound: InboundMailReferences,
+  ): Promise<{ sentMailId: string } | undefined>;
 }
 
 const SENT_MAIL_SELECT = {
@@ -288,6 +308,28 @@ export function createPrismaSentMailRepository(prismaClient: PrismaClient): Sent
 
     markFailedByRfcMessageId(scope, rfcMessageId, errorCode) {
       return moveTo(scope, { rfcMessageId }, { from: 'sending', to: 'failed' }, { errorCode });
+    },
+
+    async findAnsweredSentMail({ mailboxId, tenantId }, { gmailThreadId, inReplyToMessageId }) {
+      const candidates = await prismaClient.sentMail.findMany({
+        where: {
+          mailboxId,
+          tenantId,
+          kind: 'RFQ',
+          status: { not: 'FAILED' },
+          OR: [
+            { gmailThreadId },
+            ...(inReplyToMessageId ? [{ rfcMessageId: inReplyToMessageId }] : []),
+          ],
+        },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        select: { id: true, rfcMessageId: true },
+      });
+      const repliedTo = candidates.find(
+        (candidate) => candidate.rfcMessageId === inReplyToMessageId,
+      );
+      const answered = repliedTo ?? candidates[0];
+      return answered ? { sentMailId: answered.id } : undefined;
     },
 
     async listStaleSending(olderThan, limit) {
