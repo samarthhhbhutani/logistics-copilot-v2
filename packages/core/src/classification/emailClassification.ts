@@ -1,9 +1,13 @@
 import type { ClassificationLabel } from './classificationLabel.js';
 
-/** The thread decided: it already holds a customer_request, so this later inbound mail is the customer replying. */
+/**
+ * What the mailbox already knows decided, no rule or model: the thread holds a customer_request, so
+ * this later inbound mail is the customer replying; or the mail answers an RFQ mail of ours
+ * (emails.answers_sent_mail_id) and no model was there to say whether it quotes, so vendor_reply.
+ */
 export interface ThreadClassification {
   source: 'thread';
-  label: 'customer_reply';
+  label: 'customer_reply' | 'vendor_reply';
 }
 
 /** A tenant rule decided; the rule is kept so the row explains itself. */
