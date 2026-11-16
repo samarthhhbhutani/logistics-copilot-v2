@@ -1123,6 +1123,10 @@ a.emailRow:focus-visible {
 .rfqForm .eyebrow {
   margin: 0;
 }
+.rfqSourceNote {
+  margin: -6px 0 4px;
+  font-size: 0.87rem;
+}
 .rfqSuggestionStatus {
   display: flex;
   align-items: center;
