@@ -12,6 +12,7 @@ import type {
   EmailClassification,
   EmailClassifier,
   EmailIngestRepository,
+  EmailToClassify,
   EncryptionUtil,
   GmailLabel,
   GmailMessages,
@@ -209,6 +210,7 @@ export function createGmailMessageProcessor(
         ? await classifyInboundEmail(
             email,
             threadContext,
+            answersSentMailId,
             tenantId,
             isLastDelivery(record),
             context,
@@ -318,21 +320,24 @@ export function createGmailMessageProcessor(
   }
 
   /**
-   * Inbound mail only; what the desk sent is never a customer request. The thread decides first:
-   * a later inbound mail in a thread that already holds a customer_request is the customer
-   * replying, whatever a sender rule or the model would say. Then a tenant rule; the model is
-   * asked only when neither applied and a key is configured. retry: the provider was
-   * unavailable, so the record goes back to the queue, except on its last delivery, when the mail
-   * is stored unclassified rather than dead-lettered. Undefined: stored unclassified, which a
-   * rejected request also ends in, because a broken prompt must never lose mail.
+   * Inbound mail only; what the desk sent is never a customer request. What the mailbox already
+   * knows decides first: a mail answering an RFQ of ours is the vendor replying (see
+   * classifyVendorReply), and a later inbound mail in a thread that already holds a
+   * customer_request is the customer replying, whatever a sender rule or the model would say. Then
+   * a tenant rule; the model is asked only when none applied and a key is configured. retry: the
+   * provider was unavailable, so the record goes back to the queue, except on its last delivery,
+   * when the mail is stored unclassified rather than dead-lettered. Undefined: stored unclassified,
+   * which a rejected request also ends in, because a broken prompt must never lose mail.
    */
   async function classifyInboundEmail(
     email: ParsedEmail,
     threadContext: ThreadContext,
+    answersSentMailId: string | undefined,
     tenantId: string,
     lastDelivery: boolean,
     context: Record<string, string>,
   ): Promise<EmailClassification | 'retry' | undefined> {
+    if (answersSentMailId) return classifyVendorReply(email, lastDelivery, context);
     if (threadContext.currentLabels.includes(CUSTOMER_THREAD_LABEL)) {
       return { source: 'thread', label: 'customer_reply' };
     }
@@ -343,13 +348,7 @@ export function createGmailMessageProcessor(
     );
     if (ruleMatch) return { source: 'rule', label: ruleMatch.label, ruleId: ruleMatch.ruleId };
     if (!emailClassifier) return undefined;
-    const result = await emailClassifier.classify({
-      senderName: email.from?.name ?? '',
-      senderEmail,
-      subject: email.subject,
-      bodyText: email.text,
-      attachments: email.attachments,
-    });
+    const result = await emailClassifier.classify(toEmailToClassify(email));
     switch (result.outcome) {
       case 'classified':
         return result.classification;
@@ -373,6 +372,60 @@ export function createGmailMessageProcessor(
         });
         return undefined;
     }
+  }
+
+  /**
+   * The link settles who is writing; the model only says whether a price is in it (vendor_quote)
+   * or not (vendor_reply). Without a key, or when the model rejects the request, vendor_reply is
+   * still right enough to store: it never falls to unclassified or to the general labels. A
+   * transient provider failure is retried like any classification, with the same last-delivery
+   * fallback, so a quote is not mislabelled for a hiccup.
+   */
+  async function classifyVendorReply(
+    email: ParsedEmail,
+    lastDelivery: boolean,
+    context: Record<string, string>,
+  ): Promise<EmailClassification | 'retry'> {
+    const vendorReply: EmailClassification = { source: 'thread', label: 'vendor_reply' };
+    if (!emailClassifier) return vendorReply;
+    const result = await emailClassifier.classifyVendorReply(toEmailToClassify(email));
+    switch (result.outcome) {
+      case 'classified':
+        return result.classification;
+      case 'retry':
+        if (lastDelivery) {
+          log(
+            'error',
+            'vendor reply classifier unavailable on the last delivery, stored as vendor_reply',
+            {
+              ...context,
+              detail: result.detail,
+            },
+          );
+          return vendorReply;
+        }
+        log('warn', 'vendor reply classifier unavailable, record returned to the queue', {
+          ...context,
+          detail: result.detail,
+        });
+        return 'retry';
+      case 'failed':
+        log('error', 'vendor reply classification failed, stored as vendor_reply', {
+          ...context,
+          detail: result.detail,
+        });
+        return vendorReply;
+    }
+  }
+
+  function toEmailToClassify(email: ParsedEmail): EmailToClassify {
+    return {
+      senderName: email.from?.name ?? '',
+      senderEmail: email.from?.address,
+      subject: email.subject,
+      bodyText: email.text,
+      attachments: email.attachments,
+    };
   }
 
   return async (event) => {

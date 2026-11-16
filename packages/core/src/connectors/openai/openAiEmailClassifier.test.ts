@@ -209,6 +209,58 @@ describe('createOpenAiEmailClassifier', () => {
     expect(labelSchema.enum).toEqual(['general', 'customer_request', 'rate_card']);
   });
 
+  it('classifyVendorReply asks the quote question only, offering just the two vendor labels', async () => {
+    const { client, requests } = fakeOpenAi({
+      output_parsed: { label: 'vendor_quote', confidence: 0.88, reason: 'USD 1450 per 40ft' },
+      model: 'gpt-test-2026-01-01',
+    });
+    const classifier = createOpenAiEmailClassifier({
+      openAiClient: client,
+      model: 'gpt-test',
+      includeAttachments: false,
+    });
+
+    const result = await classifier.classifyVendorReply(email);
+
+    expect(result).toEqual({
+      outcome: 'classified',
+      classification: {
+        source: 'llm',
+        label: 'vendor_quote',
+        confidence: 0.88,
+        llmModel: 'gpt-test-2026-01-01',
+        promptVersion: 'classify-vendor-reply-v1',
+      },
+    });
+    const request = requests[0] as {
+      instructions: string;
+      text: { format: { name: string; schema: { properties: { label: { enum: string[] } } } } };
+    };
+    expect(request.instructions).toContain('does the reply contain a price');
+    expect(request.text.format.name).toBe('vendor_reply_classification');
+    expect(request.text.format.schema.properties.label.enum).toEqual([
+      'vendor_quote',
+      'vendor_reply',
+    ]);
+  });
+
+  it('classifyVendorReply maps provider failures like classify does', async () => {
+    const classifier = (behaviour: Error) =>
+      createOpenAiEmailClassifier({
+        openAiClient: fakeOpenAi(behaviour).client,
+        model: 'gpt-test',
+        includeAttachments: false,
+      });
+    expect(await classifier(apiError(503)).classifyVendorReply(email)).toMatchObject({
+      outcome: 'retry',
+      detail: expect.stringContaining('503'),
+    });
+    expect(await classifier(apiError(400)).classifyVendorReply(email)).toMatchObject({
+      outcome: 'failed',
+      detail: expect.stringContaining('400'),
+    });
+  });
+
   it('attaches files to the request when the switch is on', async () => {
     const { client, requests } = fakeOpenAi({
       output_parsed: { label: 'general', confidence: 0.5, reason: '' },

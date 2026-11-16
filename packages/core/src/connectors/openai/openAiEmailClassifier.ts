@@ -12,6 +12,10 @@ import {
   CLASSIFY_EMAIL_PROMPT_VERSION,
   CLASSIFY_EMAIL_SYSTEM_PROMPT,
 } from '../../classification/prompts/classifyEmailPromptV1.js';
+import {
+  CLASSIFY_VENDOR_REPLY_PROMPT_VERSION,
+  CLASSIFY_VENDOR_REPLY_SYSTEM_PROMPT,
+} from '../../classification/prompts/classifyVendorReplyPromptV1.js';
 import { runInsideSpan } from '../../telemetry/runInsideSpan.js';
 import type { ParsedAttachment } from '../../utils/mime/parsedEmail.js';
 
@@ -33,7 +37,10 @@ export type ClassifierOutcome =
   { outcome: 'classified'; classification: LlmClassification } | LlmFailureOutcome;
 
 export interface EmailClassifier {
+  /** Any inbound mail: customer_request, rate_card or general. */
   classify(email: EmailToClassify): Promise<ClassifierOutcome>;
+  /** A mail known to answer an RFQ of ours: vendor_quote when it carries a price, else vendor_reply. */
+  classifyVendorReply(email: EmailToClassify): Promise<ClassifierOutcome>;
 }
 
 /** Per-request ceiling; SQS owns retries, so the SDK must not retry on its own. */
@@ -63,11 +70,47 @@ export const MAX_ATTACHMENT_BASE64_CHARACTERS_SENT = 4 * 1024 * 1024;
  */
 const MAX_OUTPUT_TOKENS = 1000;
 /** Structured output enforces type and enum but not string length; a cap would only make a valid label unparseable. */
-const classificationOutputSchema = z.object({
+const generalClassificationAnswerSchema = z.object({
   label: z.enum(CLASSIFICATION_LABELS).exclude([...DERIVED_ONLY_LABELS]),
   confidence: z.number().min(0).max(1),
   reason: z.string().describe('One short sentence.'),
 });
+const vendorReplyAnswerSchema = z.object({
+  label: z.enum(['vendor_quote', 'vendor_reply']),
+  confidence: z.number().min(0).max(1),
+  reason: z.string().describe('One short sentence.'),
+});
+type ClassificationAnswerSchema =
+  typeof generalClassificationAnswerSchema | typeof vendorReplyAnswerSchema;
+
+/**
+ * One question the model is asked about a mail: the system prompt that poses it, the answers it may
+ * give (the structured-output schema and its name), the version stored with the label, and the
+ * telemetry span the call runs in.
+ */
+interface ClassificationTask {
+  systemPrompt: string;
+  promptVersion: string;
+  answerSchema: ClassificationAnswerSchema;
+  answerSchemaName: string;
+  telemetrySpanName: string;
+}
+/** Any inbound mail: customer_request, rate_card or general. */
+const GENERAL_CLASSIFICATION_TASK: ClassificationTask = {
+  systemPrompt: CLASSIFY_EMAIL_SYSTEM_PROMPT,
+  promptVersion: CLASSIFY_EMAIL_PROMPT_VERSION,
+  answerSchema: generalClassificationAnswerSchema,
+  answerSchemaName: 'email_classification',
+  telemetrySpanName: 'openai.classifyEmail',
+};
+/** A mail known to answer an RFQ of ours: vendor_quote or vendor_reply. */
+const VENDOR_REPLY_CLASSIFICATION_TASK: ClassificationTask = {
+  systemPrompt: CLASSIFY_VENDOR_REPLY_SYSTEM_PROMPT,
+  promptVersion: CLASSIFY_VENDOR_REPLY_PROMPT_VERSION,
+  answerSchema: vendorReplyAnswerSchema,
+  answerSchemaName: 'vendor_reply_classification',
+  telemetrySpanName: 'openai.classifyVendorReply',
+};
 
 export function createOpenAiClient(apiKey: string): OpenAI {
   return new OpenAI({ apiKey, maxRetries: 0, timeout: CLASSIFY_REQUEST_TIMEOUT_MS });
@@ -85,39 +128,45 @@ export function createOpenAiEmailClassifier({
   model,
   includeAttachments,
 }: OpenAiEmailClassifierOptions): EmailClassifier {
+  async function runClassificationTask(
+    task: ClassificationTask,
+    email: EmailToClassify,
+  ): Promise<ClassifierOutcome> {
+    const content = buildUserContent(email, includeAttachments);
+    try {
+      const response = await runInsideSpan(
+        task.telemetrySpanName,
+        () =>
+          openAiClient.responses.parse({
+            model,
+            instructions: task.systemPrompt,
+            input: [{ role: 'user', content }],
+            text: { format: zodTextFormat(task.answerSchema, task.answerSchemaName) },
+            max_output_tokens: MAX_OUTPUT_TOKENS,
+            store: false,
+          }),
+        { 'llm.model': model, 'llm.prompt_version': task.promptVersion },
+      );
+      const parsed = response.output_parsed;
+      if (!parsed) return { outcome: 'failed', detail: describeMissingOutput(response) };
+      return {
+        outcome: 'classified',
+        classification: {
+          source: 'llm',
+          label: parsed.label,
+          confidence: parsed.confidence,
+          llmModel: response.model || model,
+          promptVersion: task.promptVersion,
+        },
+      };
+    } catch (error) {
+      return toLlmFailureOutcome(error);
+    }
+  }
+
   return {
-    async classify(email) {
-      const content = buildUserContent(email, includeAttachments);
-      try {
-        const response = await runInsideSpan(
-          'openai.classifyEmail',
-          () =>
-            openAiClient.responses.parse({
-              model,
-              instructions: CLASSIFY_EMAIL_SYSTEM_PROMPT,
-              input: [{ role: 'user', content }],
-              text: { format: zodTextFormat(classificationOutputSchema, 'email_classification') },
-              max_output_tokens: MAX_OUTPUT_TOKENS,
-              store: false,
-            }),
-          { 'llm.model': model, 'llm.prompt_version': CLASSIFY_EMAIL_PROMPT_VERSION },
-        );
-        const parsed = response.output_parsed;
-        if (!parsed) return { outcome: 'failed', detail: describeMissingOutput(response) };
-        return {
-          outcome: 'classified',
-          classification: {
-            source: 'llm',
-            label: parsed.label,
-            confidence: parsed.confidence,
-            llmModel: response.model || model,
-            promptVersion: CLASSIFY_EMAIL_PROMPT_VERSION,
-          },
-        };
-      } catch (error) {
-        return toLlmFailureOutcome(error);
-      }
-    },
+    classify: (email) => runClassificationTask(GENERAL_CLASSIFICATION_TASK, email),
+    classifyVendorReply: (email) => runClassificationTask(VENDOR_REPLY_CLASSIFICATION_TASK, email),
   };
 }
 

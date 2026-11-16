@@ -39,6 +39,17 @@ const LLM_CLASSIFIED: ClassifierOutcome = {
   },
 };
 
+const VENDOR_QUOTE_CLASSIFIED: ClassifierOutcome = {
+  outcome: 'classified',
+  classification: {
+    source: 'llm',
+    label: 'vendor_quote',
+    confidence: 0.88,
+    llmModel: 'gpt-test',
+    promptVersion: 'classify-vendor-reply-v1',
+  },
+};
+
 const INBOUND_RAW = Buffer.from(
   [
     'From: Ravi Kumar <Ravi@Acme.com>',
@@ -199,6 +210,8 @@ function createTestProcessor(
     ruleLookups: [] as string[],
     classifyCalls: [] as EmailToClassify[],
     classifyOutcome: LLM_CLASSIFIED as ClassifierOutcome,
+    vendorReplyClassifyCalls: [] as EmailToClassify[],
+    vendorReplyClassifyOutcome: VENDOR_QUOTE_CLASSIFIED as ClassifierOutcome,
     attachmentPuts: [] as { key: string; bytes: number }[],
     attachmentPutError: undefined as Error | undefined,
     healCalls: [] as { rfcMessageId: string; gmailMessageId: string; gmailThreadId: string }[],
@@ -306,6 +319,10 @@ function createTestProcessor(
     async classify(email) {
       state.classifyCalls.push(email);
       return state.classifyOutcome;
+    },
+    async classifyVendorReply(email) {
+      state.vendorReplyClassifyCalls.push(email);
+      return state.vendorReplyClassifyOutcome;
     },
   };
   const classificationRuleRepository: ClassificationRuleRepository = {
@@ -679,6 +696,73 @@ describe('emailProcessor', () => {
       },
     ]);
     expect(state.inserted[0]?.answersSentMailId).toBe('22222222-2222-4222-8222-222222222222');
+  });
+
+  it('classifies a linked mail with the vendor-reply prompt, never the general one, rules or the thread', async () => {
+    const { process, state } = createTestProcessor({ withClassifier: true });
+    state.fetchResult = {
+      ...state.fetchResult,
+      raw: new Uint8Array(VENDOR_REPLY_RAW),
+      threadId: 'thread-rfq',
+    };
+    state.storeThread('thread-rfq', ['customer_request']);
+    state.classificationRules = [
+      { id: 'rule-sea', priority: 1, senderPattern: 'sea.com', label: 'general', ...ruleState },
+    ];
+    state.answeredSentMailId = '22222222-2222-4222-8222-222222222222';
+
+    await process(sqsEvent(queueMessage));
+
+    expect(state.vendorReplyClassifyCalls).toEqual([
+      expect.objectContaining({
+        senderEmail: 'quotes@sea.com',
+        subject: 'Re: RFQ Mumbai to Rotterdam',
+        bodyText: 'USD 1450 per 40ft, valid 7 days.',
+      }),
+    ]);
+    expect(state.classifyCalls).toEqual([]);
+    expect(state.ruleLookups).toEqual([]);
+    expect(state.insertedClassifications).toEqual([VENDOR_QUOTE_CLASSIFIED.classification]);
+  });
+
+  it('labels a linked mail vendor_reply from the link alone when no classifier is configured', async () => {
+    const { process, state } = createTestProcessor();
+    state.answeredSentMailId = '22222222-2222-4222-8222-222222222222';
+
+    await process(sqsEvent(queueMessage));
+
+    expect(state.insertedClassifications).toEqual([{ source: 'thread', label: 'vendor_reply' }]);
+  });
+
+  it('labels a linked mail vendor_reply when the vendor-reply classifier rejects the request', async () => {
+    const { process, state } = createTestProcessor({ withClassifier: true });
+    state.answeredSentMailId = '22222222-2222-4222-8222-222222222222';
+    state.vendorReplyClassifyOutcome = { outcome: 'failed', detail: '400 invalid schema' };
+
+    await process(sqsEvent(queueMessage));
+
+    expect(state.insertedClassifications).toEqual([{ source: 'thread', label: 'vendor_reply' }]);
+  });
+
+  it('returns a linked mail to the queue when the vendor-reply classifier is unavailable, storing vendor_reply on the last delivery', async () => {
+    const firstDelivery = createTestProcessor({ withClassifier: true });
+    firstDelivery.state.answeredSentMailId = '22222222-2222-4222-8222-222222222222';
+    firstDelivery.state.vendorReplyClassifyOutcome = { outcome: 'retry', detail: '503 overloaded' };
+    const response = await firstDelivery.process(sqsEvent(queueMessage));
+    expect(response.batchItemFailures).toEqual([{ itemIdentifier: 'sqs-1' }]);
+    expect(firstDelivery.state.inserted).toEqual([]);
+
+    const lastDelivery = createTestProcessor({ withClassifier: true });
+    lastDelivery.state.answeredSentMailId = '22222222-2222-4222-8222-222222222222';
+    lastDelivery.state.vendorReplyClassifyOutcome = { outcome: 'retry', detail: '503 overloaded' };
+    const lastDeliveryEvent = sqsEvent(queueMessage);
+    lastDeliveryEvent.Records[0]!.attributes = {
+      ApproximateReceiveCount: '3',
+    } as SQSRecord['attributes'];
+    await lastDelivery.process(lastDeliveryEvent);
+    expect(lastDelivery.state.insertedClassifications).toEqual([
+      { source: 'thread', label: 'vendor_reply' },
+    ]);
   });
 
   it('stores inbound mail unlinked when we sent no RFQ mail it answers', async () => {
