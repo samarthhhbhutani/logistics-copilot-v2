@@ -57,11 +57,12 @@ function draftsFromResponse(response: DraftRfqMailsResponse): RfqMailDrafts {
 /**
  * "Request vendor quotes" on the opened inbox mail, whatever its classification (a misclassified
  * request must still be quotable): opens the RFQ details form prefilled by the model's reading of
- * that message, for the operator to correct, with the desk's vendors to tick underneath. "Write
- * vendor mails" drafts one mail per vendor category for the operator to edit on the same screen,
- * and "Send" mails every ticked contact their category's text, one Gmail thread each. The RFQ id
- * is minted here when the panel opens, so the send and every retry of it are the same PUT; once
- * sent, the form freezes and the per-contact outcomes take over.
+ * that one message (not the conversation), for the operator to correct, with the desk's vendors to
+ * tick underneath. The conversation view shows every message, so the form names the one it read.
+ * "Write vendor mails" drafts one mail per vendor category for the operator to edit on the same
+ * screen, and "Send" mails every ticked contact their category's text, one Gmail thread each. The
+ * RFQ id is minted here when the panel opens, so the send and every retry of it are the same PUT;
+ * once sent, the form freezes and the per-contact outcomes take over.
  */
 export function RfqPanel({
   email,
@@ -295,6 +296,17 @@ export function RfqPanel({
           }}
         >
           <p className="eyebrow">Shipment details</p>
+          <p className="muted rfqSourceNote">
+            Read from the message you opened:{' '}
+            {email.sender.name || email.sender.email || 'unknown sender'},{' '}
+            <time dateTime={email.receivedAt}>
+              {new Date(email.receivedAt).toLocaleString(undefined, {
+                dateStyle: 'medium',
+                timeStyle: 'short',
+              })}
+            </time>
+            . Open another message of the conversation to read that one instead.
+          </p>
           {suggesting && (
             <p className="rfqSuggestionStatus" role="status">
               <RefreshCw size={16} aria-hidden="true" className="spinning" />
