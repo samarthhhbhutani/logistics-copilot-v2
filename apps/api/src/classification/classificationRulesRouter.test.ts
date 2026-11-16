@@ -63,7 +63,7 @@ describe('POST /v1/mailbox/classification-rules', () => {
     }
   });
 
-  it('rejects an unknown label, the thread-derived customer_reply, and a non-integer priority', async () => {
+  it('rejects an unknown label, the derived-only labels, and a non-integer priority', async () => {
     const testApp = createTestApp();
     const { cookie } = await signedInMailbox(testApp);
 
@@ -75,6 +75,10 @@ describe('POST /v1/mailbox/classification-rules', () => {
       .post(rulesPath)
       .set('Cookie', cookie)
       .send({ senderPattern: 'acme.com', label: 'customer_reply' });
+    const vendorLabel = await request(testApp.app)
+      .post(rulesPath)
+      .set('Cookie', cookie)
+      .send({ senderPattern: 'sea.com', label: 'vendor_quote' });
     const badPriority = await request(testApp.app)
       .post(rulesPath)
       .set('Cookie', cookie)
@@ -84,6 +88,8 @@ describe('POST /v1/mailbox/classification-rules', () => {
     expect(badLabel.body.error).toMatch(/^invalid_body: label/);
     expect(derivedLabel.status).toBe(400);
     expect(derivedLabel.body.error).toMatch(/^invalid_body: label/);
+    expect(vendorLabel.status).toBe(400);
+    expect(vendorLabel.body.error).toMatch(/^invalid_body: label/);
     expect(badPriority.status).toBe(400);
     expect(badPriority.body.error).toMatch(/^invalid_body: priority/);
   });

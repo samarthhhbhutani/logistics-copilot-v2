@@ -4,7 +4,7 @@ import { zodTextFormat } from 'openai/helpers/zod';
 import { z } from 'zod';
 import {
   CLASSIFICATION_LABELS,
-  THREAD_DERIVED_LABEL,
+  DERIVED_ONLY_LABELS,
 } from '../../classification/classificationLabel.js';
 import type { LlmClassification } from '../../classification/emailClassification.js';
 import {
@@ -64,7 +64,7 @@ export const MAX_ATTACHMENT_BASE64_CHARACTERS_SENT = 4 * 1024 * 1024;
 const MAX_OUTPUT_TOKENS = 1000;
 /** Structured output enforces type and enum but not string length; a cap would only make a valid label unparseable. */
 const classificationOutputSchema = z.object({
-  label: z.enum(CLASSIFICATION_LABELS).exclude([THREAD_DERIVED_LABEL]),
+  label: z.enum(CLASSIFICATION_LABELS).exclude([...DERIVED_ONLY_LABELS]),
   confidence: z.number().min(0).max(1),
   reason: z.string().describe('One short sentence.'),
 });

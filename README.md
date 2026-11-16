@@ -160,15 +160,17 @@ the LLM for classification (token cost); when that changes it will be a config s
 
 Every inbound mail gets a label: `general`, `customer_request` (a shipper asking the desk to quote for
 or move a new shipment, the RFQ entry point), `customer_reply` (a later inbound mail in a thread that
-already holds a `customer_request`) or `rate_card` (an unsolicited vendor price list). Labels live in `classifications`,
+already holds a `customer_request`), `rate_card` (an unsolicited vendor price list), `vendor_reply` or
+`vendor_quote` (a vendor answering an RFQ mail we sent, without or with a price; follows from
+`emails.answers_sent_mail_id`, assignment by the processor lands with the next change). Labels live in `classifications`,
 append-only: a correction is a new row with `source = user`, and the current label is the newest row,
 so who said what is kept. `sent` mail is never classified.
 
 The thread decides first. When the mailbox already holds an earlier message of the same Gmail thread
 whose current label is `customer_request`, the new inbound mail is `customer_reply` with
 `source = thread`, before any rule or model runs: a follow-up in a quote conversation is never a fresh
-request, whatever the sender's rule says. `customer_reply` is derived only; rules cannot assign it and
-the model is not offered it. Only the request counts, not an earlier derived reply, so relabelling the
+request, whatever the sender's rule says. `customer_reply` and the two vendor labels are derived only; rules
+cannot assign them and the general classifier is not offered them. Only the request counts, not an earlier derived reply, so relabelling the
 request stops the chain. "Earlier" means `received_at` before the new mail's own date: Gmail can
 deliver two messages of a thread out of order, and the older one must not inherit from the newer.
 Known gap: two mails of one thread processed at the same moment both see a thread without a
@@ -207,7 +209,7 @@ tenant has at most one rule per pattern (409 `rule_exists`) and at most 200 rule
 | `POST /v1/mailbox/classification-rules` | `{ senderPattern, label, priority? }` (priority defaults to 100); 201 with the stored, normalised rule |
 
 Operators correct a label with `POST /v1/mailbox/emails/:emailId/classifications` (table under
-Reading mail). Any of the four labels is allowed, including `customer_reply`: the derived-only
+Reading mail). Any label is allowed, the derived-only ones included: that
 restriction is on rules and the model, not on people. The row is appended even when the label is
 unchanged, because a confirmation is worth recording. The effect on the thread is forward only: relabelling a mail to `customer_request` makes later inbound mails in
 that thread derive `customer_reply`, relabelling the request to anything else stops the chain, and

@@ -200,7 +200,7 @@ describe('createOpenAiEmailClassifier', () => {
     expect(requests[0]).toMatchObject({ model: 'gpt-test', store: false, max_output_tokens: 1000 });
     const input = (requests[0] as { input: { content: unknown[] }[] }).input;
     expect(input[0]?.content).toHaveLength(1);
-    // customer_reply is derived from the thread, so the model is never offered it.
+    // customer_reply follows from the thread and the vendor labels from the RFQ link; the model is never offered them.
     const labelSchema = (
       requests[0] as {
         text: { format: { schema: { properties: { label: { enum: string[] } } } } };

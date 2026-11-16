@@ -48,27 +48,31 @@ describe('listEmailsQuerySchema', () => {
 });
 
 describe('listEmailsResponseSchema', () => {
-  it.each(['general', 'customer_request', 'customer_reply', 'rate_card'])(
-    'preserves current classification %s in a list row',
-    (label) => {
-      const page = {
-        ...scope,
-        nextCursor: null,
-        emails: [
-          {
-            ...email,
-            classification: {
-              label,
-              source: 'llm',
-              confidence: 0.93,
-              classifiedAt: '2026-11-09T13:00:00.000Z',
-            },
+  it.each([
+    'general',
+    'customer_request',
+    'customer_reply',
+    'rate_card',
+    'vendor_reply',
+    'vendor_quote',
+  ])('preserves current classification %s in a list row', (label) => {
+    const page = {
+      ...scope,
+      nextCursor: null,
+      emails: [
+        {
+          ...email,
+          classification: {
+            label,
+            source: 'llm',
+            confidence: 0.93,
+            classifiedAt: '2026-11-09T13:00:00.000Z',
           },
-        ],
-      };
-      expect(listEmailsResponseSchema.parse(page)).toEqual(page);
-    },
-  );
+        },
+      ],
+    };
+    expect(listEmailsResponseSchema.parse(page)).toEqual(page);
+  });
 
   it('accepts a page with a next cursor', () => {
     const page = { ...scope, emails: [email], nextCursor: 'opaque' };
