@@ -5,6 +5,8 @@ export const classificationLabelTitles: Record<ClassificationLabel, string> = {
   customer_request: 'Customer request',
   customer_reply: 'Customer reply',
   rate_card: 'Rate card',
+  vendor_reply: 'Vendor reply',
+  vendor_quote: 'Vendor quote',
 };
 
 export function ClassificationBadge({ label }: { label: ClassificationLabel }) {

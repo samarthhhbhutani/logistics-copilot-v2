@@ -6,6 +6,8 @@ export const classificationLabelSchema = z.enum([
   'customer_request',
   'customer_reply',
   'rate_card',
+  'vendor_reply',
+  'vendor_quote',
 ]);
 export type ClassificationLabel = z.infer<typeof classificationLabelSchema>;
 export const classificationSourceSchema = z.enum(['thread', 'rule', 'llm', 'user']);
@@ -36,8 +38,8 @@ export const senderPatternSchema = z
 /** POST /v1/mailbox/classification-rules. Lower priority value is checked first. */
 export const createClassificationRuleBodySchema = z.object({
   senderPattern: senderPatternSchema,
-  /** customer_reply is derived from the thread and cannot be declared by a rule. */
-  label: classificationLabelSchema.exclude(['customer_reply']),
+  /** customer_reply follows from the thread and the vendor labels from the RFQ link; a rule cannot declare them. */
+  label: classificationLabelSchema.exclude(['customer_reply', 'vendor_reply', 'vendor_quote']),
   priority: z.number().int().min(0).max(10_000).default(DEFAULT_CLASSIFICATION_RULE_PRIORITY),
 });
 export type CreateClassificationRuleBody = z.input<typeof createClassificationRuleBodySchema>;

@@ -1003,6 +1003,14 @@ a.emailRow:focus-visible {
   background: #f4e9cf;
   color: #68501b;
 }
+.classification_vendor_reply {
+  background: #ece4f3;
+  color: #4f3a69;
+}
+.classification_vendor_quote {
+  background: #d9efe9;
+  color: #1f5c4a;
+}
 .classification_general {
   background: #e9ece5;
   color: #475649;

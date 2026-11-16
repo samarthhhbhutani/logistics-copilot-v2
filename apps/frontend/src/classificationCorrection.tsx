@@ -21,6 +21,8 @@ const classificationLabels: ClassificationLabel[] = [
   'customer_request',
   'customer_reply',
   'rate_card',
+  'vendor_reply',
+  'vendor_quote',
   'general',
 ];
 

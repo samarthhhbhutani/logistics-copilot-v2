@@ -6,7 +6,14 @@ import AxeBuilder from '@axe-core/playwright';
 // So every writing test owns one otherwise-unused "Shipment update N" mail and resets it through
 // the real API first; the RFQ thread other specs assert on is only ever read here.
 const rfqSubject = 'RFQ: Mumbai to Rotterdam · 2 × 40ft';
-const labelTitles = ['General', 'Customer request', 'Customer reply', 'Rate card'];
+const labelTitles = [
+  'General',
+  'Customer request',
+  'Customer reply',
+  'Rate card',
+  'Vendor reply',
+  'Vendor quote',
+];
 const unknownSaveWarning =
   'We could not confirm whether the classification was saved. Refresh the conversation before trying again.';
 
@@ -226,7 +233,14 @@ test('every label can be saved and each save updates the badge and source', asyn
   await openCorrectionForm(message);
   await expect(confirmButton(message)).toBeVisible();
   await cancelButton(message).click();
-  for (const title of ['Customer request', 'Customer reply', 'Rate card', 'General']) {
+  for (const title of [
+    'Customer request',
+    'Customer reply',
+    'Rate card',
+    'Vendor reply',
+    'Vendor quote',
+    'General',
+  ]) {
     await openCorrectionForm(message);
     await classificationSelect(message).selectOption({ label: title });
     await saveButton(message).click();
@@ -239,6 +253,8 @@ test('every label can be saved and each save updates the badge and source', asyn
     'customer_request',
     'customer_reply',
     'rate_card',
+    'vendor_reply',
+    'vendor_quote',
     'general',
   ]);
 });
