@@ -3,7 +3,6 @@ import {
   currentClassificationSchema,
   draftRfqMailsResponseSchema,
   emailDetailSchema,
-  getRfqResponseSchema,
   listAttachmentsResponseSchema,
   listVendorsResponseSchema,
   threadResponseSchema,
@@ -11,14 +10,12 @@ import {
   listEmailsResponseSchema,
   mailboxResponseSchema,
   rfqSuggestionResponseSchema,
-  sendRfqResponseSchema,
   sessionResponseSchema,
 } from '@lc/contract';
 import type {
   ClassificationLabel,
   DraftRfqMailsBody,
   GmailLabel,
-  SendRfqBody,
   SessionResponse,
 } from '@lc/contract';
 import { readNetworkResponse, requestWithRetry } from './frontendRequest.js';
@@ -308,35 +305,6 @@ export const frontendApi = {
     requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
     return drafts;
   },
-  /**
-   * Sends one mail per ticked contact. `rfqId` is minted by the caller (crypto.randomUUID) and is the
-   * idempotency key: the same PUT again is the retry, sending only what is still pending or failed.
-   * Never replayed by the transport: a send that did not answer is retried by the operator.
-   */
-  async sendRfq(session: SessionResponse, rfqId: string, body: SendRfqBody, signal?: AbortSignal) {
-    const result = await requestMailJson(
-      session,
-      `/mailbox/rfqs/${encodeURIComponent(rfqId)}/send`,
-      sendRfqResponseSchema,
-      signal,
-      { method: 'PUT', body: JSON.stringify(body) },
-    );
-    if (result.rfq.id !== rfqId) throw new FrontendApiError(502, 'invalid_response');
-    requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
-    return result;
-  },
-  /** The RFQ and its mails as they stand now; polled while a mail is still `sending`. */
-  async rfq(session: SessionResponse, rfqId: string, signal?: AbortSignal) {
-    const result = await requestMailJson(
-      session,
-      `/mailbox/rfqs/${encodeURIComponent(rfqId)}`,
-      getRfqResponseSchema,
-      signal,
-    );
-    if (result.rfq.id !== rfqId) throw new FrontendApiError(502, 'invalid_response');
-    requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
-    return result;
-  },
   connect(signal?: AbortSignal) {
     return requestJson(
       '/mailbox/gmail/connect',
@@ -375,14 +343,8 @@ export function errorMessage(error: unknown): string {
       return 'Vendor mails could not be drafted right now. Try again in a moment.';
     if (error.code === 'drafts_failed')
       return 'We could not draft the vendor mails from these details. Adjust them and try again.';
-    if (error.code === 'vendor_not_found' || error.code === 'contact_not_found')
-      return 'A chosen vendor contact is no longer available. Reload the vendor list and choose again.';
-    if (error.code === 'missing_mail_text')
-      return 'A ticked vendor has no mail text for its category. Write the vendor mails first.';
-    if (error.code === 'mailbox_not_connected')
-      return 'Gmail is not connected for this mailbox. Connect it from the mailbox page, then send.';
-    if (error.code === 'rfq_id_taken')
-      return 'This request was already started for another message. Close the panel and start again.';
+    if (error.code === 'vendor_not_found')
+      return 'A chosen vendor is no longer available. Reload the vendor list and choose again.';
   }
   return 'We could not reach your workspace. Check your connection and try again.';
 }
