@@ -150,7 +150,7 @@ model Email {
   attachments       Attachment[]
   classifications   Classification[]
   repliesSent       SentMail[]       @relation("SentMailInReplyTo")
-  /// At most one (rfqs.source_email_id is unique); a list only because Prisma has no optional one-to-one from this side.
+  /// The RFQs sent from this mail; more than one when it was processed again (source_email_id is indexed, not unique).
   rfqs              Rfq[]            @relation("RfqSourceEmail")
 
   @@unique([mailboxId, gmailMessageId])

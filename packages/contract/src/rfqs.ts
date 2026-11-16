@@ -256,3 +256,12 @@ export type SendRfqResponse = RfqWithMailsResponse;
  *   404 rfq_not_found (unknown, or of another mailbox or tenant)
  */
 export const getRfqResponseSchema = rfqWithMailsResponseSchema;
+
+/**
+ * GET /v1/mailbox/rfqs/bySourceEmail/:emailId: the newest RFQ sent from this customer mail, in the
+ * same shape as GET /v1/mailbox/rfqs/:rfqId. A mail processed twice has two RFQs; the thread view
+ * shows the latest and the RFQ list shows them all. How the thread view finds the RFQ after a reload.
+ *   200 RfqWithMailsResponse
+ *   404 rfq_not_found (no RFQ was sent from this mail, or the mail is of another mailbox or tenant)
+ */
+export const getRfqBySourceEmailResponseSchema = rfqWithMailsResponseSchema;

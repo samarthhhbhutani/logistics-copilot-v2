@@ -1,6 +1,10 @@
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
-import { getRfqResponseSchema, sendRfqResponseSchema } from '@lc/contract';
+import {
+  getRfqBySourceEmailResponseSchema,
+  getRfqResponseSchema,
+  sendRfqResponseSchema,
+} from '@lc/contract';
 import type { SendRfqResponse } from '@lc/contract';
 import { testTenantBody } from '../tenantFixture.test-helper.js';
 import { createTestApp, testMailboxEmail } from '../testAppInstance.test-helper.js';
@@ -12,6 +16,7 @@ const rfqId = '22222222-2222-4222-8222-222222222222';
 const unknownId = '00000000-0000-4000-8000-0000000000ff';
 const sendPath = (id: string) => `/v1/mailbox/rfqs/${id}/send`;
 const rfqPath = (id: string) => `/v1/mailbox/rfqs/${id}`;
+const rfqBySourceEmailPath = (emailId: string) => `/v1/mailbox/rfqs/bySourceEmail/${emailId}`;
 
 const details = {
   originPort: 'Hazira, India',
@@ -502,5 +507,82 @@ describe('GET /v1/mailbox/rfqs/:rfqId', () => {
     ).find((cookie) => cookie.startsWith('lc_session='))!;
     const foreign = await request(testApp.app).get(rfqPath(rfqId)).set('Cookie', otherCookie);
     expect(foreign.status).toBe(404);
+  });
+});
+
+describe('GET /v1/mailbox/rfqs/bySourceEmail/:emailId', () => {
+  it('finds the RFQ sent from a customer mail and answers exactly as GET /rfqs/:rfqId does', async () => {
+    const testApp = createTestApp();
+    const scope = await connectedMailbox(testApp);
+    const vendors = await seedVendors(testApp, scope.cookie);
+    await send(testApp, scope.cookie, everyoneBody(vendors));
+
+    const byEmail = await request(testApp.app)
+      .get(rfqBySourceEmailPath(customerEmailId))
+      .set('Cookie', scope.cookie);
+    const byRfqId = await request(testApp.app).get(rfqPath(rfqId)).set('Cookie', scope.cookie);
+
+    expect(byEmail.status).toBe(200);
+    const body = getRfqBySourceEmailResponseSchema.parse(byEmail.body);
+    expect(body.rfq.id).toBe(rfqId);
+    expect(body.rfq.sourceEmailId).toBe(customerEmailId);
+    expect(body.mails).toHaveLength(3);
+    expect(body).toEqual(byRfqId.body);
+  });
+
+  it('returns the newest RFQ when the same customer mail was processed twice', async () => {
+    const testApp = createTestApp();
+    const scope = await connectedMailbox(testApp);
+    const vendors = await seedVendors(testApp, scope.cookie);
+    const laterRfqId = '22222222-2222-4222-8222-222222222223';
+    await send(testApp, scope.cookie, everyoneBody(vendors));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await send(testApp, scope.cookie, everyoneBody(vendors), laterRfqId);
+
+    const byEmail = await request(testApp.app)
+      .get(rfqBySourceEmailPath(customerEmailId))
+      .set('Cookie', scope.cookie);
+
+    expect(byEmail.status).toBe(200);
+    expect(getRfqBySourceEmailResponseSchema.parse(byEmail.body).rfq.id).toBe(laterRfqId);
+  });
+
+  it('answers 404 rfq_not_found for a mail with no RFQ, a malformed id and another mailbox, 401 without a session', async () => {
+    const testApp = createTestApp();
+    const scope = await connectedMailbox(testApp);
+    const vendors = await seedVendors(testApp, scope.cookie);
+    await send(testApp, scope.cookie, everyoneBody(vendors));
+
+    const noRfq = await request(testApp.app)
+      .get(rfqBySourceEmailPath(unknownId))
+      .set('Cookie', scope.cookie);
+    expect(noRfq.status).toBe(404);
+    expect(noRfq.body).toEqual({ error: 'rfq_not_found' });
+    const malformed = await request(testApp.app)
+      .get(rfqBySourceEmailPath('not-a-uuid'))
+      .set('Cookie', scope.cookie);
+    expect(malformed.status).toBe(404);
+    const anonymous = await request(testApp.app).get(rfqBySourceEmailPath(customerEmailId));
+    expect(anonymous.status).toBe(401);
+
+    const otherTenant = await request(testApp.app)
+      .post('/v1/tenants')
+      .send({ ...testTenantBody, name: 'Other Forwarder' });
+    const otherEmail = 'other@example.com';
+    await request(testApp.app)
+      .post(`/v1/tenants/${otherTenant.body.tenantId}/mailboxes`)
+      .send({ email: otherEmail, password });
+    const otherLogin = await request(testApp.app)
+      .post('/v1/auth/login')
+      .send({ email: otherEmail, password });
+    const otherSetCookie = otherLogin.headers['set-cookie'];
+    const otherCookie = (
+      Array.isArray(otherSetCookie) ? otherSetCookie : [String(otherSetCookie)]
+    ).find((cookie) => cookie.startsWith('lc_session='))!;
+    const foreign = await request(testApp.app)
+      .get(rfqBySourceEmailPath(customerEmailId))
+      .set('Cookie', otherCookie);
+    expect(foreign.status).toBe(404);
+    expect(foreign.body).toEqual({ error: 'rfq_not_found' });
   });
 });

@@ -516,6 +516,17 @@ export function createInMemoryRepositories(): {
             candidate.tenantId === scope.tenantId,
         );
       },
+      async findRfqBySourceEmail(scope, sourceEmailId) {
+        // Newest first, as the Prisma query orders them.
+        return rfqs
+          .filter(
+            (candidate) =>
+              candidate.sourceEmailId === sourceEmailId &&
+              candidate.mailboxId === scope.mailboxId &&
+              candidate.tenantId === scope.tenantId,
+          )
+          .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())[0];
+      },
     },
     mailboxConnectionRepository: {
       async findMailboxConnection(scope) {

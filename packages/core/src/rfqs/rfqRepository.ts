@@ -24,6 +24,11 @@ export type CreateRfqResult =
 export interface RfqRepository {
   createRfq(scope: MailboxScope, rfq: RfqToCreate): Promise<CreateRfqResult>;
   findRfq(scope: MailboxScope, rfqId: string): Promise<Rfq | undefined>;
+  /**
+   * The newest RFQ sent from a customer mail; undefined when none was. A mail processed twice has two
+   * RFQs (source_email_id is indexed, not unique), and the thread view shows the latest.
+   */
+  findRfqBySourceEmail(scope: MailboxScope, sourceEmailId: string): Promise<Rfq | undefined>;
 }
 
 const RFQ_SELECT = {
@@ -86,6 +91,15 @@ export function createPrismaRfqRepository(prismaClient: PrismaClient): RfqReposi
     },
 
     findRfq: findInScope,
+
+    async findRfqBySourceEmail({ mailboxId, tenantId }, sourceEmailId) {
+      const row = await prismaClient.rfq.findFirst({
+        where: { sourceEmailId, mailboxId, tenantId },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        select: RFQ_SELECT,
+      });
+      return row ? toRfq(row) : undefined;
+    },
   };
 }
 
