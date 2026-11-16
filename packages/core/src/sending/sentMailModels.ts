@@ -2,6 +2,7 @@ import type {
   SentMailKind as PrismaSentMailKind,
   SentMailStatus as PrismaSentMailStatus,
 } from '../db/generated/client.js';
+import type { CurrentClassification } from '../emails/emailModels.js';
 import type { EmailAddress } from '../utils/mime/parsedEmail.js';
 
 /** reply: answers an inbound mail in its thread. rfq: starts a new thread with one vendor for an RFQ. */
@@ -41,6 +42,31 @@ export interface SentMail {
   errorCode: string | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+/**
+ * The newest inbound mail answering one RFQ mail of ours: what a row on the RFQ page shows before
+ * the operator opens the thread. No body: the thread view loads that.
+ */
+export interface RfqLatestReply {
+  emailId: string;
+  senderName: string;
+  senderEmail: string | null;
+  receivedAt: Date;
+  snippet: string;
+  classification: CurrentClassification | null;
+}
+
+/** What came back for one RFQ mail, as emails.answers_sent_mail_id links it. */
+export interface RfqMailReplies {
+  count: number;
+  /** Undefined until the vendor answers. */
+  latest: RfqLatestReply | undefined;
+}
+
+/** An RFQ mail together with the replies it has drawn; what the RFQ page lists per contact. */
+export interface RfqMailWithReplies extends SentMail {
+  replies: RfqMailReplies;
 }
 
 // Prisma generates UPPER_CASE enum members; the API and the columns speak snake_case.

@@ -374,6 +374,7 @@ describe('scoped mail 404 after an account switch', () => {
       errorCode: null,
       createdAt: '2026-11-16T00:00:00.000Z',
       updatedAt: '2026-11-16T00:00:00.000Z',
+      replies: { count: 0, latest: null },
     };
     const result = {
       rfq: {

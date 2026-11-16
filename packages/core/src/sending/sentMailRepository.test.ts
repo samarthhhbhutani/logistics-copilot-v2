@@ -117,3 +117,145 @@ describe('findAnsweredSentMail', () => {
     expect(result).toBeUndefined();
   });
 });
+
+describe('listRfqMails', () => {
+  const sentAt = new Date('2026-11-16T08:00:00Z');
+  const repliedAt = new Date('2026-11-16T09:30:00Z');
+  const classifiedAt = new Date('2026-11-16T09:31:00Z');
+
+  /** One sent_mails row as RFQ_MAIL_WITH_REPLIES_SELECT returns it, with the given replies relation. */
+  function rfqMailWithRepliesRow(
+    id: string,
+    repliesReceived: Record<string, unknown>[],
+    replyCount: number,
+  ) {
+    return {
+      id,
+      kind: 'RFQ',
+      status: 'SENT',
+      inReplyToEmailId: null,
+      rfqId: 'rfq-1',
+      vendorId: 'vendor-1',
+      vendorContactId: `contact-${id}`,
+      gmailThreadId: `thread-${id}`,
+      rfcMessageId: `<${id}@desk.com>`,
+      toRecipients: [{ name: 'Asha Rao', address: 'asha@sealines.example' }],
+      ccRecipients: [],
+      subject: 'RFQ: carrier rates',
+      bodyText: 'Dear Team,',
+      gmailMessageId: `gm-${id}`,
+      errorCode: null,
+      createdAt: sentAt,
+      updatedAt: sentAt,
+      _count: { repliesReceived: replyCount },
+      repliesReceived,
+    };
+  }
+
+  function stubFindMany(rows: Record<string, unknown>[]) {
+    const calls: Record<string, unknown>[] = [];
+    const prismaClient = {
+      sentMail: {
+        async findMany(args: Record<string, unknown>) {
+          calls.push(args);
+          return rows;
+        },
+      },
+    } as unknown as PrismaClient;
+    return { prismaClient, calls };
+  }
+
+  it('reads the reply count and the newest reply with its current label in the one query', async () => {
+    const { prismaClient, calls } = stubFindMany([
+      rfqMailWithRepliesRow(
+        'answered',
+        [
+          {
+            id: 'email-quote',
+            senderName: 'Asha Rao',
+            senderEmail: 'asha@sealines.example',
+            receivedAt: repliedAt,
+            snippet: 'USD 1450 per 40ft, valid 7 days',
+            classifications: [
+              { label: 'VENDOR_QUOTE', source: 'LLM', confidence: 0.9, classifiedAt },
+            ],
+          },
+        ],
+        2,
+      ),
+      rfqMailWithRepliesRow('unanswered', [], 0),
+    ]);
+
+    const rfqMails = await createPrismaSentMailRepository(prismaClient).listRfqMails(
+      scope,
+      'rfq-1',
+    );
+
+    expect(rfqMails.map((rfqMail) => rfqMail.replies)).toEqual([
+      {
+        count: 2,
+        latest: {
+          emailId: 'email-quote',
+          senderName: 'Asha Rao',
+          senderEmail: 'asha@sealines.example',
+          receivedAt: repliedAt,
+          snippet: 'USD 1450 per 40ft, valid 7 days',
+          classification: { label: 'vendor_quote', source: 'llm', confidence: 0.9, classifiedAt },
+        },
+      },
+      { count: 0, latest: undefined },
+    ]);
+    expect(rfqMails[0]).toMatchObject({ id: 'answered', kind: 'rfq', status: 'sent' });
+    const [call] = calls;
+    expect(call?.where).toEqual({ rfqId: 'rfq-1', ...scope });
+    expect(call?.select).toMatchObject({
+      _count: { select: { repliesReceived: true } },
+      repliesReceived: {
+        orderBy: [{ receivedAt: 'desc' }, { id: 'desc' }],
+        take: 1,
+        select: {
+          id: true,
+          senderName: true,
+          senderEmail: true,
+          receivedAt: true,
+          snippet: true,
+          classifications: {
+            orderBy: [{ classifiedAt: 'desc' }, { id: 'desc' }],
+            take: 1,
+          },
+        },
+      },
+    });
+  });
+
+  it('reports an unclassified newest reply with a null label', async () => {
+    const { prismaClient } = stubFindMany([
+      rfqMailWithRepliesRow(
+        'answered',
+        [
+          {
+            id: 'email-ack',
+            senderName: '',
+            senderEmail: null,
+            receivedAt: repliedAt,
+            snippet: 'Received, will revert',
+            classifications: [],
+          },
+        ],
+        1,
+      ),
+    ]);
+    const [rfqMailWithReplies] = await createPrismaSentMailRepository(prismaClient).listRfqMails(
+      scope,
+      'rfq-1',
+    );
+    expect(rfqMailWithReplies?.replies.latest).toEqual({
+      emailId: 'email-ack',
+      senderName: '',
+      senderEmail: null,
+      receivedAt: repliedAt,
+      snippet: 'Received, will revert',
+      classification: null,
+    });
+  });
+});

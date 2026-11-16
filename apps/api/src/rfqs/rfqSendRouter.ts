@@ -35,10 +35,9 @@ import type {
 import { getSession } from '../auth/requireSession.js';
 import { parseIdOr404 } from '../http/parseIdOr404.js';
 import { parseRequestBody } from '../http/parseRequestBody.js';
-import { toRfqResponse } from './rfqResponses.js';
+import { toRfqMailWithRepliesResponse, toRfqResponse } from './rfqResponses.js';
 import { loadSendingMailbox } from '../sending/loadSendingMailbox.js';
 import type { SendingMailbox } from '../sending/loadSendingMailbox.js';
-import { toSentMailResponse } from '../sending/sentMailResponses.js';
 
 export interface RfqSendRouterDependencies {
   emailReadRepository: EmailReadRepository;
@@ -58,7 +57,7 @@ const CONCURRENT_GMAIL_SENDS = 2;
 /**
  * Sending an RFQ to vendors and reading it back, mounted at /v1/mailbox/rfqs.
  *   PUT /:rfqId/send  { sourceEmailId, details, recipients, mails }   see sendRfqBodySchema for codes
- *   GET /:rfqId       the rfq and its mails as they stand; polled while a mail is still `sending`
+ *   GET /:rfqId       the rfq and its mails, each with the replies it drew; polled while a mail is still `sending`
  *
  * One `sent_mails` row and one fresh Gmail thread per contact. Write-ahead as for replies: the rfq
  * and its pending rows are written first, then each row moves pending -> sending -> sent | failed.
@@ -130,7 +129,9 @@ export function createRfqSendRouter({
   async function rfqWithMails(scope: MailboxScope, rfq: Rfq): Promise<RfqWithMailsResponse> {
     return {
       rfq: toRfqResponse(rfq),
-      mails: (await sentMailRepository.listRfqMails(scope, rfq.id)).map(toSentMailResponse),
+      mails: (await sentMailRepository.listRfqMails(scope, rfq.id)).map(
+        toRfqMailWithRepliesResponse,
+      ),
     };
   }
 
