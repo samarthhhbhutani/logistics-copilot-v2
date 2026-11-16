@@ -34,6 +34,8 @@ export interface NewEmail extends MailboxScope {
   bodyHtml: string | undefined;
   rawEmailS3Key: string;
   receivedAt: Date;
+  /** The RFQ sent_mails row this inbound message answers (SentMailRepository.findAnsweredSentMail); undefined when none or for SENT copies. */
+  answersSentMailId: string | undefined;
 }
 
 /** What the processor learns about a Gmail thread before storing a new message of it. */
@@ -142,6 +144,7 @@ export function createPrismaEmailIngestRepository(
             bodyHtml: newEmail.bodyHtml ? withoutNulCharacters(newEmail.bodyHtml) : null,
             rawEmailS3Key: newEmail.rawEmailS3Key,
             receivedAt: newEmail.receivedAt,
+            answersSentMailId: newEmail.answersSentMailId ?? null,
           },
           skipDuplicates: true,
           select: { id: true },

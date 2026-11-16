@@ -136,6 +136,7 @@ const newEmail: NewEmail = {
   bodyHtml: undefined,
   rawEmailS3Key: 'tenant-1/mailbox-1/gm-1.eml',
   receivedAt: new Date('2026-11-09T12:00:00Z'),
+  answersSentMailId: undefined,
 };
 const storedAttachment = {
   fileName: 'rate-card.pdf',
@@ -207,6 +208,26 @@ describe('insertEmailIfAbsent', () => {
         s3Key: storedAttachment.s3Key,
       }),
     ]);
+  });
+
+  it('writes the answered sent mail as the column value, null when the mail answers nothing of ours', async () => {
+    const linked = createTransactionStub(false);
+    await createPrismaEmailIngestRepository(linked.prismaClient).insertEmailIfAbsent(
+      { ...newEmail, answersSentMailId: 'sent-mail-1' },
+      [],
+    );
+    expect((linked.calls[0]!.args.data as { answersSentMailId: unknown }).answersSentMailId).toBe(
+      'sent-mail-1',
+    );
+
+    const unlinked = createTransactionStub(false);
+    await createPrismaEmailIngestRepository(unlinked.prismaClient).insertEmailIfAbsent(
+      newEmail,
+      [],
+    );
+    expect(
+      (unlinked.calls[0]!.args.data as { answersSentMailId: unknown }).answersSentMailId,
+    ).toBeNull();
   });
 
   it('skips the attachment rows and reports false when the email already existed', async () => {

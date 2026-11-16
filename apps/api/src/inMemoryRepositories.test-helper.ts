@@ -437,6 +437,9 @@ export function createInMemoryRepositories(): {
       async listStaleSending() {
         throw new Error('the API never sweeps; the sweeper Lambda does');
       },
+      async findAnsweredSentMail() {
+        throw new Error('the API never links inbound mail; the processor Lambda does');
+      },
       async markSentByRfcMessageId(scope, rfcMessageId, gmailIds) {
         const sentMail = sentMails.find(
           (candidate) =>
