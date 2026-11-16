@@ -56,8 +56,9 @@ const CONCURRENT_GMAIL_SENDS = 2;
 
 /**
  * Sending an RFQ to vendors and reading it back, mounted at /v1/mailbox/rfqs.
- *   PUT /:rfqId/send  { sourceEmailId, details, recipients, mails }   see sendRfqBodySchema for codes
- *   GET /:rfqId       the rfq and its mails, each with the replies it drew; polled while a mail is still `sending`
+ *   PUT /:rfqId/send                 { sourceEmailId, details, recipients, mails }   see sendRfqBodySchema for codes
+ *   GET /:rfqId                      the rfq and its mails, each with the replies it drew; polled while a mail is still `sending`
+ *   GET /bySourceEmail/:emailId      the same for the newest rfq sent from that customer mail; 404 rfq_not_found when none was
  *
  * One `sent_mails` row and one fresh Gmail thread per contact. Write-ahead as for replies: the rfq
  * and its pending rows are written first, then each row moves pending -> sending -> sent | failed.
@@ -114,6 +115,19 @@ export function createRfqSendRouter({
     await sendPendingAndFailedMails(rfqMails, scope, sendingMailbox);
 
     const responseBody: SendRfqResponse = await rfqWithMails(scope, rfq);
+    response.status(200).json(responseBody);
+  });
+
+  // Before GET /:rfqId, so "bySourceEmail" is never read as an rfqId.
+  router.get('/bySourceEmail/:emailId', requireSession, async (request, response) => {
+    const scope = getSession(response);
+    const emailId = parseIdOr404(request.params.emailId);
+    // The browser mints the rfqId when it sends and keeps it only in memory, so after a reload the
+    // customer mail is the one handle left. One 404 covers "no RFQ" and "not this mailbox's mail":
+    // the scoped lookup cannot tell them apart, and the panel shows the blank form for both.
+    const rfq = await rfqRepository.findRfqBySourceEmail(scope, emailId);
+    if (!rfq) throw createHttpError(404, 'rfq_not_found');
+    const responseBody: RfqWithMailsResponse = await rfqWithMails(scope, rfq);
     response.status(200).json(responseBody);
   });
 
