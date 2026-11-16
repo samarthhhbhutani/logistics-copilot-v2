@@ -407,6 +407,69 @@ describe('GET /v1/mailbox/rfqs/:rfqId', () => {
     expect(testApp.gmailSender.sentMessages).toHaveLength(3);
   });
 
+  it('reports, per contact, how many mails answered ours and the newest of them with its label', async () => {
+    const testApp = createTestApp();
+    const scope = await connectedMailbox(testApp);
+    const vendors = await seedVendors(testApp, scope.cookie);
+    const sent = await send(testApp, scope.cookie, everyoneBody(vendors));
+    const [ashaMail, benMail] = (sent.body as SendRfqResponse).mails;
+    const ackId = '00000000-0000-4000-8000-00000000000a';
+    const quoteId = '00000000-0000-4000-8000-00000000000b';
+    const classifiedAt = new Date('2026-11-16T09:31:00Z');
+    testApp.repositories.addEmail({
+      ...scope,
+      id: ackId,
+      gmailThreadId: ashaMail!.gmailThreadId!,
+      gmailLabel: 'inbox',
+      senderName: 'Asha Rao',
+      senderEmail: 'asha.rao@sealines.example',
+      toRecipients: [{ name: '', address: testMailboxEmail }],
+      subject: 'Re: RFQ: carrier rates',
+      snippet: 'Received, will revert',
+      receivedAt: new Date('2026-11-16T09:00:00Z'),
+      answersSentMailId: ashaMail!.id,
+    });
+    testApp.repositories.addEmail({
+      ...scope,
+      id: quoteId,
+      gmailThreadId: ashaMail!.gmailThreadId!,
+      gmailLabel: 'inbox',
+      senderName: 'Asha Rao',
+      senderEmail: 'asha.rao@sealines.example',
+      toRecipients: [{ name: '', address: testMailboxEmail }],
+      subject: 'Re: RFQ: carrier rates',
+      snippet: 'USD 1450 per 40ft, valid 7 days',
+      receivedAt: new Date('2026-11-16T09:30:00Z'),
+      answersSentMailId: ashaMail!.id,
+      classification: { label: 'vendor_quote', source: 'llm', confidence: 0.9, classifiedAt },
+    });
+
+    const read = await request(testApp.app).get(rfqPath(rfqId)).set('Cookie', scope.cookie);
+
+    expect(read.status).toBe(200);
+    const body = getRfqResponseSchema.parse(read.body);
+    expect(body.mails.map((mail) => mail.replies)).toEqual([
+      {
+        count: 2,
+        latest: {
+          emailId: quoteId,
+          sender: { name: 'Asha Rao', email: 'asha.rao@sealines.example' },
+          receivedAt: '2026-11-16T09:30:00.000Z',
+          snippet: 'USD 1450 per 40ft, valid 7 days',
+          classification: {
+            label: 'vendor_quote',
+            source: 'llm',
+            confidence: 0.9,
+            classifiedAt: classifiedAt.toISOString(),
+          },
+        },
+      },
+      { count: 0, latest: null },
+      { count: 0, latest: null },
+    ]);
+    expect(body.mails[1]!.id).toBe(benMail!.id);
+  });
+
   it('answers 404 for an unknown or malformed id, another mailbox, and 401 without a session', async () => {
     const testApp = createTestApp();
     const scope = await connectedMailbox(testApp);

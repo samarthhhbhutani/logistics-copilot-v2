@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { currentClassificationSchema } from './emails.js';
 import { sentMailResponseSchema } from './sentMails.js';
 import { vendorCategorySchema } from './vendors.js';
 
@@ -208,11 +209,40 @@ export const sendRfqBodySchema = z.object({
 });
 export type SendRfqBody = z.input<typeof sendRfqBodySchema>;
 
+/**
+ * The newest inbound mail a vendor sent back to one RFQ mail of ours: enough for a row on the RFQ
+ * page without loading the thread. The thread itself comes from GET threads/:threadId with the RFQ
+ * mail's gmailThreadId once the operator expands the row.
+ */
+export const rfqLatestReplySchema = z.object({
+  emailId: z.uuid(),
+  sender: z.object({ name: z.string(), email: z.string().nullable() }),
+  receivedAt: z.iso.datetime(),
+  snippet: z.string(),
+  /** vendor_quote when the processor read a price in it, vendor_reply otherwise; null until classified. */
+  classification: currentClassificationSchema.nullable(),
+});
+export type RfqLatestReplyResponse = z.infer<typeof rfqLatestReplySchema>;
+
+/** The inbound mails the processor linked to this RFQ mail (emails.answers_sent_mail_id). */
+export const rfqMailRepliesSchema = z.object({
+  count: z.number().int().nonnegative(),
+  /** Newest by receivedAt; null until the vendor answers. */
+  latest: rfqLatestReplySchema.nullable(),
+});
+export type RfqMailRepliesResponse = z.infer<typeof rfqMailRepliesSchema>;
+
+/** One vendor mail of an RFQ together with what came back for it. */
+export const rfqMailWithRepliesResponseSchema = sentMailResponseSchema.extend({
+  replies: rfqMailRepliesSchema,
+});
+export type RfqMailWithRepliesResponse = z.infer<typeof rfqMailWithRepliesResponseSchema>;
+
 /** An RFQ with every mail it produced, one per contact, oldest first. */
 export const rfqWithMailsResponseSchema = z.object({
   rfq: rfqResponseSchema,
   /** Status sent | failed | pending (not reached this time) | sending (outcome unknown, resolved later by the sweeper). */
-  mails: z.array(sentMailResponseSchema),
+  mails: z.array(rfqMailWithRepliesResponseSchema),
 });
 export type RfqWithMailsResponse = z.infer<typeof rfqWithMailsResponseSchema>;
 
@@ -220,8 +250,8 @@ export const sendRfqResponseSchema = rfqWithMailsResponseSchema;
 export type SendRfqResponse = RfqWithMailsResponse;
 
 /**
- * GET /v1/mailbox/rfqs/:rfqId: the RFQ and its mails as they stand now. The client polls this while
- * a mail is still `sending`, to see the sweeper resolve it.
+ * GET /v1/mailbox/rfqs/:rfqId: the RFQ and its mails as they stand now, each with the replies it
+ * has drawn. The client polls this while a mail is still `sending`, to see the sweeper resolve it.
  *   200 RfqWithMailsResponse
  *   404 rfq_not_found (unknown, or of another mailbox or tenant)
  */

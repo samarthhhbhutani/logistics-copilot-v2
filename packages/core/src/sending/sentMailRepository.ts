@@ -5,7 +5,12 @@ import type {
   GmailConnectionStatus,
   MailboxScope,
 } from '../connectors/gmail/mailboxConnectionRepository.js';
-import { fromJsonAddresses, toJsonAddresses } from '../emails/emailModels.js';
+import {
+  CURRENT_CLASSIFICATION_SELECT,
+  fromJsonAddresses,
+  toCurrentClassification,
+  toJsonAddresses,
+} from '../emails/emailModels.js';
 import type { EmailAddress } from '../utils/mime/parsedEmail.js';
 import {
   PRISMA_ENUM_BY_SENT_MAIL_KIND,
@@ -13,7 +18,12 @@ import {
   SENT_MAIL_KIND_BY_PRISMA_ENUM,
   SENT_MAIL_STATUS_BY_PRISMA_ENUM,
 } from './sentMailModels.js';
-import type { SentMail, SentMailKind, SentMailStatus } from './sentMailModels.js';
+import type {
+  RfqMailWithReplies,
+  SentMail,
+  SentMailKind,
+  SentMailStatus,
+} from './sentMailModels.js';
 
 /** Everything known before messages.send; the row is written with status pending. */
 export interface SentMailToCreate {
@@ -68,10 +78,17 @@ export interface SentMailRepository {
    * (rfqId, vendorContactId) already exists is left as it is, so a retried or widened send request
    * adds only the contacts that are new. Returns every mail of the RFQ, the existing ones included.
    */
-  createPendingRfqMails(scope: MailboxScope, sentMails: SentMailToCreate[]): Promise<SentMail[]>;
+  createPendingRfqMails(
+    scope: MailboxScope,
+    sentMails: SentMailToCreate[],
+  ): Promise<RfqMailWithReplies[]>;
   findSentMail(scope: MailboxScope, sentMailId: string): Promise<SentMail | undefined>;
-  /** Every mail sent or queued for the RFQ, oldest first. */
-  listRfqMails(scope: MailboxScope, rfqId: string): Promise<SentMail[]>;
+  /**
+   * Every mail sent or queued for the RFQ, oldest first, each with how many inbound mails answer it
+   * and the newest of them (by receivedAt). One query: the replies ride along as a counted relation
+   * and a take-1 include, so the RFQ page never fans out per contact.
+   */
+  listRfqMails(scope: MailboxScope, rfqId: string): Promise<RfqMailWithReplies[]>;
   /**
    * Status writes move the row only from the one status that precedes the target
    * (pending -> sending -> sent | failed) and report whether it did, so a stale or duplicate request
@@ -152,6 +169,28 @@ const SENT_MAIL_SELECT = {
 
 type SentMailRow = Prisma.SentMailGetPayload<{ select: typeof SENT_MAIL_SELECT }>;
 
+/** SENT_MAIL_SELECT plus the reply count and the newest reply, for the RFQ page. */
+const RFQ_MAIL_WITH_REPLIES_SELECT = {
+  ...SENT_MAIL_SELECT,
+  _count: { select: { repliesReceived: true } },
+  repliesReceived: {
+    orderBy: [{ receivedAt: 'desc' as const }, { id: 'desc' as const }],
+    take: 1,
+    select: {
+      id: true,
+      senderName: true,
+      senderEmail: true,
+      receivedAt: true,
+      snippet: true,
+      classifications: CURRENT_CLASSIFICATION_SELECT,
+    },
+  },
+} satisfies Prisma.SentMailSelect;
+
+type RfqMailWithRepliesRow = Prisma.SentMailGetPayload<{
+  select: typeof RFQ_MAIL_WITH_REPLIES_SELECT;
+}>;
+
 export function toSentMail(row: SentMailRow): SentMail {
   return {
     id: row.id,
@@ -171,6 +210,26 @@ export function toSentMail(row: SentMailRow): SentMail {
     errorCode: row.errorCode,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+  };
+}
+
+export function toRfqMailWithReplies(row: RfqMailWithRepliesRow): RfqMailWithReplies {
+  const latestReply = row.repliesReceived[0];
+  return {
+    ...toSentMail(row),
+    replies: {
+      count: row._count.repliesReceived,
+      latest: latestReply
+        ? {
+            emailId: latestReply.id,
+            senderName: latestReply.senderName,
+            senderEmail: latestReply.senderEmail,
+            receivedAt: latestReply.receivedAt,
+            snippet: latestReply.snippet,
+            classification: toCurrentClassification(latestReply.classifications),
+          }
+        : undefined,
+    },
   };
 }
 
@@ -228,9 +287,9 @@ export function createPrismaSentMailRepository(prismaClient: PrismaClient): Sent
     const rows = await prismaClient.sentMail.findMany({
       where: { rfqId, mailboxId, tenantId },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-      select: SENT_MAIL_SELECT,
+      select: RFQ_MAIL_WITH_REPLIES_SELECT,
     });
-    return rows.map(toSentMail);
+    return rows.map(toRfqMailWithReplies);
   }
 
   return {

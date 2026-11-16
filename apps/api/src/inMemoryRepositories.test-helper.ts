@@ -42,7 +42,12 @@ export function createInMemoryRepositories(): {
   addEmail(
     email: Omit<EmailSummary, 'classification'> &
       Partial<Pick<EmailSummary, 'classification'>> &
-      Partial<Omit<EmailDetail, keyof EmailSummary>> & { mailboxId: string; tenantId: string },
+      Partial<Omit<EmailDetail, keyof EmailSummary>> & {
+        mailboxId: string;
+        tenantId: string;
+        /** The RFQ mail of ours this email answers (emails.answers_sent_mail_id); unlinked when omitted. */
+        answersSentMailId?: string;
+      },
   ): void;
   /** Sets the current classification of a seeded email. */
   setClassification(emailId: string, classification: CurrentClassification): void;
@@ -53,7 +58,11 @@ export function createInMemoryRepositories(): {
   const pubsubPushByTenantId = new Map<string, TenantPubsubPush>();
   const credentialsByEmail = new Map<string, MailboxCredentials>();
   const connectionByMailboxId = new Map<string, MailboxConnection>();
-  const emails: (EmailDetail & { mailboxId: string; tenantId: string })[] = [];
+  const emails: (EmailDetail & {
+    mailboxId: string;
+    tenantId: string;
+    answersSentMailId?: string;
+  })[] = [];
   const sentMails: (SentMail & { mailboxId: string; tenantId: string })[] = [];
   const rfqs: (Rfq & { mailboxId: string; tenantId: string })[] = [];
 
@@ -404,12 +413,36 @@ export function createInMemoryRepositories(): {
         return this.listRfqMails(scope, rfqId);
       },
       async listRfqMails(scope, rfqId) {
-        return sentMails.filter(
-          (candidate) =>
-            candidate.rfqId === rfqId &&
-            candidate.mailboxId === scope.mailboxId &&
-            candidate.tenantId === scope.tenantId,
-        );
+        return sentMails
+          .filter(
+            (candidate) =>
+              candidate.rfqId === rfqId &&
+              candidate.mailboxId === scope.mailboxId &&
+              candidate.tenantId === scope.tenantId,
+          )
+          .map((rfqMail) => {
+            // Newest first by receivedAt, as the Prisma take-1 include orders them.
+            const replies = emails
+              .filter((email) => email.answersSentMailId === rfqMail.id)
+              .sort((left, right) => right.receivedAt.getTime() - left.receivedAt.getTime());
+            const latestReply = replies[0];
+            return {
+              ...rfqMail,
+              replies: {
+                count: replies.length,
+                latest: latestReply
+                  ? {
+                      emailId: latestReply.id,
+                      senderName: latestReply.senderName,
+                      senderEmail: latestReply.senderEmail,
+                      receivedAt: latestReply.receivedAt,
+                      snippet: latestReply.snippet,
+                      classification: latestReply.classification,
+                    }
+                  : undefined,
+              },
+            };
+          });
       },
       markSending: (scope, sentMailId) =>
         moveSentMail(scope, sentMailId, { from: 'pending', to: 'sending' }, {}),
