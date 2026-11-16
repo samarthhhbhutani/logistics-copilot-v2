@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { SendRfqBody } from '@lc/contract';
 import { ClassificationOutcomeUnknownError, FrontendApiError, frontendApi } from './frontendApi.js';
 
 const session = {
@@ -351,6 +352,82 @@ describe('scoped mail 404 after an account switch', () => {
     await expect(frontendApi.rfqDrafts(session, body)).rejects.toMatchObject({
       status: 404,
       code: 'vendor_not_found',
+    });
+  });
+  it('sends an RFQ with a single PUT and reads it back, verifying the session and the id', async () => {
+    const rfqId = '00000000-0000-4000-8000-000000000077';
+    const mail = {
+      id: '00000000-0000-4000-8000-000000000078',
+      kind: 'rfq',
+      status: 'sent',
+      inReplyToEmailId: null,
+      rfqId,
+      vendorId: '00000000-0000-4000-8000-000000000021',
+      vendorContactId: '00000000-0000-4000-8000-000000000031',
+      gmailThreadId: 't1',
+      rfcMessageId: '<x@example.com>',
+      toRecipients: [{ name: 'Ravi', address: 'ravi@example.com' }],
+      ccRecipients: [],
+      subject: 'RFQ',
+      bodyText: 'Hello',
+      gmailMessageId: 'm1',
+      errorCode: null,
+      createdAt: '2026-11-16T00:00:00.000Z',
+      updatedAt: '2026-11-16T00:00:00.000Z',
+    };
+    const result = {
+      rfq: {
+        id: rfqId,
+        sourceEmailId: emailId,
+        originPort: 'A',
+        destinationPort: 'B',
+        incoterm: null,
+        status: 'open',
+        createdAt: '2026-11-16T00:00:00.000Z',
+        updatedAt: '2026-11-16T00:00:00.000Z',
+      },
+      mails: [mail],
+    };
+    const body: SendRfqBody = {
+      sourceEmailId: emailId,
+      details: { originPort: 'A', destinationPort: 'B' },
+      recipients: [{ vendorId: mail.vendorId, contactIds: [mail.vendorContactId] }],
+      mails: [{ category: 'carrier', subject: 'RFQ', bodyText: 'Hello' }],
+    };
+    let fetchMock = mockResponses(result, session);
+    expect(await frontendApi.sendRfq(session, rfqId, body)).toEqual(result);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      `/v1/mailbox/rfqs/${rfqId}/send`,
+      expect.objectContaining({ method: 'PUT', body: JSON.stringify(body) }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/v1/me', expect.anything());
+
+    // A send is never replayed by the transport: one failed attempt is the answer.
+    vi.useFakeTimers();
+    fetchMock = vi.fn().mockResolvedValue(new Response('down', { status: 503 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const failing = frontendApi.sendRfq(session, rfqId, body);
+    const settled = failing.catch((error: unknown) => error);
+    await vi.runAllTimersAsync();
+    expect(await settled).toMatchObject({ status: 503 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+
+    fetchMock = mockResponses(result, session);
+    expect(await frontendApi.rfq(session, rfqId)).toEqual(result);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      `/v1/mailbox/rfqs/${rfqId}`,
+      expect.not.objectContaining({ method: 'PUT' }),
+    );
+    mockResponses({ ...result, rfq: { ...result.rfq, id: emailId } }, session);
+    await expect(frontendApi.rfq(session, rfqId)).rejects.toMatchObject({
+      code: 'invalid_response',
+    });
+    mockResponses(result, { ...session, tenantId: emailId });
+    await expect(frontendApi.sendRfq(session, rfqId, body)).rejects.toMatchObject({
+      code: 'session_changed',
     });
   });
   it('preserves a genuine 404 when the cookie still belongs to the same account', async () => {
