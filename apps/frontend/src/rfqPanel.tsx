@@ -26,8 +26,9 @@ import {
   vendorCategoryTitles,
 } from './rfqRecipients.js';
 import { RfqRecipientsPicker } from './rfqRecipientsPicker.js';
-import { anyMailSending, mailTextsForSend } from './rfqSend.js';
+import { anyMailSending, mailTextsForSend, rfqProgressLabel } from './rfqSend.js';
 import type { RfqMailDraftValues, RfqMailDrafts } from './rfqSend.js';
+import { RfqRecord } from './rfqRecord.js';
 import { RfqSendStatus } from './rfqSendStatus.js';
 import {
   EMPTY_RFQ_DETAILS_FORM,
@@ -62,7 +63,10 @@ function draftsFromResponse(response: DraftRfqMailsResponse): RfqMailDrafts {
  * "Write vendor mails" drafts one mail per vendor category for the operator to edit on the same
  * screen, and "Send" mails every ticked contact their category's text, one Gmail thread each. The
  * RFQ id is minted here when the panel opens, so the send and every retry of it are the same PUT;
- * once sent, the form freezes and the per-contact outcomes take over.
+ * once sent, the form freezes and the per-contact outcomes take over. The id lives only in memory,
+ * so on mount the panel asks the API for the newest RFQ sent from this mail: when there is one, a
+ * second button says how many vendors replied and opens the record (RfqRecord); "Request vendor
+ * quotes" stays beside it and opens a blank form for another request from the same mail.
  */
 export function RfqPanel({
   email,
@@ -73,7 +77,8 @@ export function RfqPanel({
   session: SessionResponse;
   onSignedOut: () => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [view, setView] = useState<'closed' | 'form' | 'record'>('closed');
+  const open = view !== 'closed';
   const [values, setValues] = useState<RfqDetailsFormValues>(EMPTY_RFQ_DETAILS_FORM);
   const [prefilled, setPrefilled] = useState(false);
   const [errors, setErrors] = useState<RfqDetailsFormErrors>({});
@@ -90,10 +95,21 @@ export function RfqPanel({
   const statusHeading = useRef<HTMLHeadingElement>(null);
   const queryClient = useQueryClient();
 
+  const existingRfqKey = ['rfqBySourceEmail', session.tenantId, session.mailboxId, email.id];
+  const existingRfq = useQuery({
+    queryKey: existingRfqKey,
+    queryFn: ({ signal }) => frontendApi.rfqBySourceEmail(session, email.id, signal),
+    enabled: email.gmailLabel === 'inbox',
+    staleTime: 30_000,
+    refetchInterval: (query) =>
+      query.state.data && anyMailSending(query.state.data.mails) ? RFQ_STATUS_POLL_MS : false,
+  });
+  const existingRecord = existingRfq.data ?? null;
   const suggestion = useQuery({
     queryKey: ['rfqSuggestion', session.tenantId, session.mailboxId, email.id],
     queryFn: ({ signal }) => frontendApi.rfqSuggestion(session, email.id, signal),
-    enabled: open && !prefilled,
+    // Only the form costs a model call; reading the record of an earlier request never does.
+    enabled: view === 'form' && !prefilled,
     staleTime: Infinity,
     retry: false,
   });
@@ -125,6 +141,8 @@ export function RfqPanel({
       setSendResult(result);
       // The poll below continues from this answer rather than from an older read.
       queryClient.setQueryData(rfqStatusKey, result);
+      // The newest RFQ for this mail is now this one: the collapsed label and a reload agree.
+      queryClient.setQueryData(existingRfqKey, result);
     },
     retry: false,
   });
@@ -136,14 +154,19 @@ export function RfqPanel({
     refetchInterval: RFQ_STATUS_POLL_MS,
     staleTime: 0,
   });
-  const shownResult = rfqStatus.data ?? sendResult;
-  const outcomesShown = shownResult !== null;
-  // The outcomes replace the Send button the operator just pressed: move focus to them once mounted.
+  /** What this page load sent (and keeps polling); the form freezes under it. */
+  const sentThisSession = rfqStatus.data ?? sendResult;
+  /** An RFQ the API holds for this mail, offered as a record beside the form while nothing was sent here. */
+  const recordOffered = sentThisSession === null && existingRecord !== null;
+  const outcomesShown = view === 'record' || (view === 'form' && sentThisSession !== null);
+  // The outcomes replace the Send button the operator just pressed (or the button they opened the
+  // record with): move focus to them once mounted.
   useEffect(() => {
     if (outcomesShown) statusHeading.current?.focus();
   }, [outcomesShown]);
   useEffect(() => {
     if (
+      isUnauthenticated(existingRfq.error) ||
       isUnauthenticated(suggestion.error) ||
       isUnauthenticated(vendors.error) ||
       isUnauthenticated(writeDrafts.error) ||
@@ -153,6 +176,7 @@ export function RfqPanel({
       onSignedOut();
     }
   }, [
+    existingRfq.error,
     suggestion.error,
     vendors.error,
     writeDrafts.error,
@@ -177,14 +201,14 @@ export function RfqPanel({
 
   function close() {
     if (writeDrafts.isPending || sendRfq.isPending) return;
-    setOpen(false);
+    setView('closed');
     setErrors({});
     setRecipientsMessage(null);
     setSendMessage(null);
     requestAnimationFrame(() => trigger.current?.focus());
   }
 
-  /** A fresh request for the same customer mail, after the previous one went out. */
+  /** A fresh request for the same customer mail, after the one sent here went out. */
   function startAnother() {
     setRfqId(crypto.randomUUID());
     setSendResult(null);
@@ -254,7 +278,7 @@ export function RfqPanel({
   const fieldId = (field: RfqDetailsField | 'recipients') => `rfq-${field}-${email.id}`;
   const busy = suggesting || writeDrafts.isPending || sendRfq.isPending;
   // Once the mails are out the form is a record of what was sent, not something to edit.
-  const editable = !busy && shownResult === null;
+  const editable = !busy && sentThisSession === null;
   const selectedContactCount = selectedContactIds.size;
   // What is ticked now (for the pending text and the "no draft for this category yet" warning)...
   const selectedCategories = categoriesOfRecipients(
@@ -274,16 +298,59 @@ export function RfqPanel({
 
   return (
     <div className="rfqPanel">
-      <button
-        ref={trigger}
-        type="button"
-        className="button secondary"
-        aria-expanded={open}
-        onClick={() => (open ? close() : setOpen(true))}
-      >
-        {open ? 'Hide vendor quote request' : 'Request vendor quotes'}
-      </button>
-      {open && (
+      <div className="rfqPanelButtons">
+        {recordOffered && existingRecord && (
+          <button
+            type="button"
+            className="button secondary"
+            aria-expanded={view === 'record'}
+            onClick={() => (view === 'record' ? close() : setView('record'))}
+          >
+            {view === 'record' ? 'Hide vendor quotes' : rfqProgressLabel(existingRecord.mails)}
+          </button>
+        )}
+        <button
+          ref={trigger}
+          type="button"
+          className="button secondary"
+          aria-expanded={view === 'form'}
+          onClick={() => (view === 'form' ? close() : setView('form'))}
+        >
+          {view === 'form'
+            ? sentThisSession
+              ? 'Hide vendor quotes'
+              : 'Hide vendor quote request'
+            : sentThisSession
+              ? rfqProgressLabel(sentThisSession.mails)
+              : recordOffered
+                ? 'Request vendor quotes again'
+                : 'Request vendor quotes'}
+        </button>
+      </div>
+      {open && existingRfq.isError && !isUnauthenticated(existingRfq.error) && (
+        <p className="inlineAlert" role="alert">
+          Could not check whether vendor quotes were already requested for this message.{' '}
+          {errorMessage(existingRfq.error)}{' '}
+          <button
+            type="button"
+            className="button textButton"
+            onClick={() => void existingRfq.refetch()}
+          >
+            Try again
+          </button>
+        </p>
+      )}
+      {view === 'record' && existingRecord && (
+        <RfqRecord
+          result={existingRecord}
+          vendors={vendors.data?.vendors ?? []}
+          emailId={email.id}
+          statusHeadingRef={statusHeading}
+          polling={existingRfq.isFetching}
+          onClose={close}
+        />
+      )}
+      {view === 'form' && (
         <form
           ref={form}
           className="rfqForm"
@@ -498,7 +565,7 @@ export function RfqPanel({
             </RfqRecipientsPicker>
           )}
           <div className="rfqActions">
-            {shownResult === null && (
+            {sentThisSession === null && (
               <button type="submit" className="button primary" disabled={busy}>
                 {writeDrafts.isPending
                   ? 'Drafting vendor mails…'
@@ -513,7 +580,7 @@ export function RfqPanel({
               onClick={close}
               disabled={writeDrafts.isPending || sendRfq.isPending}
             >
-              {shownResult === null ? 'Cancel' : 'Close'}
+              {sentThisSession === null ? 'Cancel' : 'Close'}
             </button>
             {writeDrafts.isPending && (
               <span role="status">
@@ -533,7 +600,7 @@ export function RfqPanel({
                 Vendor mails
               </h2>
               <p className="muted">
-                {shownResult === null
+                {sentThisSession === null
                   ? 'One mail per vendor category; every ticked contact of that category receives your edited text. Nothing has been sent yet.'
                   : 'Sent from your mailbox as shown here, one Gmail thread per contact.'}
               </p>
@@ -570,12 +637,14 @@ export function RfqPanel({
                   </div>
                 );
               })}
-              {shownResult === null && selectedCategories.some((category) => !drafts[category]) && (
-                <p className="inlineAlert" role="alert">
-                  You ticked a vendor of a category that has no draft yet. Redraft the vendor mails.
-                </p>
-              )}
-              {shownResult === null && (
+              {sentThisSession === null &&
+                selectedCategories.some((category) => !drafts[category]) && (
+                  <p className="inlineAlert" role="alert">
+                    You ticked a vendor of a category that has no draft yet. Redraft the vendor
+                    mails.
+                  </p>
+                )}
+              {sentThisSession === null && (
                 <div className="rfqActions">
                   <button type="button" className="button primary" disabled={busy} onClick={send}>
                     {sendRfq.isPending
@@ -599,10 +668,10 @@ export function RfqPanel({
                   {errorMessage(sendRfq.error)}
                 </p>
               )}
-              {shownResult && (
+              {sentThisSession && (
                 <>
                   <RfqSendStatus
-                    mails={shownResult.mails}
+                    mails={sentThisSession.mails}
                     vendors={vendors.data?.vendors ?? []}
                     headingId={`rfq-send-status-${email.id}`}
                     headingRef={statusHeading}
@@ -615,7 +684,7 @@ export function RfqPanel({
                       The latest status could not be read. {errorMessage(rfqStatus.error)}
                     </p>
                   )}
-                  {!anyMailSending(shownResult.mails) && (
+                  {!anyMailSending(sentThisSession.mails) && (
                     <div className="rfqActions">
                       <button type="button" className="button textButton" onClick={startAnother}>
                         Start another request for this message

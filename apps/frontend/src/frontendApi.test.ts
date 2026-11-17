@@ -441,6 +441,58 @@ describe('scoped mail 404 after an account switch', () => {
     );
     await expect(frontendApi.thread(session, emailId)).rejects.toMatchObject({ status: 404 });
   });
+  it('finds the RFQ sent from a mail, null when none was, and refuses one for another mail', async () => {
+    const rfqId = '00000000-0000-4000-8000-000000000077';
+    const result = {
+      rfq: {
+        id: rfqId,
+        sourceEmailId: emailId,
+        originPort: 'A',
+        destinationPort: 'B',
+        incoterm: null,
+        status: 'open',
+        createdAt: '2026-11-16T00:00:00.000Z',
+        updatedAt: '2026-11-16T00:00:00.000Z',
+      },
+      mails: [],
+    };
+    let fetchMock = mockResponses(result, session);
+    expect(await frontendApi.rfqBySourceEmail(session, emailId)).toEqual(result);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      `/v1/mailbox/rfqs/bySourceEmail/${emailId}`,
+      expect.anything(),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/v1/me', expect.anything());
+
+    // No RFQ yet: the 404 is checked against the session, then answered as null, not thrown.
+    fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: 'rfq_not_found' }), { status: 404 }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify(session)));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await frontendApi.rfqBySourceEmail(session, emailId)).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    // The same 404 after another tab switched accounts is a sign-out, not "no RFQ".
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(new Response('{}', { status: 404 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ ...session, mailboxId: emailId }))),
+    );
+    await expect(frontendApi.rfqBySourceEmail(session, emailId)).rejects.toMatchObject({
+      code: 'session_changed',
+    });
+
+    mockResponses({ ...result, rfq: { ...result.rfq, sourceEmailId: rfqId } }, session);
+    await expect(frontendApi.rfqBySourceEmail(session, emailId)).rejects.toMatchObject({
+      code: 'invalid_response',
+    });
+  });
 });
 
 describe('transport retries', () => {

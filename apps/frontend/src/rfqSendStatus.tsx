@@ -1,9 +1,13 @@
 import type { RefObject } from 'react';
+import { Link } from 'react-router-dom';
 import { Check, Clock, RefreshCw, TriangleAlert } from 'lucide-react';
-import type { SentMailResponse, VendorResponse } from '@lc/contract';
+import type { RfqMailWithRepliesResponse, VendorResponse } from '@lc/contract';
+import { ClassificationBadge } from './classificationBadge.js';
 import {
   anyMailSending,
   anyUnverifiableMail,
+  countReachableContacts,
+  countRepliedContacts,
   countRetryableMails,
   describeRfqMailStatus,
 } from './rfqSend.js';
@@ -27,10 +31,22 @@ export function sendStatusHeading(total: number, sent: number, sending: number):
   return sending > 0 ? `${sentPart}, ${sending} still sending` : sentPart;
 }
 
+/** The send line, and once anyone has written back, how many vendors have. */
+export function rfqStatusHeading(mails: RfqMailWithRepliesResponse[]): string {
+  const sentCount = mails.filter((mail) => mail.status === 'sent').length;
+  const sendingCount = mails.filter((mail) => mail.status === 'sending').length;
+  const sendPart = sendStatusHeading(mails.length, sentCount, sendingCount);
+  const replied = countRepliedContacts(mails);
+  return replied > 0
+    ? `${sendPart} · ${replied} of ${countReachableContacts(mails)} replied`
+    : sendPart;
+}
+
 /**
- * One row per contact after the send, with where each mail stands. Rows still `sending` are
- * re-read every 10 seconds by the panel until Gmail (or the sweeper) settles them; "Retry failed"
- * repeats the same PUT, which the API answers by sending only what is failed or never reached.
+ * One row per contact after the send: where each mail stands, and what came back for it. Rows still
+ * `sending` are re-read every 10 seconds by the panel until Gmail (or the sweeper) settles them.
+ * "Retry failed" repeats the same PUT, which the API answers by sending only what is failed or never
+ * reached; it is offered only while the panel still holds that PUT's body (`onRetry` null otherwise).
  */
 export function RfqSendStatus({
   mails,
@@ -41,22 +57,21 @@ export function RfqSendStatus({
   retrying,
   onRetry,
 }: {
-  mails: SentMailResponse[];
+  mails: RfqMailWithRepliesResponse[];
   vendors: VendorResponse[];
   headingId: string;
   headingRef: RefObject<HTMLHeadingElement | null>;
   polling: boolean;
   retrying: boolean;
-  onRetry: () => void;
+  onRetry: (() => void) | null;
 }) {
   const vendorNameById = new Map(vendors.map((vendor) => [vendor.id, vendor.vendorName]));
-  const sentCount = mails.filter((mail) => mail.status === 'sent').length;
   const retryable = countRetryableMails(mails);
   const sendingCount = mails.filter((mail) => mail.status === 'sending').length;
   return (
     <section className="rfqSendStatus" aria-labelledby={headingId}>
       <h3 id={headingId} ref={headingRef} tabIndex={-1}>
-        {sendStatusHeading(mails.length, sentCount, sendingCount)}
+        {rfqStatusHeading(mails)}
       </h3>
       <ul className="rfqMailStatusList">
         {mails.map((mail) => {
@@ -82,6 +97,7 @@ export function RfqSendStatus({
                 <strong>{view.label}</strong>
                 {view.detail && <span>{view.detail}</span>}
               </span>
+              <RfqMailReplyCell mail={mail} />
             </li>
           );
         })}
@@ -92,7 +108,7 @@ export function RfqSendStatus({
           checking every 10 seconds.
         </p>
       )}
-      {retryable > 0 && (
+      {onRetry && retryable > 0 && (
         <div className="rfqActions">
           <button type="button" className="button secondary" disabled={retrying} onClick={onRetry}>
             {retrying
@@ -109,5 +125,42 @@ export function RfqSendStatus({
         </div>
       )}
     </section>
+  );
+}
+
+/** What the vendor sent back, newest first: its label, when, a line of it, and the way into the conversation. */
+function RfqMailReplyCell({ mail }: { mail: RfqMailWithRepliesResponse }) {
+  const latestReply = mail.replies.latest;
+  if (!latestReply) {
+    return (
+      <span className="rfqMailReply">
+        {mail.status === 'sent' && <span className="muted">Awaiting reply</span>}
+      </span>
+    );
+  }
+  const replyCount = mail.replies.count;
+  return (
+    <span className="rfqMailReply">
+      <span className="rfqMailReplyHead">
+        {latestReply.classification ? (
+          <ClassificationBadge label={latestReply.classification.label} />
+        ) : (
+          <span className="classificationBadge">Reply</span>
+        )}
+        <span className="muted">
+          {replyCount === 1 ? '1 reply' : `${replyCount} replies`} ·{' '}
+          <time dateTime={latestReply.receivedAt}>
+            {new Date(latestReply.receivedAt).toLocaleString(undefined, {
+              dateStyle: 'medium',
+              timeStyle: 'short',
+            })}
+          </time>
+        </span>
+      </span>
+      {latestReply.snippet && <span className="rfqMailReplySnippet">{latestReply.snippet}</span>}
+      <Link to={`/mailbox?email=${encodeURIComponent(latestReply.emailId)}`}>
+        View conversation
+      </Link>
+    </span>
   );
 }
