@@ -1,5 +1,17 @@
-import type { Rfq, RfqMailReplies, RfqMailWithReplies } from '@lc/core';
-import type { RfqMailRepliesResponse, RfqMailWithRepliesResponse, RfqResponse } from '@lc/contract';
+import type {
+  Rfq,
+  RfqListItem,
+  RfqMailReplies,
+  RfqMailWithReplies,
+  RfqSourceEmail,
+} from '@lc/core';
+import type {
+  RfqListItemResponse,
+  RfqMailRepliesResponse,
+  RfqMailWithRepliesResponse,
+  RfqResponse,
+  RfqSourceEmailResponse,
+} from '@lc/contract';
 import { toCurrentClassificationResponse } from '../emails/emailResponses.js';
 import { toSentMailResponse } from '../sending/sentMailResponses.js';
 
@@ -43,4 +55,18 @@ function toRfqMailRepliesResponse({
         }
       : null,
   };
+}
+
+export function toRfqSourceEmailResponse(sourceEmail: RfqSourceEmail): RfqSourceEmailResponse {
+  return {
+    id: sourceEmail.id,
+    sender: { name: sourceEmail.senderName, email: sourceEmail.senderEmail },
+    subject: sourceEmail.subject,
+    receivedAt: sourceEmail.receivedAt.toISOString(),
+  };
+}
+
+/** The list row without its customer mail: the group it sits in carries that once for all its RFQs. */
+export function toRfqListItemResponse(rfqListItem: RfqListItem): RfqListItemResponse {
+  return { rfq: toRfqResponse(rfqListItem.rfq), replies: rfqListItem.replies };
 }

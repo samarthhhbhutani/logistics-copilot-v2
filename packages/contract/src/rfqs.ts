@@ -265,3 +265,66 @@ export const getRfqResponseSchema = rfqWithMailsResponseSchema;
  *   404 rfq_not_found (no RFQ was sent from this mail, or the mail is of another mailbox or tenant)
  */
 export const getRfqBySourceEmailResponseSchema = rfqWithMailsResponseSchema;
+
+export const MAX_RFQ_PAGE_SIZE = 100;
+export const DEFAULT_RFQ_PAGE_SIZE = 25;
+
+/** GET /v1/mailbox/rfqs ?limit=25&cursor=<opaque> */
+export const listRfqsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(MAX_RFQ_PAGE_SIZE).default(DEFAULT_RFQ_PAGE_SIZE),
+  cursor: z.string().min(1).optional(),
+});
+export type ListRfqsQuery = z.input<typeof listRfqsQuerySchema>;
+
+/** The customer mail an RFQ was sent from: who asked and what for, enough for a card without the body. */
+export const rfqSourceEmailSchema = z.object({
+  id: z.uuid(),
+  sender: z.object({ name: z.string(), email: z.string().nullable() }),
+  subject: z.string(),
+  receivedAt: z.iso.datetime(),
+});
+export type RfqSourceEmailResponse = z.infer<typeof rfqSourceEmailSchema>;
+
+/**
+ * How far an RFQ has come, counted in vendors rather than messages: a vendor who writes twice is
+ * one reply, and the desk's question is "how many have come back", not "how much mail arrived".
+ */
+export const rfqReplyCountsSchema = z.object({
+  /** Contacts the RFQ reached or may still reach: every mail of the RFQ that is not `failed`. */
+  contactCount: z.number().int().nonnegative(),
+  /** Contacts with at least one inbound mail linked to their RFQ mail. */
+  repliedCount: z.number().int().nonnegative(),
+  /** Contacts whose newest reply is labelled vendor_quote. */
+  quoteCount: z.number().int().nonnegative(),
+});
+export type RfqReplyCountsResponse = z.infer<typeof rfqReplyCountsSchema>;
+
+/** One RFQ in the list; its mails come from GET /v1/mailbox/rfqs/:rfqId when the row is opened. */
+export const rfqListItemSchema = z.object({
+  rfq: rfqResponseSchema,
+  replies: rfqReplyCountsSchema,
+});
+export type RfqListItemResponse = z.infer<typeof rfqListItemSchema>;
+
+/** A customer mail and every RFQ sent from it on this page, newest first (a mail processed twice has two). */
+export const rfqCustomerMailGroupSchema = z.object({
+  sourceEmail: rfqSourceEmailSchema,
+  rfqs: z.array(rfqListItemSchema).min(1),
+});
+export type RfqCustomerMailGroupResponse = z.infer<typeof rfqCustomerMailGroupSchema>;
+
+/**
+ * GET /v1/mailbox/rfqs: the mailbox's RFQs newest first (created_at desc), grouped under the customer
+ * mail each answers. Groups come in order of first appearance, so a group sits where its newest RFQ
+ * falls. The page is cut in RFQs, not groups: a customer mail whose RFQs straddle a page boundary
+ * appears again on the next page, and the client merges the two groups by sourceEmail.id.
+ *   200 ListRfqsResponse
+ *   400 invalid_query (limit out of 1..MAX_RFQ_PAGE_SIZE) | invalid_cursor (not a cursor this API issued)
+ *   401
+ */
+export const listRfqsResponseSchema = z.object({
+  customerMails: z.array(rfqCustomerMailGroupSchema),
+  /** Pass back as ?cursor= for the next page; null when this was the last page. */
+  nextCursor: z.string().nullable(),
+});
+export type ListRfqsResponse = z.infer<typeof listRfqsResponseSchema>;

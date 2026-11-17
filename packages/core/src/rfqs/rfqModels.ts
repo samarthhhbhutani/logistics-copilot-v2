@@ -20,6 +20,35 @@ export interface Rfq {
   updatedAt: Date;
 }
 
+/** The customer mail an RFQ was sent from, as the RFQ list shows it: who asked and what for, no body. */
+export interface RfqSourceEmail {
+  id: string;
+  senderName: string;
+  senderEmail: string | null;
+  subject: string;
+  receivedAt: Date;
+}
+
+/**
+ * How far an RFQ has come, counted in vendors rather than messages: a vendor who writes twice is
+ * one reply, and the desk's question is "how many have come back", not "how much mail arrived".
+ */
+export interface RfqReplyCounts {
+  /** Contacts the RFQ reached or may still reach: every mail of the RFQ that is not `failed`. */
+  contactCount: number;
+  /** Contacts with at least one inbound mail linked to their RFQ mail. */
+  repliedCount: number;
+  /** Contacts whose newest reply is labelled vendor_quote. */
+  quoteCount: number;
+}
+
+/** One row of the RFQ list; the mails themselves come from GET /rfqs/:rfqId when a row is opened. */
+export interface RfqListItem {
+  rfq: Rfq;
+  sourceEmail: RfqSourceEmail;
+  replies: RfqReplyCounts;
+}
+
 // Prisma generates UPPER_CASE enum members; the API and the column speak lowercase.
 export const PRISMA_ENUM_BY_RFQ_STATUS: Record<RfqStatus, PrismaRfqStatus> = {
   open: 'OPEN',
