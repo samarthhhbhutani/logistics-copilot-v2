@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   getRfqBySourceEmailResponseSchema,
   getRfqResponseSchema,
+  listRfqsResponseSchema,
   sendRfqResponseSchema,
 } from '@lc/contract';
 import type { SendRfqResponse } from '@lc/contract';
@@ -17,6 +18,7 @@ const unknownId = '00000000-0000-4000-8000-0000000000ff';
 const sendPath = (id: string) => `/v1/mailbox/rfqs/${id}/send`;
 const rfqPath = (id: string) => `/v1/mailbox/rfqs/${id}`;
 const rfqBySourceEmailPath = (emailId: string) => `/v1/mailbox/rfqs/bySourceEmail/${emailId}`;
+const listPath = '/v1/mailbox/rfqs';
 
 const details = {
   originPort: 'Hazira, India',
@@ -584,5 +586,218 @@ describe('GET /v1/mailbox/rfqs/bySourceEmail/:emailId', () => {
       .set('Cookie', otherCookie);
     expect(foreign.status).toBe(404);
     expect(foreign.body).toEqual({ error: 'rfq_not_found' });
+  });
+});
+
+describe('GET /v1/mailbox/rfqs', () => {
+  const secondCustomerEmailId = '00000000-0000-4000-8000-000000000002';
+  const firstRfqId = '22222222-2222-4222-8222-222222222221';
+  const reprocessedRfqId = '22222222-2222-4222-8222-222222222223';
+
+  /** Two customer mails; the first processed twice (RFQs 1 then 3), the second once (RFQ 2) in between. */
+  async function seedThreeRfqs(testApp: TestApp, scope: Scope, vendors: SeededVendors) {
+    testApp.repositories.addEmail({
+      ...scope,
+      id: secondCustomerEmailId,
+      gmailThreadId: '2b2d',
+      gmailLabel: 'inbox',
+      senderName: 'Meera Shah',
+      senderEmail: 'meera@globex.com',
+      toRecipients: [{ name: '', address: testMailboxEmail }],
+      subject: 'Rates for 1 x 40ft Mundra to Rotterdam',
+      snippet: '',
+      receivedAt: new Date('2026-11-12T08:00:00Z'),
+    });
+    const pause = () => new Promise((resolve) => setTimeout(resolve, 5));
+    await send(testApp, scope.cookie, everyoneBody(vendors), firstRfqId);
+    await pause();
+    await send(
+      testApp,
+      scope.cookie,
+      { ...everyoneBody(vendors), sourceEmailId: secondCustomerEmailId },
+      rfqId,
+    );
+    await pause();
+    await send(testApp, scope.cookie, everyoneBody(vendors), reprocessedRfqId);
+  }
+
+  const list = (testApp: TestApp, cookie: string, query = '') =>
+    request(testApp.app).get(`${listPath}${query}`).set('Cookie', cookie);
+
+  it('lists every RFQ newest first, grouped under its customer mail where the newest one falls', async () => {
+    const testApp = createTestApp();
+    const scope = await connectedMailbox(testApp);
+    const vendors = await seedVendors(testApp, scope.cookie);
+    await seedThreeRfqs(testApp, scope, vendors);
+
+    const response = await list(testApp, scope.cookie);
+
+    expect(response.status).toBe(200);
+    const body = listRfqsResponseSchema.parse(response.body);
+    expect(body.nextCursor).toBeNull();
+    expect(
+      body.customerMails.map((group) => [
+        group.sourceEmail.id,
+        group.rfqs.map((item) => item.rfq.id),
+      ]),
+    ).toEqual([
+      [customerEmailId, [reprocessedRfqId, firstRfqId]],
+      [secondCustomerEmailId, [rfqId]],
+    ]);
+    expect(body.customerMails[0]!.sourceEmail).toEqual({
+      id: customerEmailId,
+      sender: { name: 'Ravi Kumar', email: 'ravi@acme.com' },
+      subject: 'RFQ: 2 x 20ft India to UAE',
+      receivedAt: '2026-11-10T10:00:00.000Z',
+    });
+    expect(body.customerMails[0]!.rfqs[0]!.rfq.sourceEmailId).toBe(customerEmailId);
+    expect(body.customerMails[0]!.rfqs[0]!.replies).toEqual({
+      contactCount: 3,
+      repliedCount: 0,
+      quoteCount: 0,
+    });
+  });
+
+  it('counts vendors that came back and quoted, leaving out mails that were refused', async () => {
+    const testApp = createTestApp();
+    const scope = await connectedMailbox(testApp);
+    const vendors = await seedVendors(testApp, scope.cookie);
+    testApp.gmailSender.failNextSendWith = 'bad_request';
+    const sent = await send(testApp, scope.cookie, everyoneBody(vendors));
+    const sentMails = sendRfqResponseSchema
+      .parse(sent.body)
+      .mails.filter((mail) => mail.status === 'sent');
+    const [quotedMail, repliedMail] = sentMails;
+    const classifiedAt = new Date('2026-11-16T09:31:00Z');
+    const seedReply = (
+      id: string,
+      answersSentMailId: string,
+      receivedAt: string,
+      label?: 'vendor_quote' | 'vendor_reply',
+    ) =>
+      testApp.repositories.addEmail({
+        ...scope,
+        id,
+        gmailThreadId: 'x',
+        gmailLabel: 'inbox',
+        senderName: 'Vendor',
+        senderEmail: 'vendor@example.com',
+        toRecipients: [{ name: '', address: testMailboxEmail }],
+        subject: 'Re: RFQ',
+        snippet: '',
+        receivedAt: new Date(receivedAt),
+        answersSentMailId,
+        ...(label
+          ? { classification: { label, source: 'llm', confidence: 0.9, classifiedAt } }
+          : {}),
+      });
+    // A quote followed by a correction that is not one: the newest reply decides, so this is not a quote.
+    seedReply(
+      '00000000-0000-4000-8000-00000000000a',
+      repliedMail!.id,
+      '2026-11-16T09:00:00Z',
+      'vendor_quote',
+    );
+    seedReply(
+      '00000000-0000-4000-8000-00000000000b',
+      repliedMail!.id,
+      '2026-11-16T09:30:00Z',
+      'vendor_reply',
+    );
+    // An acknowledgement, then a quote.
+    seedReply('00000000-0000-4000-8000-00000000000c', quotedMail!.id, '2026-11-16T09:00:00Z');
+    seedReply(
+      '00000000-0000-4000-8000-00000000000d',
+      quotedMail!.id,
+      '2026-11-16T10:00:00Z',
+      'vendor_quote',
+    );
+
+    const response = await list(testApp, scope.cookie);
+
+    const body = listRfqsResponseSchema.parse(response.body);
+    expect(body.customerMails).toHaveLength(1);
+    expect(body.customerMails[0]!.rfqs[0]!.replies).toEqual({
+      contactCount: 2,
+      repliedCount: 2,
+      quoteCount: 1,
+    });
+  });
+
+  it('pages in RFQs with an opaque cursor, repeating a customer mail whose RFQs straddle the cut', async () => {
+    const testApp = createTestApp();
+    const scope = await connectedMailbox(testApp);
+    const vendors = await seedVendors(testApp, scope.cookie);
+    await seedThreeRfqs(testApp, scope, vendors);
+
+    const firstPage = listRfqsResponseSchema.parse(
+      (await list(testApp, scope.cookie, '?limit=2')).body,
+    );
+    expect(
+      firstPage.customerMails.map((group) => [
+        group.sourceEmail.id,
+        group.rfqs.map((item) => item.rfq.id),
+      ]),
+    ).toEqual([
+      [customerEmailId, [reprocessedRfqId]],
+      [secondCustomerEmailId, [rfqId]],
+    ]);
+    expect(firstPage.nextCursor).toEqual(expect.any(String));
+
+    const secondPage = listRfqsResponseSchema.parse(
+      (await list(testApp, scope.cookie, `?limit=2&cursor=${firstPage.nextCursor}`)).body,
+    );
+    expect(
+      secondPage.customerMails.map((group) => [
+        group.sourceEmail.id,
+        group.rfqs.map((item) => item.rfq.id),
+      ]),
+    ).toEqual([[customerEmailId, [firstRfqId]]]);
+    expect(secondPage.nextCursor).toBeNull();
+
+    // Exactly a page: no next cursor is handed out for an empty page.
+    const exactPage = listRfqsResponseSchema.parse(
+      (await list(testApp, scope.cookie, '?limit=3')).body,
+    );
+    expect(exactPage.nextCursor).toBeNull();
+  });
+
+  it("is empty for a fresh mailbox and never shows another mailbox's RFQs", async () => {
+    const testApp = createTestApp();
+    const scope = await connectedMailbox(testApp);
+    const vendors = await seedVendors(testApp, scope.cookie);
+    await send(testApp, scope.cookie, everyoneBody(vendors));
+
+    const otherTenant = await request(testApp.app)
+      .post('/v1/tenants')
+      .send({ ...testTenantBody, name: 'Other Forwarder' });
+    const otherEmail = 'other@example.com';
+    await request(testApp.app)
+      .post(`/v1/tenants/${otherTenant.body.tenantId}/mailboxes`)
+      .send({ email: otherEmail, password });
+    const otherLogin = await request(testApp.app)
+      .post('/v1/auth/login')
+      .send({ email: otherEmail, password });
+    const otherSetCookie = otherLogin.headers['set-cookie'];
+    const otherCookie = (
+      Array.isArray(otherSetCookie) ? otherSetCookie : [String(otherSetCookie)]
+    ).find((cookie) => cookie.startsWith('lc_session='))!;
+
+    const foreign = await list(testApp, otherCookie);
+    expect(foreign.status).toBe(200);
+    expect(foreign.body).toEqual({ customerMails: [], nextCursor: null });
+  });
+
+  it('answers 400 for a forged cursor or a bad limit and 401 without a session', async () => {
+    const testApp = createTestApp();
+    const scope = await connectedMailbox(testApp);
+
+    const forged = await list(testApp, scope.cookie, '?cursor=not-a-cursor');
+    expect([forged.status, forged.body.error]).toEqual([400, 'invalid_cursor']);
+    const tooMany = await list(testApp, scope.cookie, '?limit=101');
+    expect(tooMany.status).toBe(400);
+    expect(String(tooMany.body.error)).toMatch(/^invalid_query: limit/);
+    const anonymous = await request(testApp.app).get(listPath);
+    expect(anonymous.status).toBe(401);
   });
 });

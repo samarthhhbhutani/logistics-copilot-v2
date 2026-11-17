@@ -490,6 +490,54 @@ export function createInMemoryRepositories(): {
       },
     },
     rfqRepository: {
+      async listRfqs(scope, { limit, before }) {
+        return rfqs
+          .filter(
+            (candidate) =>
+              candidate.mailboxId === scope.mailboxId &&
+              candidate.tenantId === scope.tenantId &&
+              (!before ||
+                candidate.createdAt < before.createdAt ||
+                (candidate.createdAt.getTime() === before.createdAt.getTime() &&
+                  candidate.id < before.id)),
+          )
+          .sort(
+            (left, right) =>
+              right.createdAt.getTime() - left.createdAt.getTime() ||
+              right.id.localeCompare(left.id),
+          )
+          .slice(0, limit)
+          .map((rfq) => {
+            const sourceEmail = emails.find((email) => email.id === rfq.sourceEmailId);
+            if (!sourceEmail) throw new Error(`rfq ${rfq.id} has no seeded source email`);
+            const reachableMails = sentMails.filter(
+              (sentMail) => sentMail.rfqId === rfq.id && sentMail.status !== 'failed',
+            );
+            const newestReplyLabels = reachableMails.map((sentMail) => {
+              const newestReply = emails
+                .filter((email) => email.answersSentMailId === sentMail.id)
+                .sort((left, right) => right.receivedAt.getTime() - left.receivedAt.getTime())[0];
+              return newestReply
+                ? (newestReply.classification?.label ?? 'unclassified')
+                : undefined;
+            });
+            return {
+              rfq,
+              sourceEmail: {
+                id: sourceEmail.id,
+                senderName: sourceEmail.senderName,
+                senderEmail: sourceEmail.senderEmail,
+                subject: sourceEmail.subject,
+                receivedAt: sourceEmail.receivedAt,
+              },
+              replies: {
+                contactCount: reachableMails.length,
+                repliedCount: newestReplyLabels.filter((label) => label !== undefined).length,
+                quoteCount: newestReplyLabels.filter((label) => label === 'vendor_quote').length,
+              },
+            };
+          });
+      },
       async createRfq(scope, rfqToCreate) {
         const existing = rfqs.find((candidate) => candidate.id === rfqToCreate.id);
         if (existing) {

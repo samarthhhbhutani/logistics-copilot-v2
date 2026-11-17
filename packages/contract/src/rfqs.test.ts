@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DEFAULT_RFQ_PAGE_SIZE,
   MAX_CONTACTS_PER_RFQ,
+  MAX_RFQ_PAGE_SIZE,
   MAX_VENDORS_PER_RFQ,
   draftRfqMailsBodySchema,
+  listRfqsQuerySchema,
   rfqDetailsSchema,
   sendRfqBodySchema,
 } from './index.js';
@@ -140,5 +143,24 @@ describe('sendRfqBodySchema', () => {
       sendRfqBodySchema.safeParse({ ...base, recipients: [{ vendorId, contactIds: tooMany }] })
         .success,
     ).toBe(false);
+  });
+});
+
+describe('listRfqsQuerySchema', () => {
+  it('defaults the page size and reads limit from the query string', () => {
+    expect(listRfqsQuerySchema.parse({})).toEqual({ limit: DEFAULT_RFQ_PAGE_SIZE });
+    expect(listRfqsQuerySchema.parse({ limit: '10', cursor: 'abc' })).toEqual({
+      limit: 10,
+      cursor: 'abc',
+    });
+  });
+
+  it('refuses a limit outside 1..MAX_RFQ_PAGE_SIZE and an empty cursor', () => {
+    expect(listRfqsQuerySchema.safeParse({ limit: '0' }).success).toBe(false);
+    expect(listRfqsQuerySchema.safeParse({ limit: String(MAX_RFQ_PAGE_SIZE + 1) }).success).toBe(
+      false,
+    );
+    expect(listRfqsQuerySchema.safeParse({ limit: '2.5' }).success).toBe(false);
+    expect(listRfqsQuerySchema.safeParse({ cursor: '' }).success).toBe(false);
   });
 });

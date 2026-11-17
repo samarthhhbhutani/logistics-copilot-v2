@@ -32,7 +32,7 @@ import { createEmailClassificationsRouter } from './emails/emailClassificationsR
 import { createThreadsRouter } from './emails/threadsRouter.js';
 import { createGmailConnectionRouter } from './gmail/gmailConnectionRouter.js';
 import { createRfqDraftsRouter } from './rfqs/rfqDraftsRouter.js';
-import { createRfqSendRouter } from './rfqs/rfqSendRouter.js';
+import { createRfqsRouter } from './rfqs/rfqsRouter.js';
 import { createRfqSuggestionsRouter } from './rfqs/rfqSuggestionsRouter.js';
 import { createEmailRepliesRouter } from './sending/emailRepliesRouter.js';
 import { createTenantsRouter } from './tenants/tenantsRouter.js';
@@ -182,7 +182,7 @@ export function createAppInstance({
   );
   v1Router.use(
     '/mailbox/rfqs',
-    createRfqSendRouter({
+    createRfqsRouter({
       emailReadRepository,
       vendorRepository,
       rfqRepository,

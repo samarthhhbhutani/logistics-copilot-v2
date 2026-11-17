@@ -6,6 +6,8 @@ import {
   GmailApiError,
   buildOutboundMessageId,
   buildRfqMailMessage,
+  decodeRfqListCursor,
+  encodeRfqListCursor,
   isDefinitiveGmailRejection,
   mapWithConcurrency,
 } from '@lc/core';
@@ -16,6 +18,7 @@ import type {
   MailboxConnectionRepository,
   MailboxScope,
   Rfq,
+  RfqListItem,
   RfqRepository,
   SentMail,
   SentMailRepository,
@@ -25,8 +28,10 @@ import type {
   VendorContact,
   VendorRepository,
 } from '@lc/core';
-import { sendRfqBodySchema } from '@lc/contract';
+import { listRfqsQuerySchema, sendRfqBodySchema } from '@lc/contract';
 import type {
+  ListRfqsResponse,
+  RfqCustomerMailGroupResponse,
   RfqMailText,
   RfqRecipient,
   RfqWithMailsResponse,
@@ -35,11 +40,17 @@ import type {
 import { getSession } from '../auth/requireSession.js';
 import { parseIdOr404 } from '../http/parseIdOr404.js';
 import { parseRequestBody } from '../http/parseRequestBody.js';
-import { toRfqMailWithRepliesResponse, toRfqResponse } from './rfqResponses.js';
+import { parseRequestQuery } from '../http/parseRequestQuery.js';
+import {
+  toRfqListItemResponse,
+  toRfqMailWithRepliesResponse,
+  toRfqResponse,
+  toRfqSourceEmailResponse,
+} from './rfqResponses.js';
 import { loadSendingMailbox } from '../sending/loadSendingMailbox.js';
 import type { SendingMailbox } from '../sending/loadSendingMailbox.js';
 
-export interface RfqSendRouterDependencies {
+export interface RfqsRouterDependencies {
   emailReadRepository: EmailReadRepository;
   vendorRepository: VendorRepository;
   rfqRepository: RfqRepository;
@@ -55,7 +66,8 @@ export interface RfqSendRouterDependencies {
 const CONCURRENT_GMAIL_SENDS = 2;
 
 /**
- * Sending an RFQ to vendors and reading it back, mounted at /v1/mailbox/rfqs.
+ * The mailbox's RFQs: sending one to vendors and reading them back, mounted at /v1/mailbox/rfqs.
+ *   GET /?limit&cursor               every rfq newest first, grouped by the customer mail it answers, with reply counts per rfq
  *   PUT /:rfqId/send                 { sourceEmailId, details, recipients, mails }   see sendRfqBodySchema for codes
  *   GET /:rfqId                      the rfq and its mails, each with the replies it drew; polled while a mail is still `sending`
  *   GET /bySourceEmail/:emailId      the same for the newest rfq sent from that customer mail; 404 rfq_not_found when none was
@@ -66,7 +78,7 @@ const CONCURRENT_GMAIL_SENDS = 2;
  * the batch ran, and each mail carries its own status. The same PUT again (same rfqId) is the retry:
  * it sends what is still pending or failed and leaves sent and sending rows alone.
  */
-export function createRfqSendRouter({
+export function createRfqsRouter({
   emailReadRepository,
   vendorRepository,
   rfqRepository,
@@ -76,8 +88,31 @@ export function createRfqSendRouter({
   gmailSender,
   encryptionUtil,
   requireSession,
-}: RfqSendRouterDependencies): Router {
+}: RfqsRouterDependencies): Router {
   const router = express.Router();
+
+  router.get('/', requireSession, async (request, response) => {
+    const scope = getSession(response);
+    const listQuery = parseRequestQuery(listRfqsQuerySchema, request.query);
+    const before = listQuery.cursor ? decodeRfqListCursor(listQuery.cursor) : undefined;
+    if (listQuery.cursor && !before) throw createHttpError(400, 'invalid_cursor');
+
+    // One row past the page tells whether there is a next page without a count query.
+    const rfqListItems = await rfqRepository.listRfqs(scope, {
+      limit: listQuery.limit + 1,
+      before,
+    });
+    const pageItems = rfqListItems.slice(0, listQuery.limit);
+    const lastPageItem = pageItems[pageItems.length - 1];
+    const responseBody: ListRfqsResponse = {
+      customerMails: groupByCustomerMail(pageItems),
+      nextCursor:
+        rfqListItems.length > listQuery.limit && lastPageItem
+          ? encodeRfqListCursor({ createdAt: lastPageItem.rfq.createdAt, id: lastPageItem.rfq.id })
+          : null,
+    };
+    response.status(200).json(responseBody);
+  });
 
   router.put('/:rfqId/send', requireSession, async (request, response) => {
     const scope = getSession(response);
@@ -202,6 +237,27 @@ export function createRfqSendRouter({
   }
 
   return router;
+}
+
+/**
+ * Groups a page of RFQs (newest first) under their customer mail, groups in order of first
+ * appearance: a group sits where its newest RFQ falls. Only the page is grouped, so a customer mail
+ * whose RFQs straddle a page boundary appears in two responses; the client merges them by id.
+ */
+function groupByCustomerMail(rfqListItems: RfqListItem[]): RfqCustomerMailGroupResponse[] {
+  const groupBySourceEmailId = new Map<string, RfqCustomerMailGroupResponse>();
+  for (const rfqListItem of rfqListItems) {
+    const existingGroup = groupBySourceEmailId.get(rfqListItem.sourceEmail.id);
+    if (existingGroup) {
+      existingGroup.rfqs.push(toRfqListItemResponse(rfqListItem));
+    } else {
+      groupBySourceEmailId.set(rfqListItem.sourceEmail.id, {
+        sourceEmail: toRfqSourceEmailResponse(rfqListItem.sourceEmail),
+        rfqs: [toRfqListItemResponse(rfqListItem)],
+      });
+    }
+  }
+  return [...groupBySourceEmailId.values()];
 }
 
 interface RecipientContact {
