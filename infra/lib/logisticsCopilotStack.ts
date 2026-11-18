@@ -110,9 +110,11 @@ export class LogisticsCopilotStack extends Stack {
     this.railwayApiUser = new iam.User(this, 'RailwayApiUser', {
       userName: `logistics-copilot-railway-api-${stage}`,
     });
-    // Read for the UI, put for attachments uploaded via the API; never delete: mail is evidence.
+    // Read for the UI, put for files uploaded via the API; never delete mail: it is evidence.
     this.rawMailBucket.grantRead(this.railwayApiUser);
     this.rawMailBucket.grantPut(this.railwayApiUser);
+    // Signature images are not mail: the API removes the object when the operator deletes the image.
+    this.rawMailBucket.grantDelete(this.railwayApiUser, 'signatures/*');
     this.gmailMessageIdQueue.grantSendMessages(this.railwayApiUser);
 
     // Pub/Sub push target. Auth NONE at the URL: Google signs each push with an OIDC token that the

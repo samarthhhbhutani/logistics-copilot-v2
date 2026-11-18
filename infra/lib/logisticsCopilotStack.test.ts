@@ -164,7 +164,7 @@ describe('LogisticsCopilotStack', () => {
     });
   });
 
-  it('Railway user can read and put in the bucket and send to the message-id queue; no delete, no access key', () => {
+  it('Railway user can read and put in the bucket, delete only under signatures/, and send to the message-id queue; no access key', () => {
     template.hasResourceProperties('AWS::IAM::User', {
       UserName: 'logistics-copilot-railway-api-staging',
     });
@@ -174,17 +174,27 @@ describe('LogisticsCopilotStack', () => {
     });
     expect(Object.keys(policies)).toHaveLength(1);
     const statements = Object.values(policies).flatMap(
-      (policy) => policy.Properties.PolicyDocument.Statement as { Action: string | string[] }[],
+      (policy) =>
+        policy.Properties.PolicyDocument.Statement as {
+          Action: string | string[];
+          Resource: unknown;
+        }[],
     );
-    const actions = statements.flatMap((statement) =>
-      Array.isArray(statement.Action) ? statement.Action : [statement.Action],
-    );
+    const actionsOf = (statement: { Action: string | string[] }) =>
+      Array.isArray(statement.Action) ? statement.Action : [statement.Action];
+    const actions = statements.flatMap(actionsOf);
     expect(actions.every((action) => action.startsWith('s3:') || action.startsWith('sqs:'))).toBe(
       true,
     );
     expect(actions).toContain('sqs:SendMessage');
     expect(actions).not.toContain('sqs:ReceiveMessage');
-    expect(actions.some((action) => action.startsWith('s3:Delete'))).toBe(false);
+    // Mail is evidence: the only delete the API gets is on its own signature images.
+    const deleteStatements = statements.filter((statement) =>
+      actionsOf(statement).some((action) => action.startsWith('s3:Delete')),
+    );
+    expect(deleteStatements).toHaveLength(1);
+    expect(actionsOf(deleteStatements[0]!)).toEqual(['s3:DeleteObject*']);
+    expect(JSON.stringify(deleteStatements[0]!.Resource)).toContain('/signatures/*');
   });
 
   it(
