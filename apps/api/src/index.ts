@@ -15,6 +15,7 @@ import {
   createPrismaMailboxCredentialsRepository,
   createPrismaRfqRepository,
   createPrismaSentMailRepository,
+  createPrismaSignatureImageRepository,
   createPrismaTenantRepository,
   createEncryptionUtil,
   initializePrismaClient,
@@ -23,6 +24,7 @@ import {
 import { createAppInstance } from './createAppInstance.js';
 import { createS3AttachmentContentReader } from './emails/attachmentContentReader.js';
 import { createS3AttachmentDownloadUrlSigner } from './emails/attachmentDownloadUrlSigner.js';
+import { createS3SignatureImageStore } from './signature/signatureImageStore.js';
 import { shutdownTelemetry } from './instrumentation.js';
 
 // Composition root: the only place in the API that reads process.env and builds singletons.
@@ -40,7 +42,11 @@ const attachmentDownloadUrlSigner = config.RAW_MAIL_BUCKET_NAME
   ? createS3AttachmentDownloadUrlSigner({ s3Client, bucketName: config.RAW_MAIL_BUCKET_NAME })
   : undefined;
 if (!attachmentDownloadUrlSigner)
-  console.warn('RAW_MAIL_BUCKET_NAME unset: attachment downloads disabled');
+  console.warn('RAW_MAIL_BUCKET_NAME unset: attachment downloads and signature images disabled');
+// Optional for the same reason: without a bucket the signature image routes answer 503.
+const signatureImageStore = config.RAW_MAIL_BUCKET_NAME
+  ? createS3SignatureImageStore({ s3Client, bucketName: config.RAW_MAIL_BUCKET_NAME })
+  : undefined;
 // Optional: the suggester reads PDF and image attachments only when switched on and the bucket is known.
 const attachmentContentReader =
   config.LLM_SUGGEST_RFQ_INCLUDE_ATTACHMENTS && config.RAW_MAIL_BUCKET_NAME
@@ -67,6 +73,8 @@ const expressApp = createAppInstance({
   emailClassificationRepository: createPrismaEmailClassificationRepository(prismaClient),
   sentMailRepository: createPrismaSentMailRepository(prismaClient),
   rfqRepository: createPrismaRfqRepository(prismaClient),
+  signatureImageRepository: createPrismaSignatureImageRepository(prismaClient),
+  signatureImageStore,
   attachmentDownloadUrlSigner,
   rfqSuggester,
   attachmentContentReader,
