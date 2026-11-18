@@ -106,6 +106,7 @@ describe('frontendApi', () => {
                 gmailConnectedAt: null,
                 watchExpiresAt: null,
                 signature: null,
+                signatureHtml: null,
               }),
             ),
           )

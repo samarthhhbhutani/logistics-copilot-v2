@@ -153,6 +153,7 @@ export function createInMemoryRepositories(): {
           encryptedRefreshToken: null,
           watchExpiresAt: null,
           signature: null,
+          signatureHtml: null,
         });
         return credentials;
       },
@@ -601,9 +602,12 @@ export function createInMemoryRepositories(): {
         connection.gmailConnectedAt = null;
         connection.watchExpiresAt = null;
       },
-      async updateSignature(scope, signature) {
+      async updateSignature(scope, { signature, signatureHtml }) {
         const connection = findInTenant(scope);
-        if (connection) connection.signature = signature;
+        if (connection) {
+          connection.signature = signature;
+          connection.signatureHtml = signatureHtml;
+        }
       },
     },
   };

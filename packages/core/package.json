@@ -51,6 +51,7 @@
     "dotenv": "^16.4.7",
     "email-forward-parser": "^1.8.3",
     "email-reply-parser": "^2.3.9",
+    "escape-html": "^1.0.3",
     "google-auth-library": "^10.9.1",
     "html-to-text": "^10.0.1",
     "jose": "^6.2.15",
@@ -58,13 +59,16 @@
     "openai": "^7.55.0",
     "pg": "^8.23.1",
     "postal-mime": "^4.2.0",
+    "sanitize-html": "^2.18.2",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@opentelemetry/context-async-hooks": "^3.1.0",
     "@opentelemetry/sdk-trace": "^3.1.0",
+    "@types/escape-html": "^1.0.4",
     "@types/html-to-text": "^9.0.4",
     "@types/pg": "^8.23.1",
+    "@types/sanitize-html": "^2.16.2",
     "prisma": "7.10.1"
   }
 }

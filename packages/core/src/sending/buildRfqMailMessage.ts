@@ -16,6 +16,7 @@ export function buildRfqMailMessage(
     subject: sentMail.subject,
     text: sentMail.bodyText,
     signature: connection.signature ?? undefined,
+    signatureHtml: connection.signatureHtml ?? undefined,
     messageId: sentMail.rfcMessageId,
   };
 }

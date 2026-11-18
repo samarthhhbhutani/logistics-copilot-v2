@@ -4,7 +4,7 @@ import {
   gmailConnectResponseSchema,
   mailboxResponseSchema,
   updateMailboxSignatureRequestSchema,
-  MAILBOX_SIGNATURE_MAX_LENGTH,
+  MAILBOX_SIGNATURE_HTML_MAX_LENGTH,
 } from './index.js';
 import type { MailboxResponse } from './index.js';
 
@@ -16,6 +16,7 @@ const mailbox: MailboxResponse = {
   gmailConnectedAt: '2026-11-09T12:00:00.000Z',
   watchExpiresAt: '2026-11-15T12:00:00.000Z',
   signature: 'Ops Desk\nBhatia Logistics',
+  signatureHtml: '<p>Ops Desk<br>Bhatia Logistics</p>',
 };
 
 describe('mailboxResponseSchema', () => {
@@ -84,18 +85,21 @@ describe('connectFlowErrorSchema', () => {
 });
 
 describe('updateMailboxSignatureRequestSchema', () => {
-  it('takes plain text or null and refuses anything over the limit', () => {
-    expect(updateMailboxSignatureRequestSchema.parse({ signature: 'Ops Desk' })).toEqual({
-      signature: 'Ops Desk',
-    });
-    expect(updateMailboxSignatureRequestSchema.parse({ signature: null })).toEqual({
-      signature: null,
+  it('takes HTML or null and refuses anything over the limit or the old plain-text shape', () => {
+    expect(updateMailboxSignatureRequestSchema.parse({ signatureHtml: '<p>Ops Desk</p>' })).toEqual(
+      { signatureHtml: '<p>Ops Desk</p>' },
+    );
+    expect(updateMailboxSignatureRequestSchema.parse({ signatureHtml: null })).toEqual({
+      signatureHtml: null,
     });
     expect(
       updateMailboxSignatureRequestSchema.safeParse({
-        signature: 'x'.repeat(MAILBOX_SIGNATURE_MAX_LENGTH + 1),
+        signatureHtml: 'x'.repeat(MAILBOX_SIGNATURE_HTML_MAX_LENGTH + 1),
       }).success,
     ).toBe(false);
     expect(updateMailboxSignatureRequestSchema.safeParse({}).success).toBe(false);
+    expect(updateMailboxSignatureRequestSchema.safeParse({ signature: 'Ops Desk' }).success).toBe(
+      false,
+    );
   });
 });

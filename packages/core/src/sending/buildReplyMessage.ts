@@ -36,6 +36,7 @@ export function buildReplyMessage(
     subject: sentMail.subject,
     text: sentMail.bodyText,
     signature: connection.signature ?? undefined,
+    signatureHtml: connection.signatureHtml ?? undefined,
     messageId: sentMail.rfcMessageId,
     inReplyTo: answeredEmail.rfcMessageId ?? undefined,
     references: references.length > 0 ? references : undefined,

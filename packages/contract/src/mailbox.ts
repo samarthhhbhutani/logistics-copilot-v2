@@ -15,16 +15,24 @@ export const mailboxResponseSchema = z.object({
   gmailConnectionStatus: gmailConnectionStatusSchema,
   gmailConnectedAt: z.iso.datetime().nullable(),
   watchExpiresAt: z.iso.datetime().nullable(),
-  /** Plain text appended to every mail sent from this mailbox; null when none is set. */
+  /** Plain text appended to every mail sent from this mailbox; derived from signatureHtml. Null when none is set. */
   signature: z.string().nullable(),
+  /** The sanitised HTML signature as stored; null when none is set. */
+  signatureHtml: z.string().nullable(),
 });
 export type MailboxResponse = z.infer<typeof mailboxResponseSchema>;
 
+/** Longest plain-text signature we send; the HTML is derived to text and checked against this. */
 export const MAILBOX_SIGNATURE_MAX_LENGTH = 2000;
+/** Longest HTML signature accepted before sanitising; tables and inline styles are verbose. */
+export const MAILBOX_SIGNATURE_HTML_MAX_LENGTH = 20_000;
 
-/** PATCH /v1/mailbox/signature. Plain text; whitespace-only or null clears it. Responds with MailboxResponse. */
+/**
+ * PATCH /v1/mailbox/signature. HTML; it is sanitised server-side and the text signature is derived
+ * from it. Null, or HTML with nothing visible left after sanitising, clears both. Responds with MailboxResponse.
+ */
 export const updateMailboxSignatureRequestSchema = z.object({
-  signature: z.string().max(MAILBOX_SIGNATURE_MAX_LENGTH).nullable(),
+  signatureHtml: z.string().max(MAILBOX_SIGNATURE_HTML_MAX_LENGTH).nullable(),
 });
 export type UpdateMailboxSignatureRequest = z.infer<typeof updateMailboxSignatureRequestSchema>;
 

@@ -88,7 +88,7 @@ describe('POST /v1/mailbox/emails/:emailId/replies', () => {
     await request(testApp.app)
       .patch('/v1/mailbox/signature')
       .set('Cookie', cookie)
-      .send({ signature: 'Ops Desk' });
+      .send({ signatureHtml: '<p>Ops Desk</p>' });
 
     const response = await request(testApp.app)
       .post(repliesPath(inboxEmailId))
@@ -122,6 +122,7 @@ describe('POST /v1/mailbox/emails/:emailId/replies', () => {
       subject: 'Re: RFQ 123: Mumbai to Rotterdam',
       text: 'Rates attached.',
       signature: 'Ops Desk',
+      signatureHtml: '<p>Ops Desk</p>',
       messageId: `<${sentMailId}@bhatia.example>`,
       inReplyTo: '<vendor-reply@acme.com>',
       references: ['<first@bhatia.example>', '<vendor-reply@acme.com>'],

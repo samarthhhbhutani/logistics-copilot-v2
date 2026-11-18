@@ -66,7 +66,10 @@ async function connectedMailbox(testApp: TestApp, signature?: string): Promise<S
     watchExpiresAt: new Date('2026-11-20T00:00:00Z'),
   });
   if (signature) {
-    await testApp.repositories.mailboxConnectionRepository.updateSignature(scope, signature);
+    await testApp.repositories.mailboxConnectionRepository.updateSignature(scope, {
+      signature,
+      signatureHtml: null,
+    });
   }
   testApp.repositories.addEmail({
     ...scope,

@@ -15,6 +15,14 @@ export interface MailboxConnection {
   watchExpiresAt: Date | null;
   /** Plain text appended to every mail sent from this mailbox; null when none is set. */
   signature: string | null;
+  /** Sanitised HTML signature for the HTML part; null when the mailbox sends text only. */
+  signatureHtml: string | null;
+}
+
+/** Both forms of the signature, saved together so the text part always matches the HTML. */
+export interface MailboxSignature {
+  signature: string | null;
+  signatureHtml: string | null;
 }
 
 /** Everything a successful connect produces: the token and the watch it started. */
@@ -37,8 +45,8 @@ export interface MailboxConnectionRepository {
   /** The refresh token stopped working (invalid_grant): keep the row, ask the owner to reconnect. */
   markGmailNeedsReconnect(scope: MailboxScope): Promise<void>;
   clearGmailConnection(scope: MailboxScope): Promise<void>;
-  /** Replace the stored signature; null removes it. */
-  updateSignature(scope: MailboxScope, signature: string | null): Promise<void>;
+  /** Replace the stored signature in both forms; nulls remove it. */
+  updateSignature(scope: MailboxScope, signature: MailboxSignature): Promise<void>;
 }
 
 // Prisma generates UPPER_CASE enum members; the API and the column speak snake_case.
@@ -71,6 +79,7 @@ export function createPrismaMailboxConnectionRepository(
           encryptedRefreshToken: true,
           watchExpiresAt: true,
           signature: true,
+          signatureHtml: true,
         },
       });
       if (!mailbox) return undefined;
@@ -83,6 +92,7 @@ export function createPrismaMailboxConnectionRepository(
         encryptedRefreshToken: mailbox.encryptedRefreshToken,
         watchExpiresAt: mailbox.watchExpiresAt,
         signature: mailbox.signature,
+        signatureHtml: mailbox.signatureHtml,
       };
     },
 
@@ -125,10 +135,10 @@ export function createPrismaMailboxConnectionRepository(
       });
     },
 
-    async updateSignature({ mailboxId, tenantId }, signature) {
+    async updateSignature({ mailboxId, tenantId }, { signature, signatureHtml }) {
       await prismaClient.mailbox.updateMany({
         where: { id: mailboxId, tenantId },
-        data: { signature },
+        data: { signature, signatureHtml },
       });
     },
   };

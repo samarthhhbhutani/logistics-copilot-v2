@@ -6,6 +6,7 @@ import {
   GmailApiError,
   createGmailConnectStateToken,
   missingGmailScopes,
+  sanitizeSignatureHtml,
   verifyGmailConnectStateToken,
 } from '@lc/core';
 import type {
@@ -18,6 +19,7 @@ import type {
   TenantRepository,
 } from '@lc/core';
 import {
+  MAILBOX_SIGNATURE_MAX_LENGTH,
   updateMailboxSignatureRequestSchema,
   type GmailConnectResponse,
   type MailboxResponse,
@@ -51,7 +53,7 @@ const callbackQuerySchema = z.object({
  *   GET    /gmail/callback Google returns here; no session cookie, the signed `state` names the mailbox.
  *                          Stores the token and starts the Gmail watch on the tenant's Pub/Sub topic
  *   DELETE /gmail          stop the watch, revoke at Google and forget the token
- *   PATCH  /signature      store the plain-text signature appended to every mail sent from here
+ *   PATCH  /signature      store the HTML signature (sanitised; text form derived) added to every mail sent from here
  */
 export function createGmailConnectionRouter({
   mailboxConnectionRepository,
@@ -183,13 +185,17 @@ export function createGmailConnectionRouter({
 
   router.patch('/signature', requireSession, async (request, response) => {
     const session = getSession(response);
-    const { signature } = parseRequestBody(updateMailboxSignatureRequestSchema, request.body);
+    const { signatureHtml } = parseRequestBody(updateMailboxSignatureRequestSchema, request.body);
     if (!(await mailboxConnectionRepository.findMailboxConnection(session))) {
       throw createHttpError(404, 'mailbox_not_found');
     }
-    // Stored trimmed, and a blank signature is no signature: composeOutboundMime appends nothing for null.
-    const trimmedSignature = signature?.trim() || null;
-    await mailboxConnectionRepository.updateSignature(session, trimmedSignature);
+    // Sanitised here, never on the way out; nothing visible left means no signature, and
+    // composeOutboundMime adds nothing for null.
+    const sanitized = sanitizeSignatureHtml(signatureHtml);
+    if ((sanitized.signature?.length ?? 0) > MAILBOX_SIGNATURE_MAX_LENGTH) {
+      throw createHttpError(400, 'signature_too_long');
+    }
+    await mailboxConnectionRepository.updateSignature(session, sanitized);
     const connection = await mailboxConnectionRepository.findMailboxConnection(session);
     if (!connection) throw createHttpError(404, 'mailbox_not_found');
     response.json(toMailboxView(connection));
@@ -234,5 +240,6 @@ function toMailboxView(connection: MailboxConnection): MailboxResponse {
     gmailConnectedAt: connection.gmailConnectedAt?.toISOString() ?? null,
     watchExpiresAt: connection.watchExpiresAt?.toISOString() ?? null,
     signature: connection.signature,
+    signatureHtml: connection.signatureHtml,
   };
 }
