@@ -228,9 +228,63 @@ describe('GET /v1/mailbox/emails', () => {
     expect(tooLarge.body.error).toMatch(/^invalid_query: limit/);
   });
 
+  it('filters by the current classification, pages through the filtered list and combines with the folder', async () => {
+    const testApp = createTestApp();
+    const scope = await signedInMailbox(testApp);
+    seedEmails(testApp, scope, 6);
+    const customerRequest = (index: number) =>
+      testApp.repositories.setClassification(emailId(index), {
+        label: 'customer_request',
+        source: 'llm',
+        confidence: 0.9,
+        classifiedAt: new Date('2026-11-10T10:00:05Z'),
+      });
+    [0, 1, 2, 4].forEach(customerRequest);
+    testApp.repositories.setClassification(emailId(3), {
+      label: 'rate_card',
+      source: 'rule',
+      confidence: null,
+      classifiedAt: new Date('2026-11-10T10:00:05Z'),
+    });
+
+    const firstPage = await request(testApp.app)
+      .get('/v1/mailbox/emails?classification=customer_request&limit=3')
+      .set('Cookie', scope.cookie);
+    expect(firstPage.status).toBe(200);
+    expect(firstPage.body.emails.map((email: { id: string }) => email.id)).toEqual([
+      emailId(0),
+      emailId(1),
+      emailId(2),
+    ]);
+    expect(firstPage.body.nextCursor).toEqual(expect.any(String));
+
+    const secondPage = await request(testApp.app)
+      .get(
+        `/v1/mailbox/emails?classification=customer_request&limit=3&cursor=${encodeURIComponent(firstPage.body.nextCursor)}`,
+      )
+      .set('Cookie', scope.cookie);
+    expect(secondPage.body.emails.map((email: { id: string }) => email.id)).toEqual([emailId(4)]);
+    expect(secondPage.body.nextCursor).toBeNull();
+
+    const inboxOnly = await request(testApp.app)
+      .get('/v1/mailbox/emails?classification=customer_request&label=inbox')
+      .set('Cookie', scope.cookie);
+    expect(inboxOnly.body.emails.map((email: { id: string }) => email.id)).toEqual([
+      emailId(0),
+      emailId(2),
+      emailId(4),
+    ]);
+
+    const none = await request(testApp.app)
+      .get('/v1/mailbox/emails?classification=vendor_quote')
+      .set('Cookie', scope.cookie);
+    expect(none.body).toMatchObject({ emails: [], nextCursor: null });
+  });
+
   it.each([
     ['a cursor that is not ours', 'cursor=not-a-cursor', 'invalid_cursor'],
     ['a label it does not know', 'label=drafts', 'invalid_query: label'],
+    ['a classification it does not know', 'classification=spam', 'invalid_query: classification'],
     ['a non-numeric limit', 'limit=ten', 'invalid_query: limit'],
   ])('400 for %s', async (_name, query, errorPrefix) => {
     const testApp = createTestApp();

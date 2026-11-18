@@ -19,7 +19,8 @@ export { DEFAULT_EMAIL_PAGE_SIZE, MAX_EMAIL_PAGE_SIZE } from '@lc/contract';
 
 /**
  * The signed-in person's mail, mounted at /v1/mailbox/emails.
- *   GET /            ?limit=50&cursor=<opaque>&label=inbox|sent   newest first, list fields plus current classification
+ *   GET /            ?limit=50&cursor=<opaque>&label=inbox|sent&classification=<label>
+ *                   newest first, list fields plus current classification; `classification` keeps only mail whose current label matches
  *   GET /:emailId    one mail with bodies and its current classification; 404 outside the mailbox
  * The mailbox is the session's; tenantId rides along as the isolation check.
  */
@@ -30,7 +31,10 @@ export function createEmailsRouter({
   const router = express.Router();
 
   router.get('/', requireSession, async (request, response) => {
-    const { limit, cursor, label } = parseRequestQuery(listEmailsQuerySchema, request.query);
+    const { limit, cursor, label, classification } = parseRequestQuery(
+      listEmailsQuerySchema,
+      request.query,
+    );
     const before = cursor ? decodeEmailListCursor(cursor) : undefined;
     if (cursor && !before) throw createHttpError(400, 'invalid_cursor');
 
@@ -38,6 +42,7 @@ export function createEmailsRouter({
     const rows = await emailReadRepository.listEmails(session, {
       limit: limit + 1,
       gmailLabel: label,
+      classification,
       before,
     });
     const page = rows.slice(0, limit);

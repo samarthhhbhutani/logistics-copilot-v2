@@ -28,12 +28,15 @@ describe('listEmailsQuerySchema', () => {
     expect(listEmailsQuerySchema.parse({})).toEqual({ limit: DEFAULT_EMAIL_PAGE_SIZE });
   });
 
-  it('coerces the query-string limit and keeps cursor and label', () => {
-    expect(listEmailsQuerySchema.parse({ limit: '10', cursor: 'abc', label: 'sent' })).toEqual({
-      limit: 10,
-      cursor: 'abc',
-      label: 'sent',
-    });
+  it('coerces the query-string limit and keeps cursor, label and classification', () => {
+    expect(
+      listEmailsQuerySchema.parse({
+        limit: '10',
+        cursor: 'abc',
+        label: 'sent',
+        classification: 'customer_request',
+      }),
+    ).toEqual({ limit: 10, cursor: 'abc', label: 'sent', classification: 'customer_request' });
   });
 
   it.each([
@@ -42,6 +45,8 @@ describe('listEmailsQuerySchema', () => {
     { limit: '2.5' },
     { cursor: '' },
     { label: 'spam' },
+    { classification: 'unclassified' },
+    { classification: 'CUSTOMER_REQUEST' },
   ])('rejects %j', (query) => {
     expect(listEmailsQuerySchema.safeParse(query).success).toBe(false);
   });

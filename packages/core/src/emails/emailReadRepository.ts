@@ -1,4 +1,6 @@
+import { Prisma } from '../db/generated/client.js';
 import type { PrismaClient } from '../db/prismaClient.js';
+import type { ClassificationLabel } from '../classification/classificationLabel.js';
 import type { MailboxScope } from '../connectors/gmail/mailboxConnectionRepository.js';
 import type { EmailListPosition } from './emailListCursor.js';
 import {
@@ -16,6 +18,8 @@ export interface ListEmailsQuery {
   /** How many rows to return; the caller asks for one more than the page to learn whether a next page exists. */
   limit: number;
   gmailLabel?: GmailLabel;
+  /** Only mail whose current classification (its newest classifications row) carries this label. */
+  classification?: ClassificationLabel;
   /** Rows strictly older than this position in (received_at desc, id desc) order. */
   before?: EmailListPosition;
 }
@@ -30,13 +34,63 @@ export interface EmailReadRepository {
   listThreadEmails(scope: MailboxScope, gmailThreadId: string): Promise<EmailDetail[]>;
 }
 
+/**
+ * The ids of the page's mails whose newest classification carries `classification`, in list order.
+ * Prisma's relation filters cannot say "the newest row has this label" (a corrected mail still has
+ * its old label in history), so DISTINCT ON picks the newest row per mail first and the label is
+ * compared on that row only.
+ */
+async function listEmailIdsWithCurrentClassification(
+  prismaClient: PrismaClient,
+  { mailboxId, tenantId }: MailboxScope,
+  {
+    limit,
+    gmailLabel,
+    classification,
+    before,
+  }: ListEmailsQuery & { classification: ClassificationLabel },
+): Promise<string[]> {
+  const rows = await prismaClient.$queryRaw<{ id: string }[]>`
+    SELECT email.id
+    FROM emails AS email
+    JOIN (
+      SELECT DISTINCT ON (classification.email_id) classification.email_id, classification.label
+      FROM classifications AS classification
+      WHERE classification.tenant_id = ${tenantId}::uuid
+      ORDER BY classification.email_id, classification.classified_at DESC, classification.id DESC
+    ) AS current_classification ON current_classification.email_id = email.id
+    WHERE email.mailbox_id = ${mailboxId}::uuid
+      AND email.tenant_id = ${tenantId}::uuid
+      AND current_classification.label = ${classification}::classification_label
+      ${gmailLabel ? Prisma.sql`AND email.gmail_label = ${gmailLabel}::gmail_label` : Prisma.empty}
+      ${
+        before
+          ? Prisma.sql`AND (email.received_at, email.id) < (${before.receivedAt}, ${before.id}::uuid)`
+          : Prisma.empty
+      }
+    ORDER BY email.received_at DESC, email.id DESC
+    LIMIT ${limit}
+  `;
+  return rows.map((row) => row.id);
+}
+
 export function createPrismaEmailReadRepository(prismaClient: PrismaClient): EmailReadRepository {
   return {
-    async listEmails({ mailboxId, tenantId }, { limit, gmailLabel, before }) {
+    async listEmails(scope, query) {
+      const { mailboxId, tenantId } = scope;
+      const { limit, gmailLabel, classification, before } = query;
+      const pageIds = classification
+        ? await listEmailIdsWithCurrentClassification(prismaClient, scope, {
+            ...query,
+            classification,
+          })
+        : undefined;
+      if (pageIds && pageIds.length === 0) return [];
       const emails = await prismaClient.email.findMany({
         where: {
           mailboxId,
           tenantId,
+          ...(pageIds ? { id: { in: pageIds } } : {}),
           ...(gmailLabel ? { gmailLabel: PRISMA_ENUM_BY_SNAKE_CASE_LABEL[gmailLabel] } : {}),
           // (received_at, id) < (before.receivedAt, before.id), spelled out for Prisma.
           ...(before

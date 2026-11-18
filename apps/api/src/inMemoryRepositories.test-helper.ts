@@ -158,10 +158,11 @@ export function createInMemoryRepositories(): {
       },
     },
     emailReadRepository: {
-      async listEmails({ mailboxId, tenantId }, { limit, gmailLabel, before }) {
+      async listEmails({ mailboxId, tenantId }, { limit, gmailLabel, classification, before }) {
         return emails
           .filter((email) => email.mailboxId === mailboxId && email.tenantId === tenantId)
           .filter((email) => !gmailLabel || email.gmailLabel === gmailLabel)
+          .filter((email) => !classification || email.classification?.label === classification)
           .filter(
             (email) =>
               !before ||

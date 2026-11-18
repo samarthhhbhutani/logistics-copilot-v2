@@ -12,6 +12,8 @@ export const listEmailsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(MAX_EMAIL_PAGE_SIZE).default(DEFAULT_EMAIL_PAGE_SIZE),
   cursor: z.string().min(1).optional(),
   label: gmailLabelSchema.optional(),
+  /** Only mail whose current classification carries this label; combines with `label`. */
+  classification: classificationLabelSchema.optional(),
 });
 
 /** The newest label of a mail and who decided it; null when nothing has classified it yet. */
