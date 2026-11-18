@@ -13,6 +13,8 @@ import { createFakeAttachmentDownloadUrlSigner } from './fakeAttachmentDownloadU
 import type { AttachmentContentReader } from './emails/attachmentContentReader.js';
 import type { AttachmentDownloadUrlSigner } from './emails/attachmentDownloadUrlSigner.js';
 import { createInMemoryRepositories } from './inMemoryRepositories.test-helper.js';
+import { createFakeSignatureImageStore } from './fakeSignatureImageStore.test-helper.js';
+import type { FakeSignatureImageStore } from './fakeSignatureImageStore.test-helper.js';
 
 export const testSessionSecret = 'test-session-secret-that-is-at-least-32-chars';
 
@@ -33,6 +35,8 @@ export interface TestAppOptions {
   attachmentContentReader?: AttachmentContentReader;
   /** Default none, which exercises the 503 path. */
   rfqMailDrafter?: RfqMailDrafter;
+  /** Default on: an in-memory bucket for signature images. Off exercises the 503 path. */
+  signatureImagesEnabled?: boolean;
 }
 
 export interface TestApp {
@@ -41,6 +45,7 @@ export interface TestApp {
   gmailWatch: FakeGmailWatch;
   gmailSender: FakeGmailSender;
   encryptionUtil: EncryptionUtil;
+  signatureImageStore: FakeSignatureImageStore;
   repositories: ReturnType<typeof createInMemoryRepositories>;
 }
 
@@ -56,6 +61,7 @@ export function createTestApp({
   rfqSuggester,
   attachmentContentReader,
   rfqMailDrafter,
+  signatureImagesEnabled = true,
 }: TestAppOptions = {}): TestApp {
   const config = loadConfig({
     STAGE: stage,
@@ -67,6 +73,7 @@ export function createTestApp({
   const gmailOAuth = createFakeGmailOAuth(consentingAccountEmail);
   const gmailWatch = createFakeGmailWatch();
   const gmailSender = createFakeGmailSender();
+  const signatureImageStore = createFakeSignatureImageStore();
   const encryptionUtil = createEncryptionUtil(randomBytes(32).toString('base64'));
   const app = createAppInstance({
     config,
@@ -77,13 +84,22 @@ export function createTestApp({
     rfqSuggester,
     attachmentContentReader,
     rfqMailDrafter,
+    signatureImageStore: signatureImagesEnabled ? signatureImageStore : undefined,
     gmailOAuth,
     gmailWatch,
     gmailSender,
     encryptionUtil,
     sessionSecret: testSessionSecret,
   });
-  return { app, gmailOAuth, gmailWatch, gmailSender, encryptionUtil, repositories };
+  return {
+    app,
+    gmailOAuth,
+    gmailWatch,
+    gmailSender,
+    encryptionUtil,
+    signatureImageStore,
+    repositories,
+  };
 }
 
 /** Backwards-compatible shorthand for tests that only need the Express app. */
