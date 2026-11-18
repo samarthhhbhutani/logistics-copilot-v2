@@ -6,3 +6,4 @@ export * from './classificationRules.js';
 export * from './sentMails.js';
 export * from './vendors.js';
 export * from './rfqs.js';
+export * from './signatureImages.js';

@@ -37,6 +37,7 @@ model Tenant {
   classificationRules         ClassificationRule[]
   classifications             Classification[]
   sentMails                   SentMail[]
+  signatureImages             SignatureImage[]
   vendors                     Vendor[]
   vendorContacts              VendorContact[]
   rfqs                        Rfq[]
@@ -82,9 +83,30 @@ model Mailbox {
   emails                Email[]
   sentMails             SentMail[]
   rfqs                  Rfq[]
+  signatureImages       SignatureImage[]
 
   @@index([tenantId])
   @@map("mailboxes")
+}
+
+/// An image an operator uploaded for the mailbox's HTML signature. The signature references it as
+/// `cid:<id>`; sending reads the bytes from s3_key and carries them as an inline part. Deleting a row
+/// that the current signature still references is refused, so a sent mail never has a broken image.
+model SignatureImage {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  mailboxId   String   @map("mailbox_id") @db.Uuid
+  mailbox     Mailbox  @relation(fields: [mailboxId], references: [id])
+  fileName    String   @map("file_name")
+  contentType String   @map("content_type")
+  sizeBytes   Int      @map("size_bytes")
+  /// signatures/<mailbox_id>/<id> in the raw-mail bucket.
+  s3Key       String   @map("s3_key")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([mailboxId])
+  @@map("signature_images")
 }
 
 /// Password credential for one mailbox, and nothing else (no Google tokens here). Kept apart from
