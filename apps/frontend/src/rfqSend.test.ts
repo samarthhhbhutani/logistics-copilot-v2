@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import type { SentMailResponse } from '@lc/contract';
+import type { RfqMailWithRepliesResponse, SentMailResponse } from '@lc/contract';
 import {
   anyMailSending,
   anyUnverifiableMail,
+  countReachableContacts,
+  countRepliedContacts,
   countRetryableMails,
   describeRfqMailStatus,
   mailTextsForSend,
+  rfqProgressLabel,
 } from './rfqSend.js';
-import { sendStatusHeading } from './rfqSendStatus.js';
+import { rfqStatusHeading, sendStatusHeading } from './rfqSendStatus.js';
 
 function mail(
   status: SentMailResponse['status'],
@@ -116,5 +119,78 @@ describe('sendStatusHeading', () => {
     expect(sendStatusHeading(3, 3, 0)).toBe('All 3 mails sent');
     expect(sendStatusHeading(3, 1, 1)).toBe('1 of 3 mails sent, 1 still sending');
     expect(sendStatusHeading(3, 1, 0)).toBe('1 of 3 mails sent');
+  });
+});
+
+/** A mail with `replyCount` inbound mails linked to it; the newest carries `label` (null: not yet classified). */
+function mailWithReplies(
+  status: SentMailResponse['status'],
+  replyCount: number,
+  label: 'vendor_quote' | 'vendor_reply' | null = 'vendor_reply',
+): RfqMailWithRepliesResponse {
+  return {
+    ...mail(status, status === 'failed' ? 'bad_request' : null),
+    replies: {
+      count: replyCount,
+      latest:
+        replyCount === 0
+          ? null
+          : {
+              emailId: '55555555-5555-4555-8555-555555555555',
+              sender: { name: 'Ravi', email: 'ravi@example.com' },
+              receivedAt: '2026-11-16T09:30:00.000Z',
+              snippet: 'USD 1450',
+              classification: label
+                ? {
+                    label,
+                    source: 'llm',
+                    confidence: 0.9,
+                    classifiedAt: '2026-11-16T09:31:00.000Z',
+                  }
+                : null,
+            },
+    },
+  };
+}
+
+describe('reply counts', () => {
+  it('counts vendors, not messages, and leaves out mails that never reached anyone', () => {
+    const mails = [
+      mailWithReplies('sent', 2, 'vendor_quote'),
+      mailWithReplies('sent', 1, null),
+      mailWithReplies('sent', 0),
+      mailWithReplies('sending', 0),
+      mailWithReplies('failed', 0),
+    ];
+    expect(countReachableContacts(mails)).toBe(4);
+    expect(countRepliedContacts(mails)).toBe(2);
+  });
+
+  it('labels the collapsed panel with how many vendors came back', () => {
+    expect(
+      rfqProgressLabel([
+        mailWithReplies('sent', 1),
+        mailWithReplies('sent', 0),
+        mailWithReplies('sent', 0),
+      ]),
+    ).toBe('Vendor quotes: 1 of 3 replied');
+    expect(rfqProgressLabel([mailWithReplies('sent', 0), mailWithReplies('failed', 0)])).toBe(
+      'Vendor quotes: 1 vendor asked, none replied yet',
+    );
+    expect(rfqProgressLabel([mailWithReplies('sent', 0), mailWithReplies('pending', 0)])).toBe(
+      'Vendor quotes: 2 vendors asked, none replied yet',
+    );
+    expect(rfqProgressLabel([mailWithReplies('failed', 0)])).toBe(
+      'Vendor quotes: no mail reached a vendor',
+    );
+  });
+
+  it('adds the replied count to the send heading only once someone wrote back', () => {
+    expect(rfqStatusHeading([mailWithReplies('sent', 0), mailWithReplies('sent', 0)])).toBe(
+      'All 2 mails sent',
+    );
+    expect(rfqStatusHeading([mailWithReplies('sent', 3), mailWithReplies('sending', 0)])).toBe(
+      '1 of 2 mails sent, 1 still sending · 1 of 2 replied',
+    );
   });
 });

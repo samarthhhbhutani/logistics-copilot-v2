@@ -3,6 +3,7 @@ import {
   currentClassificationSchema,
   draftRfqMailsResponseSchema,
   emailDetailSchema,
+  getRfqBySourceEmailResponseSchema,
   getRfqResponseSchema,
   listAttachmentsResponseSchema,
   listVendorsResponseSchema,
@@ -334,6 +335,28 @@ export const frontendApi = {
       signal,
     );
     if (result.rfq.id !== rfqId) throw new FrontendApiError(502, 'invalid_response');
+    requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
+    return result;
+  },
+  /**
+   * The newest RFQ sent from a customer mail, or null when none was: how the panel finds its RFQ
+   * after a reload. The scoped 404 goes through the identity check first, so only a genuine
+   * "no RFQ for this mail" becomes null; another tab's cookie is still a session_changed.
+   */
+  async rfqBySourceEmail(session: SessionResponse, emailId: string, signal?: AbortSignal) {
+    let result;
+    try {
+      result = await requestMailJson(
+        session,
+        `/mailbox/rfqs/bySourceEmail/${encodeURIComponent(emailId)}`,
+        getRfqBySourceEmailResponseSchema,
+        signal,
+      );
+    } catch (error) {
+      if (error instanceof FrontendApiError && error.status === 404) return null;
+      throw error;
+    }
+    if (result.rfq.sourceEmailId !== emailId) throw new FrontendApiError(502, 'invalid_response');
     requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
     return result;
   },

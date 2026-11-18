@@ -1116,7 +1116,12 @@ a.emailRow:focus-visible {
   gap: 14px;
   margin-bottom: 22px;
 }
-.rfqPanel > .button {
+.rfqPanelButtons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.rfqPanelButtons > .button {
   align-self: flex-start;
 }
 .rfqForm {
@@ -1358,7 +1363,7 @@ a.emailRow:focus-visible {
 }
 .rfqMailStatus {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) minmax(0, 1.2fr);
+  grid-template-columns: 18px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.4fr);
   align-items: start;
   gap: 12px;
   padding: 10px 0;
@@ -1393,15 +1398,43 @@ a.emailRow:focus-visible {
   font-size: 0.78rem;
   color: var(--muted);
 }
+.rfqMailReply {
+  display: grid;
+  gap: 4px;
+  overflow-wrap: anywhere;
+  font-size: 0.78rem;
+}
+.rfqMailReplyHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.rfqMailReplySnippet {
+  color: var(--ink);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 .rfqSendNote {
   margin: 0;
   font-size: 0.87rem;
+}
+@media (max-width: 767px) {
+  .rfqMailStatus {
+    grid-template-columns: 18px minmax(0, 1fr) minmax(0, 1.2fr);
+  }
+  .rfqMailStatus .rfqMailReply {
+    grid-column: 2 / -1;
+  }
 }
 @media (max-width: 479px) {
   .rfqMailStatus {
     grid-template-columns: 18px minmax(0, 1fr);
   }
-  .rfqMailStatus .rfqMailOutcome {
+  .rfqMailStatus .rfqMailOutcome,
+  .rfqMailStatus .rfqMailReply {
     grid-column: 2;
   }
 }

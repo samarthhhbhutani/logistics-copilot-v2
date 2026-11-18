@@ -1,4 +1,9 @@
-import type { RfqMailText, SentMailResponse, VendorCategory } from '@lc/contract';
+import type {
+  RfqMailText,
+  RfqMailWithRepliesResponse,
+  SentMailResponse,
+  VendorCategory,
+} from '@lc/contract';
 import { vendorCategoryTitles } from './rfqRecipients.js';
 
 /** The operator's edited text for one category, as the panel keeps it. */
@@ -101,4 +106,24 @@ export function anyUnverifiableMail(mails: SentMailResponse[]): boolean {
   return mails.some(
     (mail) => mail.status === 'failed' && mail.errorCode === SEND_UNVERIFIABLE_ERROR_CODE,
   );
+}
+
+/** Contacts the RFQ reached or may still reach: every mail that is not `failed`. The API's contactCount rule. */
+export function countReachableContacts(mails: SentMailResponse[]): number {
+  return mails.filter((mail) => mail.status !== 'failed').length;
+}
+
+/** Contacts who wrote back at least once; a vendor who wrote twice is one. */
+export function countRepliedContacts(mails: RfqMailWithRepliesResponse[]): number {
+  return mails.filter((mail) => mail.status !== 'failed' && mail.replies.count > 0).length;
+}
+
+/** The collapsed panel's one line once an RFQ exists for the mail: how many vendors have come back. */
+export function rfqProgressLabel(mails: RfqMailWithRepliesResponse[]): string {
+  const reachable = countReachableContacts(mails);
+  if (reachable === 0) return 'Vendor quotes: no mail reached a vendor';
+  const replied = countRepliedContacts(mails);
+  return replied === 0
+    ? `Vendor quotes: ${reachable === 1 ? '1 vendor asked' : `${reachable} vendors asked`}, none replied yet`
+    : `Vendor quotes: ${replied} of ${reachable} replied`;
 }
