@@ -5,9 +5,14 @@ import { createPrismaEmailReadRepository } from './emailReadRepository.js';
 const scope = { mailboxId: 'mailbox-1', tenantId: 'tenant-1' };
 
 /** Answers email.findMany / findFirst with the given rows and records the where/order used. */
-function stubPrisma(rows: unknown[]) {
+function stubPrisma(rows: unknown[], rawIdRows: { id: string }[] = []) {
   const calls: { method: string; args: Record<string, unknown> }[] = [];
+  const rawQueries: { sql: string; values: unknown[] }[] = [];
   const prismaClient = {
+    async $queryRaw(strings: TemplateStringsArray, ...values: unknown[]) {
+      rawQueries.push({ sql: strings.join('?'), values });
+      return rawIdRows;
+    },
     email: {
       async findMany(args: Record<string, unknown>) {
         calls.push({ method: 'findMany', args });
@@ -19,7 +24,7 @@ function stubPrisma(rows: unknown[]) {
       },
     },
   } as unknown as PrismaClient;
-  return { prismaClient, calls };
+  return { prismaClient, calls, rawQueries };
 }
 
 const detailRow = {
@@ -92,6 +97,55 @@ describe('listEmails', () => {
     });
     expect(emails[1]?.classification).toBeNull();
     expect(emails[0]).not.toHaveProperty('bodyText');
+  });
+
+  it('filters by the current classification with one DISTINCT ON query for the page ids, then reads only those', async () => {
+    const { prismaClient, calls, rawQueries } = stubPrisma([detailRow], [{ id: 'email-1' }]);
+    const before = { receivedAt: new Date('2026-11-11T10:00:00Z'), id: 'email-9' };
+    const emails = await createPrismaEmailReadRepository(prismaClient).listEmails(scope, {
+      limit: 31,
+      gmailLabel: 'inbox',
+      classification: 'customer_request',
+      before,
+    });
+
+    expect(rawQueries).toHaveLength(1);
+    const [rawQuery] = rawQueries;
+    expect(rawQuery?.sql).toMatch(
+      /SELECT DISTINCT ON \(classification\.email_id\)[\s\S]*ORDER BY classification\.email_id, classification\.classified_at DESC, classification\.id DESC/,
+    );
+    expect(rawQuery?.sql).toMatch(/current_classification\.label = \?::classification_label/);
+    expect(rawQuery?.sql).toMatch(/ORDER BY email\.received_at DESC, email\.id DESC\s+LIMIT \?/);
+    expect(rawQuery?.values).toEqual([
+      'tenant-1',
+      'mailbox-1',
+      'tenant-1',
+      'customer_request',
+      expect.anything(),
+      expect.anything(),
+      31,
+    ]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      method: 'findMany',
+      args: {
+        where: { ...scope, id: { in: ['email-1'] }, gmailLabel: 'INBOX' },
+        orderBy: [{ receivedAt: 'desc' }, { id: 'desc' }],
+        take: 31,
+      },
+    });
+    expect(emails.map((email) => email.id)).toEqual(['email-1']);
+  });
+
+  it('does not read mail when no mail carries the classification', async () => {
+    const { prismaClient, calls, rawQueries } = stubPrisma([detailRow], []);
+    const emails = await createPrismaEmailReadRepository(prismaClient).listEmails(scope, {
+      limit: 31,
+      classification: 'rate_card',
+    });
+    expect(rawQueries).toHaveLength(1);
+    expect(calls).toHaveLength(0);
+    expect(emails).toEqual([]);
   });
 });
 
