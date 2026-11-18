@@ -23,6 +23,7 @@ import type {
   SentMail,
   SentMailRepository,
   SentMailToCreate,
+  SignatureImageRepository,
   TenantRepository,
   Vendor,
   VendorContact,
@@ -49,6 +50,7 @@ import {
 } from './rfqResponses.js';
 import { loadSendingMailbox } from '../sending/loadSendingMailbox.js';
 import type { SendingMailbox } from '../sending/loadSendingMailbox.js';
+import type { SignatureImageStore } from '../signature/signatureImageStore.js';
 
 export interface RfqsRouterDependencies {
   emailReadRepository: EmailReadRepository;
@@ -59,6 +61,9 @@ export interface RfqsRouterDependencies {
   tenantRepository: TenantRepository;
   gmailSender: GmailSender;
   encryptionUtil: EncryptionUtil;
+  signatureImageRepository: SignatureImageRepository;
+  /** Undefined without a bucket: HTML signatures then go out without their images. */
+  signatureImageStore: SignatureImageStore | undefined;
   requireSession: RequestHandler;
 }
 
@@ -87,6 +92,8 @@ export function createRfqsRouter({
   tenantRepository,
   gmailSender,
   encryptionUtil,
+  signatureImageRepository,
+  signatureImageStore,
   requireSession,
 }: RfqsRouterDependencies): Router {
   const router = express.Router();
@@ -131,7 +138,13 @@ export function createRfqsRouter({
       throw createHttpError(400, 'missing_mail_text');
     }
     const sendingMailbox = await loadSendingMailbox(
-      { mailboxConnectionRepository, tenantRepository, encryptionUtil },
+      {
+        mailboxConnectionRepository,
+        tenantRepository,
+        encryptionUtil,
+        signatureImageRepository,
+        signatureImageStore,
+      },
       scope,
     );
 
@@ -192,7 +205,7 @@ export function createRfqsRouter({
   async function sendPendingAndFailedMails(
     rfqMails: SentMail[],
     scope: MailboxScope,
-    { connection, credentials, refreshToken }: SendingMailbox,
+    { connection, credentials, refreshToken, inlineImages }: SendingMailbox,
   ): Promise<void> {
     let mailboxNeedsReconnect = false;
     const mailsToSend = rfqMails.filter(
@@ -211,7 +224,7 @@ export function createRfqsRouter({
         gmailSendResult = await gmailSender.sendMessage({
           credentials,
           refreshToken,
-          message: buildRfqMailMessage(mail, connection),
+          message: { ...buildRfqMailMessage(mail, connection), inlineImages },
         });
       } catch (error) {
         // Only a 4xx proves Gmail did not take the mail; anything else leaves the row in

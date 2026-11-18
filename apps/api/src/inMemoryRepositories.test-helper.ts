@@ -21,6 +21,8 @@ import type {
   SentMail,
   SentMailRepository,
   SentMailStatus,
+  SignatureImage,
+  SignatureImageRepository,
   TenantGoogleClient,
   TenantPubsubPush,
   TenantRepository,
@@ -38,6 +40,7 @@ export function createInMemoryRepositories(): {
   emailClassificationRepository: EmailClassificationRepository;
   sentMailRepository: SentMailRepository;
   rfqRepository: RfqRepository;
+  signatureImageRepository: SignatureImageRepository;
   /** Seeds the inbox list directly; the processor's insert path is not part of the API. Detail fields default to empty. */
   addEmail(
     email: Omit<EmailSummary, 'classification'> &
@@ -65,6 +68,7 @@ export function createInMemoryRepositories(): {
   })[] = [];
   const sentMails: (SentMail & { mailboxId: string; tenantId: string })[] = [];
   const rfqs: (Rfq & { mailboxId: string; tenantId: string })[] = [];
+  const signatureImages: (SignatureImage & { mailboxId: string; tenantId: string })[] = [];
 
   function emailsInScope({ mailboxId, tenantId }: { mailboxId: string; tenantId: string }) {
     return emails.filter((email) => email.mailboxId === mailboxId && email.tenantId === tenantId);
@@ -491,6 +495,44 @@ export function createInMemoryRepositories(): {
         );
       },
     },
+    signatureImageRepository: {
+      async listSignatureImages({ mailboxId, tenantId }) {
+        return signatureImages
+          .filter((image) => image.mailboxId === mailboxId && image.tenantId === tenantId)
+          .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
+          .map(stripScope);
+      },
+      async findSignatureImages({ mailboxId, tenantId }, imageIds) {
+        return imageIds.flatMap((imageId) => {
+          const image = signatureImages.find(
+            (candidate) =>
+              candidate.id === imageId &&
+              candidate.mailboxId === mailboxId &&
+              candidate.tenantId === tenantId,
+          );
+          return image ? [stripScope(image)] : [];
+        });
+      },
+      async createSignatureImage({ mailboxId, tenantId }, imageToCreate) {
+        const image = {
+          ...imageToCreate,
+          createdAt: new Date(2026, 0, 1, 0, 0, signatureImages.length),
+          mailboxId,
+          tenantId,
+        };
+        signatureImages.push(image);
+        return stripScope(image);
+      },
+      async deleteSignatureImage({ mailboxId, tenantId }, imageId) {
+        const index = signatureImages.findIndex(
+          (image) =>
+            image.id === imageId && image.mailboxId === mailboxId && image.tenantId === tenantId,
+        );
+        if (index === -1) return undefined;
+        const [removed] = signatureImages.splice(index, 1);
+        return removed ? stripScope(removed) : undefined;
+      },
+    },
     rfqRepository: {
       async listRfqs(scope, { limit, before }) {
         return rfqs
@@ -610,5 +652,19 @@ export function createInMemoryRepositories(): {
         }
       },
     },
+  };
+}
+
+/** The repository contract has no scope columns on the row; the store keeps them for isolation. */
+function stripScope(
+  image: SignatureImage & { mailboxId: string; tenantId: string },
+): SignatureImage {
+  return {
+    id: image.id,
+    fileName: image.fileName,
+    contentType: image.contentType,
+    sizeBytes: image.sizeBytes,
+    s3Key: image.s3Key,
+    createdAt: image.createdAt,
   };
 }

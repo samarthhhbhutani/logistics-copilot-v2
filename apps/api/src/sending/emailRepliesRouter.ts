@@ -14,6 +14,7 @@ import type {
   GmailSender,
   MailboxConnectionRepository,
   SentMailRepository,
+  SignatureImageRepository,
   TenantRepository,
 } from '@lc/core';
 import { sendReplyRequestSchema } from '@lc/contract';
@@ -22,6 +23,7 @@ import { getSession } from '../auth/requireSession.js';
 import { parseIdOr404 } from '../http/parseIdOr404.js';
 import { parseRequestBody } from '../http/parseRequestBody.js';
 import { loadSendingMailbox } from './loadSendingMailbox.js';
+import type { SignatureImageStore } from '../signature/signatureImageStore.js';
 import { toSentMailResponse } from './sentMailResponses.js';
 
 export interface EmailRepliesRouterDependencies {
@@ -31,6 +33,9 @@ export interface EmailRepliesRouterDependencies {
   sentMailRepository: SentMailRepository;
   gmailSender: GmailSender;
   encryptionUtil: EncryptionUtil;
+  signatureImageRepository: SignatureImageRepository;
+  /** Undefined without a bucket: HTML signatures then go out without their images. */
+  signatureImageStore: SignatureImageStore | undefined;
   requireSession: RequestHandler;
 }
 
@@ -56,6 +61,8 @@ export function createEmailRepliesRouter({
   sentMailRepository,
   gmailSender,
   encryptionUtil,
+  signatureImageRepository,
+  signatureImageStore,
   requireSession,
 }: EmailRepliesRouterDependencies): Router {
   const router = express.Router();
@@ -69,8 +76,14 @@ export function createEmailRepliesRouter({
     if (!answeredEmail) throw createHttpError(404, 'not_found');
     if (answeredEmail.gmailLabel !== 'inbox') throw createHttpError(409, 'not_inbound');
     if (!answeredEmail.senderEmail) throw createHttpError(409, 'no_sender');
-    const { connection, credentials, refreshToken } = await loadSendingMailbox(
-      { mailboxConnectionRepository, tenantRepository, encryptionUtil },
+    const { connection, credentials, refreshToken, inlineImages } = await loadSendingMailbox(
+      {
+        mailboxConnectionRepository,
+        tenantRepository,
+        encryptionUtil,
+        signatureImageRepository,
+        signatureImageStore,
+      },
       scope,
     );
 
@@ -107,12 +120,10 @@ export function createEmailRepliesRouter({
     }
     const pendingSentMail = createResult.sentMail;
 
-    const outboundMessage = buildReplyMessage(
-      pendingSentMail,
-      answeredEmail,
-      threadEmails,
-      connection,
-    );
+    const outboundMessage = {
+      ...buildReplyMessage(pendingSentMail, answeredEmail, threadEmails, connection),
+      inlineImages,
+    };
     const { moved: claimedForSending } = await sentMailRepository.markSending(
       scope,
       pendingSentMail.id,

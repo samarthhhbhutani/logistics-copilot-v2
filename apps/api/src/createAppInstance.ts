@@ -17,6 +17,7 @@ import type {
   RfqRepository,
   RfqSuggester,
   SentMailRepository,
+  SignatureImageRepository,
   TenantRepository,
   VendorRepository,
 } from '@lc/core';
@@ -35,6 +36,8 @@ import { createRfqDraftsRouter } from './rfqs/rfqDraftsRouter.js';
 import { createRfqsRouter } from './rfqs/rfqsRouter.js';
 import { createRfqSuggestionsRouter } from './rfqs/rfqSuggestionsRouter.js';
 import { createEmailRepliesRouter } from './sending/emailRepliesRouter.js';
+import { createSignatureImagesRouter } from './signature/signatureImagesRouter.js';
+import type { SignatureImageStore } from './signature/signatureImageStore.js';
 import { createTenantsRouter } from './tenants/tenantsRouter.js';
 
 export interface AppDependencies {
@@ -49,6 +52,9 @@ export interface AppDependencies {
   emailClassificationRepository: EmailClassificationRepository;
   sentMailRepository: SentMailRepository;
   rfqRepository: RfqRepository;
+  signatureImageRepository: SignatureImageRepository;
+  /** Stores signature images in the raw-mail bucket; undefined without one, so image routes answer 503 and mails go out without them. */
+  signatureImageStore: SignatureImageStore | undefined;
   /** Presigns S3 download links; undefined when no bucket is configured, so download links answer 503. */
   attachmentDownloadUrlSigner: AttachmentDownloadUrlSigner | undefined;
   /** Reads shipment details out of a customer mail; undefined without an OpenAI key, so the route answers 503. */
@@ -88,6 +94,8 @@ export function createAppInstance({
   emailClassificationRepository,
   sentMailRepository,
   rfqRepository,
+  signatureImageRepository,
+  signatureImageStore,
   attachmentDownloadUrlSigner,
   rfqSuggester,
   attachmentContentReader,
@@ -125,6 +133,7 @@ export function createAppInstance({
     '/mailbox',
     createGmailConnectionRouter({
       mailboxConnectionRepository,
+      signatureImageRepository,
       tenantRepository,
       gmailOAuth,
       gmailWatch,
@@ -132,6 +141,15 @@ export function createAppInstance({
       requireSession,
       sessionSecret,
       frontendUrl: config.FRONTEND_URL,
+    }),
+  );
+  v1Router.use(
+    '/mailbox/signature/images',
+    createSignatureImagesRouter({
+      signatureImageRepository,
+      mailboxConnectionRepository,
+      signatureImageStore,
+      requireSession,
     }),
   );
   v1Router.use('/mailbox/emails', createEmailsRouter({ emailReadRepository, requireSession }));
@@ -163,6 +181,8 @@ export function createAppInstance({
       sentMailRepository,
       gmailSender,
       encryptionUtil,
+      signatureImageRepository,
+      signatureImageStore,
       requireSession,
     }),
   );
@@ -191,6 +211,8 @@ export function createAppInstance({
       tenantRepository,
       gmailSender,
       encryptionUtil,
+      signatureImageRepository,
+      signatureImageStore,
       requireSession,
     }),
   );
