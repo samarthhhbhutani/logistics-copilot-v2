@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
-import { Archive, Inbox, LogOut, Send } from 'lucide-react';
+import { Archive, FileText, Inbox, LogOut, Send } from 'lucide-react';
 import type { GmailLabel } from '@lc/contract';
 import { Brand } from './brand.js';
 import { errorMessage, frontendApi, isUnauthenticated } from './frontendApi.js';
@@ -39,7 +39,7 @@ export function WorkspaceShell({
   children,
 }: {
   /** Breadcrumb leaf and the sidebar entry marked current. */
-  pageTitle: 'Mailbox';
+  pageTitle: 'Mailbox' | 'Vendor quotes';
   /** Undefined while the mailbox is still loading. */
   accountAddress: string | undefined;
   sessionError?: string;
@@ -92,6 +92,18 @@ export function WorkspaceShell({
               </Link>
             );
           })}
+        </nav>
+        <div className="workspaceLabel">Requests</div>
+        <nav aria-label="Requests">
+          <Link
+            className={`folderButton ${pageTitle === 'Vendor quotes' ? 'active' : ''}`}
+            aria-current={pageTitle === 'Vendor quotes' ? 'page' : undefined}
+            to="/rfqs"
+          >
+            <FileText size={19} aria-hidden="true" />
+            <span>Vendor quotes</span>
+            {pageTitle === 'Vendor quotes' && <span className="activeDot" />}
+          </Link>
         </nav>
         <div className="sidebarBottom">
           <p className="sidebarNote">

@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SendRfqBody } from '@lc/contract';
-import { ClassificationOutcomeUnknownError, FrontendApiError, frontendApi } from './frontendApi.js';
+import {
+  ClassificationOutcomeUnknownError,
+  FrontendApiError,
+  RFQ_PAGE_SIZE,
+  frontendApi,
+} from './frontendApi.js';
 
 const session = {
   mailboxId: '00000000-0000-4000-8000-000000000001',
@@ -491,6 +496,57 @@ describe('scoped mail 404 after an account switch', () => {
     mockResponses({ ...result, rfq: { ...result.rfq, sourceEmailId: rfqId } }, session);
     await expect(frontendApi.rfqBySourceEmail(session, emailId)).rejects.toMatchObject({
       code: 'invalid_response',
+    });
+  });
+  it('lists RFQs a page at a time, passing the cursor back and verifying the session', async () => {
+    const page = {
+      customerMails: [
+        {
+          sourceEmail: {
+            id: emailId,
+            sender: { name: 'Ravi', email: 'ravi@acme.example' },
+            subject: 'RFQ',
+            receivedAt: '2026-11-15T09:00:00.000Z',
+          },
+          rfqs: [
+            {
+              rfq: {
+                id: '00000000-0000-4000-8000-000000000077',
+                sourceEmailId: emailId,
+                originPort: 'A',
+                destinationPort: 'B',
+                incoterm: null,
+                status: 'open',
+                createdAt: '2026-11-16T00:00:00.000Z',
+                updatedAt: '2026-11-16T00:00:00.000Z',
+              },
+              replies: { contactCount: 3, repliedCount: 1, quoteCount: 0 },
+            },
+          ],
+        },
+      ],
+      nextCursor: 'opaque-cursor',
+    };
+    let fetchMock = mockResponses(page, session);
+    expect(await frontendApi.rfqs(session, undefined)).toEqual(page);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      `/v1/mailbox/rfqs?limit=${RFQ_PAGE_SIZE}`,
+      expect.anything(),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/v1/me', expect.anything());
+
+    fetchMock = mockResponses({ ...page, nextCursor: null }, session);
+    await frontendApi.rfqs(session, 'opaque-cursor');
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      `/v1/mailbox/rfqs?limit=${RFQ_PAGE_SIZE}&cursor=opaque-cursor`,
+      expect.anything(),
+    );
+
+    mockResponses(page, { ...session, tenantId: emailId });
+    await expect(frontendApi.rfqs(session, undefined)).rejects.toMatchObject({
+      code: 'session_changed',
     });
   });
 });
