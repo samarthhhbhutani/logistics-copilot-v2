@@ -60,10 +60,13 @@ describe('/v1/mailbox/signature/images', () => {
       badge.id,
     ]);
 
+    // The sanitiser keeps only this mailbox's images: the unknown cid is dropped whole.
     const saved = await agent
       .patch('/v1/mailbox/signature')
       .set('Cookie', cookie)
-      .send({ signatureHtml: `<p>Ops Desk</p><img src="cid:${logo.id}" alt="Bhatia">` });
+      .send({
+        signatureHtml: `<p>Ops Desk</p><img src="cid:${logo.id}" alt="Bhatia"><img src="cid:not-ours">`,
+      });
     expect(saved.body.signatureHtml).toBe(
       `<p>Ops Desk</p><img src="cid:${logo.id}" alt="Bhatia" />`,
     );

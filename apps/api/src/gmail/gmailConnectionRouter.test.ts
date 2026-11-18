@@ -2,6 +2,7 @@ import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { testTenantBody } from '../tenantFixture.test-helper.js';
 import { fakeWatchExpiresAt, fakeWatchHistoryId } from '../fakeGmailWatch.test-helper.js';
+import { tinyPng, uploadSignatureImage } from '../signatureImageFixture.test-helper.js';
 import { createTestApp, testMailboxEmail } from '../testAppInstance.test-helper.js';
 import type { TestApp } from '../testAppInstance.test-helper.js';
 
@@ -57,14 +58,18 @@ describe('PATCH /v1/mailbox/signature', () => {
     const testApp = createTestApp();
     const { cookie } = await signedInMailbox(testApp);
     const agent = request(testApp.app);
+    const logo = await uploadSignatureImage(testApp.app, cookie, tinyPng, 'image/png', 'logo.png');
 
-    const saved = await agent.patch('/v1/mailbox/signature').set('Cookie', cookie).send({
-      signatureHtml:
-        '<p><b>Ops Desk</b><br>Bhatia Logistics</p><script>alert(1)</script><img src="https://tracker.example/p.gif"><img src="cid:logo" alt="Bhatia">',
-    });
+    // Only this mailbox's uploaded images survive as cid references; a remote image or a foreign cid is dropped.
+    const saved = await agent
+      .patch('/v1/mailbox/signature')
+      .set('Cookie', cookie)
+      .send({
+        signatureHtml: `<p><b>Ops Desk</b><br>Bhatia Logistics</p><script>alert(1)</script><img src="https://tracker.example/p.gif"><img src="cid:${logo.contentId}" alt="Bhatia"><img src="cid:someone-elses">`,
+      });
     expect(saved.status).toBe(200);
     expect(saved.body.signatureHtml).toBe(
-      '<p><b>Ops Desk</b><br />Bhatia Logistics</p><img src="cid:logo" alt="Bhatia" />',
+      `<p><b>Ops Desk</b><br />Bhatia Logistics</p><img src="cid:${logo.contentId}" alt="Bhatia" />`,
     );
     expect(saved.body.signature).toBe('Ops Desk\nBhatia Logistics');
     const shown = await agent.get('/v1/mailbox').set('Cookie', cookie);

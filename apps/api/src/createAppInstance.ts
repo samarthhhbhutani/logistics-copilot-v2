@@ -133,6 +133,7 @@ export function createAppInstance({
     '/mailbox',
     createGmailConnectionRouter({
       mailboxConnectionRepository,
+      signatureImageRepository,
       tenantRepository,
       gmailOAuth,
       gmailWatch,
