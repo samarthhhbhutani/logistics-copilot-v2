@@ -22,6 +22,7 @@ describe('buildReplyMessage', () => {
       encryptedRefreshToken: null,
       watchExpiresAt: null,
       signature: null,
+      signatureHtml: null,
     };
     const emailBase = {
       gmailThreadId: 'thread-1',

@@ -46,39 +46,46 @@ describe('GET /v1/mailbox', () => {
       gmailConnectedAt: null,
       watchExpiresAt: null,
       signature: null,
+      signatureHtml: null,
     });
     expect((await request(testApp.app).get('/v1/mailbox')).status).toBe(401);
   });
 });
 
 describe('PATCH /v1/mailbox/signature', () => {
-  it('stores the trimmed signature, shows it on GET, and clears it for null or blank', async () => {
+  it('stores the sanitised HTML with the text derived from it, shows both on GET, and clears for null or empty markup', async () => {
     const testApp = createTestApp();
     const { cookie } = await signedInMailbox(testApp);
     const agent = request(testApp.app);
 
-    const saved = await agent
-      .patch('/v1/mailbox/signature')
-      .set('Cookie', cookie)
-      .send({ signature: '  Ops Desk\nBhatia Logistics\n' });
+    const saved = await agent.patch('/v1/mailbox/signature').set('Cookie', cookie).send({
+      signatureHtml:
+        '<p><b>Ops Desk</b><br>Bhatia Logistics</p><script>alert(1)</script><img src="https://tracker.example/p.gif"><img src="cid:logo" alt="Bhatia">',
+    });
     expect(saved.status).toBe(200);
+    expect(saved.body.signatureHtml).toBe(
+      '<p><b>Ops Desk</b><br />Bhatia Logistics</p><img src="cid:logo" alt="Bhatia" />',
+    );
     expect(saved.body.signature).toBe('Ops Desk\nBhatia Logistics');
     const shown = await agent.get('/v1/mailbox').set('Cookie', cookie);
-    expect(shown.body.signature).toBe('Ops Desk\nBhatia Logistics');
+    expect(shown.body).toMatchObject({
+      signature: 'Ops Desk\nBhatia Logistics',
+      signatureHtml: saved.body.signatureHtml,
+    });
 
-    const blank = await agent
+    const emptyMarkup = await agent
       .patch('/v1/mailbox/signature')
       .set('Cookie', cookie)
-      .send({ signature: '   ' });
-    expect(blank.body.signature).toBeNull();
+      .send({ signatureHtml: '<p>  </p><script>x</script>' });
+    expect(emptyMarkup.body).toMatchObject({ signature: null, signatureHtml: null });
     const cleared = await agent
       .patch('/v1/mailbox/signature')
       .set('Cookie', cookie)
-      .send({ signature: null });
-    expect(cleared.body.signature).toBeNull();
+      .send({ signatureHtml: null });
+    expect(cleared.body).toMatchObject({ signature: null, signatureHtml: null });
   });
 
-  it('refuses a missing body, an over-long signature, and no session', async () => {
+  it('refuses a missing body, over-long HTML, HTML whose text form is over the text limit, and no session', async () => {
     const testApp = createTestApp();
     const { cookie } = await signedInMailbox(testApp);
     const agent = request(testApp.app);
@@ -90,10 +97,18 @@ describe('PATCH /v1/mailbox/signature', () => {
         await agent
           .patch('/v1/mailbox/signature')
           .set('Cookie', cookie)
-          .send({ signature: 'x'.repeat(2001) })
+          .send({ signatureHtml: '<p>' + 'x'.repeat(20_001) + '</p>' })
       ).status,
     ).toBe(400);
-    expect((await agent.patch('/v1/mailbox/signature').send({ signature: 'x' })).status).toBe(401);
+    const tooMuchText = await agent
+      .patch('/v1/mailbox/signature')
+      .set('Cookie', cookie)
+      .send({ signatureHtml: '<p>' + 'x'.repeat(2001) + '</p>' });
+    expect(tooMuchText.status).toBe(400);
+    expect(tooMuchText.body.error).toBe('signature_too_long');
+    expect(
+      (await agent.patch('/v1/mailbox/signature').send({ signatureHtml: '<p>x</p>' })).status,
+    ).toBe(401);
   });
 });
 

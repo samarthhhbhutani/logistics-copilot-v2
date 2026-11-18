@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   appendSignature,
+  buildHtmlBody,
   composeOutboundMime,
   isWellFormedMessageId,
+  textBodyAsHtml,
 } from './composeOutboundMime.js';
 import { parseRawEmail } from './parseRawEmail.js';
 
@@ -95,6 +97,54 @@ describe('composeOutboundMime', () => {
     expect(parsed.text.replace(/\r\n/g, '\n')).toBe(
       'Hello,\n\nPlease quote for 2 x 40ft HC.\n\nThanks\n\n-- \nOps Desk\n+91 98765 43210',
     );
+  });
+
+  it('sends text only when the mailbox has no HTML signature', async () => {
+    const rawMessage = await composeOutboundMime({ ...baseMessage, signature: 'Ops Desk' });
+    expect(headersOf(rawMessage)).toContain('Content-Type: text/plain');
+    expect(buildHtmlBody('Hello', undefined)).toBeUndefined();
+    expect(buildHtmlBody('Hello', '  \n')).toBeUndefined();
+    const parsed = await parseRawEmail(rawMessage);
+    expect(parsed.html).toBeUndefined();
+    expect(parsed.attachments).toEqual([]);
+  });
+
+  it('adds an HTML part with the escaped body, the HTML signature and its inline images when the mailbox has one', async () => {
+    const logo = Buffer.from('89504e470d0a1a0a', 'hex');
+    const rawMessage = await composeOutboundMime({
+      ...baseMessage,
+      text: 'Hello <Vendor>,\n\nPlease quote for 2 x 40ft HC & insurance.\n\nThanks\n',
+      signature: 'Ops Desk\nBhatia Logistics',
+      signatureHtml:
+        '<p><b>Ops Desk</b><br />Bhatia Logistics</p><img src="cid:logo" alt="Bhatia" />',
+      inlineImages: [
+        { contentId: 'logo', content: logo, contentType: 'image/png', fileName: 'logo.png' },
+      ],
+    });
+    const raw = Buffer.from(rawMessage).toString('utf8');
+    expect(headersOf(rawMessage)).toContain('Content-Type: multipart/alternative');
+    expect(raw).toContain('Content-Type: multipart/related');
+    expect(raw).toMatch(/Content-Type: image\/png; name=logo\.png/);
+    expect(raw).toMatch(/Content-Disposition: inline; filename=logo\.png/);
+    expect(raw).toContain('Content-ID: <logo>');
+
+    const parsed = await parseRawEmail(rawMessage);
+    expect(parsed.text.replace(/\r\n/g, '\n')).toContain(
+      'Hello <Vendor>,\n\nPlease quote for 2 x 40ft HC & insurance.\n\nThanks\n\n-- \nOps Desk\nBhatia Logistics',
+    );
+    expect(parsed.html).toBe(
+      '<div style="white-space:pre-wrap">Hello &lt;Vendor&gt;,<br><br>Please quote for 2 x 40ft HC &amp; insurance.<br><br>Thanks</div>' +
+        '<br><div class="signature"><p><b>Ops Desk</b><br />Bhatia Logistics</p><img src="cid:logo" alt="Bhatia" /></div>',
+    );
+    expect(textBodyAsHtml('it\'s "quoted"\r\n\n')).toBe(
+      '<div style="white-space:pre-wrap">it&#39;s &quot;quoted&quot;</div>',
+    );
+    expect(parsed.attachments).toHaveLength(1);
+    expect(parsed.attachments[0]).toMatchObject({
+      contentId: 'logo',
+      isInline: true,
+      contentType: 'image/png',
+    });
   });
 
   it('rejects a Message-ID that is not <left@right>', async () => {

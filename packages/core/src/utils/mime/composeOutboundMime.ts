@@ -1,10 +1,21 @@
+import escapeHtml from 'escape-html';
 import MailComposer from 'nodemailer/lib/mail-composer';
 import type { EmailAddress } from './parsedEmail.js';
 
+/** An image the HTML part references as `cid:<contentId>`, carried inline rather than as a file. */
+export interface InlineImage {
+  /** The bare Content-ID, without angle brackets or the `cid:` prefix. */
+  contentId: string;
+  content: Uint8Array;
+  contentType: string;
+  fileName: string;
+}
+
 /**
- * One message we send. Plain text only for now (HTML and attachments come with a later roadmap
- * item). `messageId` is chosen by the caller so the reply we get back can be matched to the
- * thing we sent without a lookup: Gmail keeps a caller-supplied Message-ID as is.
+ * One message we send. The body is plain text; a mailbox with an HTML signature gets a
+ * multipart/alternative with the same text and an HTML part (escaped body + signature HTML +
+ * its inline images). `messageId` is chosen by the caller so the reply we get back can be
+ * matched to the thing we sent without a lookup: Gmail keeps a caller-supplied Message-ID as is.
  */
 export interface OutboundMessage {
   from: EmailAddress;
@@ -17,6 +28,12 @@ export interface OutboundMessage {
    * clients collapse it and reply parsers drop it from quotes. Unset or blank: no signature.
    */
   signature?: string;
+  /**
+   * The mailbox's sanitised HTML signature. When set the mail also carries an HTML part; its
+   * `cid:` images come from `inlineImages`. Unset or blank: text-only mail.
+   */
+  signatureHtml?: string;
+  inlineImages?: InlineImage[];
   /** Full RFC 5322 form, angle brackets included: `<rfq-123.1@tenant.example>`. */
   messageId: string;
   /** Message-ID of the mail being answered; set together with `references` on every reply. */
@@ -44,6 +61,18 @@ export function appendSignature(text: string, signature: string | undefined): st
   return `${text.replace(/\s+$/, '')}\n\n${SIGNATURE_SEPARATOR}\n${trimmedSignature}`;
 }
 
+/** The body text as HTML: escaped, line breaks kept, so it reads exactly like the text part. */
+export function textBodyAsHtml(text: string): string {
+  return `<div style="white-space:pre-wrap">${escapeHtml(text.trimEnd()).replace(/\r?\n/g, '<br>')}</div>`;
+}
+
+/** The HTML part: the body, a blank line, then the signature block; undefined when there is no HTML signature. */
+export function buildHtmlBody(text: string, signatureHtml: string | undefined): string | undefined {
+  const trimmedSignature = signatureHtml?.trim();
+  if (!trimmedSignature) return undefined;
+  return `${textBodyAsHtml(text)}<br><div class="signature">${trimmedSignature}</div>`;
+}
+
 /**
  * Build the RFC 822 bytes for an outbound message with nodemailer's MailComposer (header
  * encoding, folding, quoted-printable, Date). Only the composer is used, never a transport:
@@ -59,6 +88,14 @@ export async function composeOutboundMime(message: OutboundMessage): Promise<Uin
     cc: message.cc?.map(toComposerAddress),
     subject: message.subject,
     text: appendSignature(message.text, message.signature),
+    html: buildHtmlBody(message.text, message.signatureHtml),
+    attachments: message.inlineImages?.map((image) => ({
+      cid: image.contentId,
+      content: Buffer.from(image.content),
+      contentType: image.contentType,
+      filename: image.fileName,
+      contentDisposition: 'inline' as const,
+    })),
     messageId: message.messageId,
     inReplyTo: message.inReplyTo,
     references: message.references,
