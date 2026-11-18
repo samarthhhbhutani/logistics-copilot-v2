@@ -517,7 +517,7 @@ test('All mail and Inbox show each classification, retain it after reload and re
     ['Shipment update 5', 'Customer request'],
   ];
   for (const folder of ['All mail', 'Inbox']) {
-    await page.getByRole('button', { name: folder, exact: true }).click();
+    await page.getByRole('link', { name: folder, exact: true }).click();
     for (const [messageSubject, label] of expectedLabels) {
       await expect(messageLink(page, messageSubject!).locator('.classificationBadge')).toHaveText(
         label!,

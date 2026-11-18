@@ -37,7 +37,7 @@ test('password login, cookie session, paging, folder reset, browser back and acc
   await expect(page.getByRole('button', { name: 'Older', exact: true })).toBeDisabled();
   await page.goBack();
   await expect(page.getByText('30 messages on this page')).toBeVisible();
-  await page.getByRole('button', { name: 'Sent', exact: true }).click();
+  await page.getByRole('link', { name: 'Sent', exact: true }).click();
   await expect(page).toHaveURL(/label=sent$/);
   await expect(page.getByText('7 messages on this page')).toBeVisible();
   await expect(page.locator('.emailSender').first()).toContainText('To: Ocean Freight Desk');
@@ -173,7 +173,7 @@ for (const trigger of ['mailbox', 'emails'] as const) {
       await page.getByRole('button', { name: 'Refresh', exact: true }).click();
     } else {
       // Folder navigation reads mail without refetching cached mailbox metadata.
-      await page.getByRole('button', { name: 'Inbox', exact: true }).click();
+      await page.getByRole('link', { name: 'Inbox', exact: true }).click();
     }
     await expect(page.getByRole('heading', { name: 'Welcome back.' })).toBeVisible();
     await expect(page.getByText('Sales mailbox private conversation')).toHaveCount(0);

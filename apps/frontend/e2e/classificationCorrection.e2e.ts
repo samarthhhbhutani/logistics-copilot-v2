@@ -271,7 +271,7 @@ test('a changed label survives going back to All mail and Inbox, reloads and reo
   const listBadge = messageLink(page, 'Shipment update 7').locator('.classificationBadge');
   await page.getByRole('link', { name: 'Back to All mail' }).click();
   await expect(listBadge).toHaveText('Rate card');
-  await page.getByRole('button', { name: 'Inbox', exact: true }).click();
+  await page.getByRole('link', { name: 'Inbox', exact: true }).click();
   await expect(listBadge).toHaveText('Rate card');
   await page.reload();
   await expect(listBadge).toHaveText('Rate card');
