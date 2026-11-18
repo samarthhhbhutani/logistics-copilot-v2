@@ -1438,3 +1438,125 @@ a.emailRow:focus-visible {
     grid-column: 2;
   }
 }
+
+.rfqCards {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 0 clamp(22px, 4vw, 56px) 24px;
+}
+.rfqCards .emptyState,
+.rfqCards .pageStatus {
+  padding: 48px 0;
+}
+.rfqCard {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+  overflow: hidden;
+}
+.rfqCardHeader {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  background: #f5f8f1;
+}
+.rfqCardCustomer {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  font-size: 0.87rem;
+}
+.rfqCardCustomer .muted {
+  margin: 0;
+  font-size: 0.78rem;
+}
+.rfqCardSubject {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rfqCardRequests {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.rfqCardRequests > li + li {
+  border-top: 1px solid var(--line);
+}
+.rfqRequest {
+  padding: 14px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.rfqRequestSummary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+}
+.rfqRequestRoute {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  font-size: 0.9rem;
+}
+.rfqRequestRoute .muted {
+  margin: 0;
+  font-size: 0.78rem;
+}
+.rfqProgressPill {
+  display: inline-flex;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.rfqProgressPill.waiting {
+  background: #f3efd9;
+  color: #6d5a12;
+}
+.rfqProgressPill.replied {
+  background: #dfe9f3;
+  color: #284a6b;
+}
+.rfqProgressPill.quoted {
+  background: #dcebd7;
+  color: #24503a;
+}
+.rfqProgressPill.unreached {
+  background: #f6dfdb;
+  color: #a33223;
+}
+.rfqProgressPill.closed {
+  background: #e7e9e4;
+  color: var(--muted);
+}
+.rfqRequestDetails .rfqSendStatus {
+  padding-top: 0;
+  border-top: 0;
+}
+.rfqRequestSummary .rotated {
+  transform: rotate(180deg);
+}
+@media (max-width: 767px) {
+  .rfqCardHeader {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .rfqCardHeader > .button {
+    grid-column: 2;
+    justify-self: start;
+  }
+  .rfqRequestSummary {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .rfqRequestSummary > .button {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+}

@@ -5,6 +5,7 @@ import type { SessionResponse } from '@lc/contract';
 import { errorMessage, frontendApi } from './frontendApi.js';
 import { LoginPage } from './loginPage.js';
 import { MailboxPage } from './mailboxPage.js';
+import { RfqsPage } from './rfqsPage.js';
 
 function SessionPage() {
   const queryClient = useQueryClient();
@@ -49,6 +50,15 @@ function SessionPage() {
       </main>
     );
   if (!session.data) return <LoginPage onSignedIn={signedIn} />;
+  if (location.pathname === '/rfqs')
+    return (
+      <RfqsPage
+        key={`${session.data.tenantId}/${session.data.mailboxId}`}
+        session={session.data}
+        onSignedOut={signedOut}
+        sessionError={session.isError ? errorMessage(session.error) : undefined}
+      />
+    );
   if (location.pathname !== '/mailbox') return <Navigate to="/mailbox" replace />;
   return (
     <MailboxPage
@@ -66,6 +76,7 @@ export function FrontendApp() {
       <Route path="/" element={<SessionPage />} />
       <Route path="/login" element={<SessionPage />} />
       <Route path="/mailbox" element={<SessionPage />} />
+      <Route path="/rfqs" element={<SessionPage />} />
       <Route
         path="*"
         element={

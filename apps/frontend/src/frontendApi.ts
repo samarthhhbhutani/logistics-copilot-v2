@@ -6,6 +6,7 @@ import {
   getRfqBySourceEmailResponseSchema,
   getRfqResponseSchema,
   listAttachmentsResponseSchema,
+  listRfqsResponseSchema,
   listVendorsResponseSchema,
   threadResponseSchema,
   gmailConnectResponseSchema,
@@ -84,6 +85,9 @@ async function readJsonBody(response: Response): Promise<unknown> {
   }
   return response.status === 204 ? undefined : await readNetworkResponse(response.json());
 }
+
+/** Customer mails per page on the vendor quotes page; a desk's week fits on one. */
+export const RFQ_PAGE_SIZE = 20;
 
 /** These POSTs only set or clear the session cookie or return an OAuth URL, so a replay is harmless. */
 const REPLAY_SAFE_POST: RequestRetryOptions = { replaySafe: true };
@@ -335,6 +339,14 @@ export const frontendApi = {
       signal,
     );
     if (result.rfq.id !== rfqId) throw new FrontendApiError(502, 'invalid_response');
+    requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
+    return result;
+  },
+  /** A page of the mailbox's RFQs newest first, grouped by customer mail; `cursor` from the previous page's nextCursor. */
+  async rfqs(session: SessionResponse, cursor: string | undefined, signal?: AbortSignal) {
+    const query = new URLSearchParams({ limit: String(RFQ_PAGE_SIZE) });
+    if (cursor) query.set('cursor', cursor);
+    const result = await requestJson(`/mailbox/rfqs?${query}`, listRfqsResponseSchema, { signal });
     requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
     return result;
   },
