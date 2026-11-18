@@ -1,29 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import {
-  Archive,
-  ArrowLeft,
-  ArrowRight,
-  Inbox,
-  Link2,
-  LogOut,
-  RefreshCw,
-  Send,
-  TriangleAlert,
-} from 'lucide-react';
+import { ArrowLeft, ArrowRight, Inbox, Link2, RefreshCw, TriangleAlert } from 'lucide-react';
 import type { GmailLabel, SessionResponse } from '@lc/contract';
 import { ThreadView } from './threadView.js';
 import { ClassificationBadge } from './classificationBadge.js';
-import { Brand } from './brand.js';
 import { ConnectionPanel } from './connectionPanel.js';
 import { errorMessage, isUnauthenticated, frontendApi } from './frontendApi.js';
-
-const folders = [
-  { label: undefined, title: 'All mail', Icon: Archive },
-  { label: 'inbox', title: 'Inbox', Icon: Inbox },
-  { label: 'sent', title: 'Sent', Icon: Send },
-] as const;
+import { WorkspaceShell, mailFolderFor } from './workspaceShell.js';
 
 export function MailboxPage({
   session,
@@ -36,14 +20,7 @@ export function MailboxPage({
 }) {
   const [redirecting, setRedirecting] = useState(false);
   const connectController = useRef<AbortController | null>(null);
-  const logoutController = useRef<AbortController | null>(null);
-  useEffect(
-    () => () => {
-      connectController.current?.abort();
-      logoutController.current?.abort();
-    },
-    [],
-  );
+  useEffect(() => () => connectController.current?.abort(), []);
   useEffect(() => {
     function resumeFromBrowserCache(event: PageTransitionEvent) {
       if (event.persisted) setRedirecting(false);
@@ -84,23 +61,11 @@ export function MailboxPage({
     },
   });
   const connecting = connect.isPending || redirecting;
-  const logout = useMutation({
-    mutationFn: () => {
-      connectController.current?.abort();
-      logoutController.current = new AbortController();
-      return frontendApi.logout(logoutController.current.signal);
-    },
-    onSuccess: () => {
-      if (!logoutController.current?.signal.aborted) onSignedOut();
-    },
-  });
-  const expired = [mailbox.error, emails.error, connect.error, logout.error].some(
-    isUnauthenticated,
-  );
+  const expired = [mailbox.error, emails.error, connect.error].some(isUnauthenticated);
   useEffect(() => {
     if (expired) onSignedOut();
   }, [expired, onSignedOut]);
-  const folder = folders.find((entry) => entry.label === label) ?? folders[0];
+  const folder = mailFolderFor(label ?? null);
   useEffect(() => {
     if (!selectedEmailId) document.title = `${folder.title} · Logistics Copilot`;
   }, [folder.title, selectedEmailId]);
@@ -126,62 +91,15 @@ export function MailboxPage({
       </main>
     );
   return (
-    <div className="workspace">
-      <a className="skipLink" href="#main-content">
-        Skip to mailbox
-      </a>
-      <aside className="sidebar">
-        <Brand />
-        <div className="workspaceLabel">Mail workspace</div>
-        <nav aria-label="Mail folders">
-          {folders.map(({ label: folderLabel, title, Icon }) => (
-            <button
-              key={title}
-              className={`folderButton ${label === folderLabel ? 'active' : ''}`}
-              aria-current={label === folderLabel ? 'page' : undefined}
-              onClick={() => changeFolder(folderLabel)}
-            >
-              <Icon size={19} aria-hidden="true" />
-              <span>{title}</span>
-              {label === folderLabel && <span className="activeDot" />}
-            </button>
-          ))}
-        </nav>
-        <div className="sidebarBottom">
-          <p className="sidebarNote">
-            A workspace for
-            <br />
-            your conversations.
-          </p>
-          <button
-            className="folderButton signOut"
-            aria-disabled={logout.isPending}
-            onClick={() => {
-              if (!logout.isPending) logout.mutate();
-            }}
-          >
-            <LogOut size={18} aria-hidden="true" />
-            {logout.isPending ? 'Signing out…' : 'Sign out'}
-          </button>
-          {logout.error && (
-            <p className="formError" role="alert">
-              {errorMessage(logout.error)}
-            </p>
-          )}
-        </div>
-      </aside>
-      <main className="mailboxMain" id="main-content">
-        <header className="workspaceHeader">
-          <span className="breadcrumb">
-            Workspace <span>/</span> Mailbox
-          </span>
-          <span className="accountAddress">{mailbox.data?.emailAddress ?? 'Loading mailbox…'}</span>
-        </header>
-        {sessionError && (
-          <p className="inlineAlert" role="alert">
-            Session check failed. {sessionError}
-          </p>
-        )}
+    <WorkspaceShell
+      pageTitle="Mailbox"
+      accountAddress={mailbox.data?.emailAddress}
+      sessionError={sessionError}
+      onSignedOut={onSignedOut}
+      // A sign-out must not race a Google redirect the connect button started.
+      onSignOutStarted={() => connectController.current?.abort()}
+    >
+      <>
         {mailbox.isError && mailbox.data && (
           <p className="inlineAlert" role="alert">
             Mailbox refresh failed. Showing saved data. {errorMessage(mailbox.error)}
@@ -437,7 +355,7 @@ export function MailboxPage({
             )}
           </>
         )}
-      </main>
-    </div>
+      </>
+    </WorkspaceShell>
   );
 }
