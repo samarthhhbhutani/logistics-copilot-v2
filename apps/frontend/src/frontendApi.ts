@@ -26,6 +26,12 @@ import type {
 import { readNetworkResponse, requestWithRetry } from './frontendRequest.js';
 import type { RequestRetryOptions } from './frontendRequest.js';
 
+/** What the mail list is narrowed to: a Gmail folder, a current classification, both or neither. */
+export interface MailListFilter {
+  label?: GmailLabel;
+  classification?: ClassificationLabel;
+}
+
 export class FrontendApiError extends Error {
   constructor(
     readonly status: number,
@@ -158,12 +164,13 @@ export const frontendApi = {
   },
   async emails(
     session: SessionResponse,
-    label: GmailLabel | undefined,
+    filter: MailListFilter,
     cursor: string | undefined,
     signal?: AbortSignal,
   ) {
     const query = new URLSearchParams({ limit: '30' });
-    if (label) query.set('label', label);
+    if (filter.label) query.set('label', filter.label);
+    if (filter.classification) query.set('classification', filter.classification);
     if (cursor) query.set('cursor', cursor);
     return requireMatchingSession(
       await requestJson(`/mailbox/emails?${query}`, listEmailsResponseSchema, { signal }),

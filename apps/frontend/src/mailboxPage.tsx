@@ -2,12 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Inbox, Link2, RefreshCw, TriangleAlert } from 'lucide-react';
-import type { GmailLabel, SessionResponse } from '@lc/contract';
+import type { SessionResponse } from '@lc/contract';
 import { ThreadView } from './threadView.js';
 import { ClassificationBadge } from './classificationBadge.js';
 import { ConnectionPanel } from './connectionPanel.js';
 import { errorMessage, isUnauthenticated, frontendApi } from './frontendApi.js';
-import { WorkspaceShell, mailFolderFor } from './workspaceShell.js';
+import type { MailListFilter } from './frontendApi.js';
+import { WorkspaceShell, mailFolderFor, mailListFilterParams } from './workspaceShell.js';
 
 export function MailboxPage({
   session,
@@ -29,9 +30,9 @@ export function MailboxPage({
     return () => window.removeEventListener('pageshow', resumeFromBrowserCache);
   }, []);
   const [searchParams, setSearchParams] = useSearchParams();
-  const folderValue = searchParams.get('label');
-  const label: GmailLabel | undefined =
-    folderValue === 'inbox' || folderValue === 'sent' ? folderValue : undefined;
+  const folder = mailFolderFor(searchParams);
+  const { filter } = folder;
+  const filterParams = mailListFilterParams(filter);
   const cursor = searchParams.get('cursor') || undefined;
   const selectedEmailId = searchParams.get('email');
   const outcome = {
@@ -45,8 +46,8 @@ export function MailboxPage({
     queryFn: ({ signal }) => frontendApi.mailbox(session, signal),
   });
   const emails = useQuery({
-    queryKey: ['emails', session.tenantId, session.mailboxId, label, cursor],
-    queryFn: ({ signal }) => frontendApi.emails(session, label, cursor, signal),
+    queryKey: ['emails', session.tenantId, session.mailboxId, filter, cursor],
+    queryFn: ({ signal }) => frontendApi.emails(session, filter, cursor, signal),
     enabled: Boolean(mailbox.data) && !isOutcomePage && !isSetupPage && !selectedEmailId,
   });
   const connect = useMutation({
@@ -65,19 +66,18 @@ export function MailboxPage({
   useEffect(() => {
     if (expired) onSignedOut();
   }, [expired, onSignedOut]);
-  const folder = mailFolderFor(label ?? null);
   useEffect(() => {
     if (!selectedEmailId) document.title = `${folder.title} · Logistics Copilot`;
   }, [folder.title, selectedEmailId]);
-  function changeFolder(nextLabel?: GmailLabel) {
-    setSearchParams(nextLabel ? { label: nextLabel } : {});
+  function showNewestMail(nextFilter: MailListFilter) {
+    setSearchParams(mailListFilterParams(nextFilter));
   }
   function openNextPage(nextCursor: string) {
-    setSearchParams({ ...(label ? { label } : {}), cursor: nextCursor });
+    setSearchParams({ ...filterParams, cursor: nextCursor });
     window.scrollTo({ top: 0 });
   }
   function showConnection() {
-    setSearchParams({ ...(label ? { label } : {}), setup: '1' });
+    setSearchParams({ ...filterParams, setup: '1' });
   }
   function refresh() {
     if (emails.isFetching || mailbox.isFetching) return;
@@ -129,7 +129,7 @@ export function MailboxPage({
                 onConnect={() => {
                   if (!connecting) connect.mutate();
                 }}
-                onContinue={() => changeFolder(label)}
+                onContinue={() => showNewestMail(filter)}
               />
             ) : selectedEmailId ? (
               <ThreadView
@@ -137,7 +137,7 @@ export function MailboxPage({
                 emailId={selectedEmailId}
                 session={session}
                 onSignedOut={onSignedOut}
-                backTo={`/mailbox${label || cursor ? `?${new URLSearchParams({ ...(label ? { label } : {}), ...(cursor ? { cursor } : {}) })}` : ''}`}
+                backTo={`/mailbox${Object.keys(filterParams).length || cursor ? `?${new URLSearchParams({ ...filterParams, ...(cursor ? { cursor } : {}) })}` : ''}`}
                 backLabel={folder.title}
               />
             ) : (
@@ -228,7 +228,10 @@ export function MailboxPage({
                           Try again
                         </button>
                         {cursor && (
-                          <button className="button textButton" onClick={() => changeFolder(label)}>
+                          <button
+                            className="button textButton"
+                            onClick={() => showNewestMail(filter)}
+                          >
                             Newest mail
                           </button>
                         )}
@@ -249,7 +252,7 @@ export function MailboxPage({
                               className="emailRow"
                               to={{
                                 pathname: '/mailbox',
-                                search: `?${new URLSearchParams({ ...(label ? { label } : {}), ...(cursor ? { cursor } : {}), email: email.id })}`,
+                                search: `?${new URLSearchParams({ ...filterParams, ...(cursor ? { cursor } : {}), email: email.id })}`,
                               }}
                             >
                               <span
@@ -303,21 +306,25 @@ export function MailboxPage({
                       <h2>
                         {cursor
                           ? 'No more messages'
-                          : label === 'sent'
+                          : filter.label === 'sent'
                             ? 'No sent mail yet'
-                            : 'Room for your next conversation'}
+                            : filter.classification === 'customer_request'
+                              ? 'No customer requests yet'
+                              : 'Room for your next conversation'}
                       </h2>
                       <p>
                         {cursor
                           ? 'Return to the newest mail to see recent conversations.'
                           : mailbox.data.gmailConnectionStatus !== 'connected'
                             ? 'Connect Gmail above. New messages will appear here when they arrive.'
-                            : label === 'sent'
+                            : filter.label === 'sent'
                               ? 'Mail you send from Gmail after connecting will appear here.'
-                              : 'New messages will appear here after Gmail delivers them. Use Refresh to check again.'}
+                              : filter.classification === 'customer_request'
+                                ? 'Inbound mail the classifier marks as a customer request will appear here.'
+                                : 'New messages will appear here after Gmail delivers them. Use Refresh to check again.'}
                       </p>
                       {cursor && (
-                        <button className="button secondary" onClick={() => changeFolder(label)}>
+                        <button className="button secondary" onClick={() => showNewestMail(filter)}>
                           Newest mail
                         </button>
                       )}
@@ -333,7 +340,7 @@ export function MailboxPage({
                   </span>
                   <div className="pagination">
                     {cursor && (
-                      <button className="button textButton" onClick={() => changeFolder(label)}>
+                      <button className="button textButton" onClick={() => showNewestMail(filter)}>
                         <ArrowLeft size={16} aria-hidden="true" />
                         Newest
                       </button>

@@ -2,26 +2,55 @@ import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
-import { Archive, FileText, Inbox, LogOut, Send } from 'lucide-react';
-import type { GmailLabel } from '@lc/contract';
+import { Archive, FileText, Inbox, LogOut, MessageSquareText, Send } from 'lucide-react';
 import { Brand } from './brand.js';
 import { errorMessage, frontendApi, isUnauthenticated } from './frontendApi.js';
+import type { MailListFilter } from './frontendApi.js';
 
-export const MAIL_FOLDERS = [
-  { label: undefined, title: 'All mail', Icon: Archive },
-  { label: 'inbox', title: 'Inbox', Icon: Inbox },
-  { label: 'sent', title: 'Sent', Icon: Send },
-] as const;
-
-export type MailFolder = (typeof MAIL_FOLDERS)[number];
-
-/** The folder a `?label=` value names; All mail for anything else. */
-export function mailFolderFor(labelValue: string | null): MailFolder {
-  return MAIL_FOLDERS.find((folder) => folder.label === labelValue) ?? MAIL_FOLDERS[0];
+export interface MailFolder {
+  title: string;
+  Icon: typeof Archive;
+  filter: MailListFilter;
 }
 
-export function mailboxPath(label?: GmailLabel): string {
-  return label ? `/mailbox?${new URLSearchParams({ label })}` : '/mailbox';
+/** The Gmail folders, shown under "Mail folders". */
+export const MAIL_FOLDERS: readonly MailFolder[] = [
+  { title: 'All mail', Icon: Archive, filter: {} },
+  { title: 'Inbox', Icon: Inbox, filter: { label: 'inbox' } },
+  { title: 'Sent', Icon: Send, filter: { label: 'sent' } },
+];
+
+/** Inbound mail currently classified as a customer request, shown under "Requests" next to Vendor quotes. */
+export const CUSTOMER_REQUESTS_FOLDER: MailFolder = {
+  title: 'Customer requests',
+  Icon: MessageSquareText,
+  filter: { classification: 'customer_request' },
+};
+
+const ALL_MAIL_FOLDERS = [...MAIL_FOLDERS, CUSTOMER_REQUESTS_FOLDER];
+
+/** The folder whose filter the URL's `label` and `classification` name; All mail for anything else. */
+export function mailFolderFor(searchParams: URLSearchParams): MailFolder {
+  const label = searchParams.get('label') ?? undefined;
+  const classification = searchParams.get('classification') ?? undefined;
+  return (
+    ALL_MAIL_FOLDERS.find(
+      (folder) => folder.filter.label === label && folder.filter.classification === classification,
+    ) ?? MAIL_FOLDERS[0]!
+  );
+}
+
+/** The filter as query-string entries, ready to spread next to `cursor` or `email`. */
+export function mailListFilterParams(filter: MailListFilter): Record<string, string> {
+  return {
+    ...(filter.label ? { label: filter.label } : {}),
+    ...(filter.classification ? { classification: filter.classification } : {}),
+  };
+}
+
+export function mailboxPath(filter: MailListFilter): string {
+  const params = new URLSearchParams(mailListFilterParams(filter));
+  return params.size ? `/mailbox?${params}` : '/mailbox';
 }
 
 /**
@@ -30,6 +59,21 @@ export function mailboxPath(label?: GmailLabel): string {
  * place that knows every page, so a new page is a link here and a route in frontendApp; nothing
  * else moves.
  */
+function folderLink(folder: MailFolder, current: boolean) {
+  return (
+    <Link
+      key={folder.title}
+      className={`folderButton ${current ? 'active' : ''}`}
+      aria-current={current ? 'page' : undefined}
+      to={mailboxPath(folder.filter)}
+    >
+      <folder.Icon size={19} aria-hidden="true" />
+      <span>{folder.title}</span>
+      {current && <span className="activeDot" />}
+    </Link>
+  );
+}
+
 export function WorkspaceShell({
   pageTitle,
   accountAddress,
@@ -50,7 +94,7 @@ export function WorkspaceShell({
 }) {
   const location = useLocation();
   const [searchParams] = useSearchParams();
-  const activeFolder = pageTitle === 'Mailbox' ? mailFolderFor(searchParams.get('label')) : null;
+  const activeFolder = pageTitle === 'Mailbox' ? mailFolderFor(searchParams) : null;
   const logoutController = useRef<AbortController | null>(null);
   useEffect(() => () => logoutController.current?.abort(), []);
   const logout = useMutation({
@@ -77,24 +121,11 @@ export function WorkspaceShell({
         <Brand />
         <div className="workspaceLabel">Mail workspace</div>
         <nav aria-label="Mail folders">
-          {MAIL_FOLDERS.map((folder) => {
-            const current = activeFolder === folder;
-            return (
-              <Link
-                key={folder.title}
-                className={`folderButton ${current ? 'active' : ''}`}
-                aria-current={current ? 'page' : undefined}
-                to={mailboxPath(folder.label)}
-              >
-                <folder.Icon size={19} aria-hidden="true" />
-                <span>{folder.title}</span>
-                {current && <span className="activeDot" />}
-              </Link>
-            );
-          })}
+          {MAIL_FOLDERS.map((folder) => folderLink(folder, activeFolder === folder))}
         </nav>
         <div className="workspaceLabel">Requests</div>
         <nav aria-label="Requests">
+          {folderLink(CUSTOMER_REQUESTS_FOLDER, activeFolder === CUSTOMER_REQUESTS_FOLDER)}
           <Link
             className={`folderButton ${pageTitle === 'Vendor quotes' ? 'active' : ''}`}
             aria-current={pageTitle === 'Vendor quotes' ? 'page' : undefined}
