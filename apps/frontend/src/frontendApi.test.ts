@@ -58,23 +58,33 @@ describe('frontendApi', () => {
           new Response(JSON.stringify({ url: 'https://evil.example/phishing' })),
         ),
     );
-    await expect(frontendApi.emails(session, undefined, undefined)).rejects.toThrow();
+    await expect(frontendApi.emails(session, {}, undefined)).rejects.toThrow();
     await expect(frontendApi.connect()).rejects.toThrow();
   });
   it('encodes cursor/filter and passes AbortSignal without any mailbox identifier', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValue(
-        new Response(JSON.stringify({ ...session, emails: [], nextCursor: null })),
+      .mockImplementation(
+        async () => new Response(JSON.stringify({ ...session, emails: [], nextCursor: null })),
       );
     vi.stubGlobal('fetch', fetchMock);
     const controller = new AbortController();
-    await frontendApi.emails(session, 'sent', 'a+b/c', controller.signal);
+    await frontendApi.emails(session, { label: 'sent' }, 'a+b/c', controller.signal);
     expect(fetchMock).toHaveBeenCalledWith(
       '/v1/mailbox/emails?limit=30&label=sent&cursor=a%2Bb%2Fc',
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(fetchMock.mock.calls[0]?.[1]?.signal.aborted).toBe(false);
+
+    await frontendApi.emails(
+      session,
+      { label: 'inbox', classification: 'customer_request' },
+      undefined,
+    );
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/v1/mailbox/emails?limit=30&label=inbox&classification=customer_request',
+      expect.anything(),
+    );
   });
   it.each(['mailboxId', 'tenantId'] as const)(
     'rejects mailbox and mail responses when the cookie changed %s',
@@ -110,7 +120,7 @@ describe('frontendApi', () => {
           ),
       );
       await expect(frontendApi.mailbox(session)).rejects.toMatchObject({ code: 'session_changed' });
-      await expect(frontendApi.emails(session, undefined, undefined)).rejects.toMatchObject({
+      await expect(frontendApi.emails(session, {}, undefined)).rejects.toMatchObject({
         code: 'session_changed',
       });
     },
@@ -165,7 +175,7 @@ describe('list classifications', () => {
       emails: [{ ...message, classification }],
       nextCursor: null,
     });
-    const response = await frontendApi.emails(session, 'inbox', undefined);
+    const response = await frontendApi.emails(session, { label: 'inbox' }, undefined);
     expect(response.emails[0]?.classification).toEqual(classification);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -612,11 +622,11 @@ describe('transport retries', () => {
   it('does not retry schema failures, session failures or permanent errors', async () => {
     const fetchMock = vi.fn().mockImplementation(async () => new Response('{"emails":[]}'));
     vi.stubGlobal('fetch', fetchMock);
-    await expect(frontendApi.emails(session, undefined, undefined)).rejects.toThrow();
+    await expect(frontendApi.emails(session, {}, undefined)).rejects.toThrow();
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     const switched = mockResponses({ ...session, tenantId: emailId, emails: [], nextCursor: null });
-    await expect(frontendApi.emails(session, undefined, undefined)).rejects.toMatchObject({
+    await expect(frontendApi.emails(session, {}, undefined)).rejects.toMatchObject({
       code: 'session_changed',
     });
     expect(switched).toHaveBeenCalledTimes(1);

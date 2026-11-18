@@ -50,6 +50,37 @@ test('password login, cookie session, paging, folder reset, browser back and acc
   await expect(page.getByText('RFQ: Mumbai to Rotterdam')).toHaveCount(0);
 });
 
+test('Customer requests lists only mail currently labelled customer request and keeps the filter while reading', async ({
+  page,
+}) => {
+  await signIn(page);
+  await page.getByRole('link', { name: 'Customer requests', exact: true }).click();
+  await expect(page).toHaveURL(/\/mailbox\?classification=customer_request$/);
+  await expect(page.getByRole('heading', { name: 'Customer requests', exact: true })).toBeVisible();
+  // Earlier specs relabel mail through the correction form, so the exact count depends on suite
+  // order; what must hold is that every listed mail carries the label and the seeded one is there.
+  const rows = page.locator('.emailRows .emailRow');
+  const seededRequest = rows.filter({ hasText: 'Shipment update 5' });
+  await expect(seededRequest).toHaveCount(1);
+  const requestCount = await rows.count();
+  expect(requestCount).toBeGreaterThanOrEqual(1);
+  expect(requestCount).toBeLessThan(28);
+  await expect(rows.locator('.classificationBadge')).toHaveText(
+    Array<string>(requestCount).fill('Customer request'),
+  );
+  await expect(page.getByText(`${requestCount} messages on this page`)).toBeVisible();
+  await seededRequest.click();
+  await expect(page).toHaveURL(/classification=customer_request&email=/);
+  await page.getByRole('link', { name: 'Back to Customer requests' }).click();
+  await expect(page.getByRole('heading', { name: 'Customer requests', exact: true })).toBeVisible();
+  await page.reload();
+  await expect(rows).toHaveCount(requestCount);
+  await page.getByRole('link', { name: 'Inbox', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Inbox', exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/\/mailbox\?label=inbox$/);
+  await expect(rows).toHaveCount(28);
+});
+
 test('connect, real callback redirect, success confirmation and cancelled consent', async ({
   page,
 }) => {
