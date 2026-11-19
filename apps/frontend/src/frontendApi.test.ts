@@ -4,6 +4,7 @@ import {
   ClassificationOutcomeUnknownError,
   FrontendApiError,
   RFQ_PAGE_SIZE,
+  errorMessage,
   frontendApi,
 } from './frontendApi.js';
 
@@ -879,5 +880,136 @@ describe('classification correction', () => {
       frontendApi.correctClassification(session, emailId, 'general', controller.signal),
     ).rejects.toThrow('navigated');
     expect(aborted).toHaveBeenCalledTimes(0);
+  });
+});
+
+describe('signature and its images', () => {
+  const mailbox = {
+    ...session,
+    emailAddress: 'ops@example.com',
+    gmailConnectionStatus: 'connected',
+    gmailConnectedAt: '2026-11-01T09:00:00.000Z',
+    watchExpiresAt: '2026-11-08T09:00:00.000Z',
+    signature: 'Ops Desk',
+    signatureHtml: '<p>Ops Desk</p>',
+  };
+  const image = {
+    id: '00000000-0000-4000-8000-000000000031',
+    fileName: 'logo.png',
+    contentType: 'image/png',
+    sizeBytes: 3,
+    contentId: '00000000-0000-4000-8000-000000000031',
+    previewUrl: 'https://bucket.example/signatures/logo.png?X-Amz-Signature=abc',
+    previewUrlExpiresAt: '2026-11-20T10:15:00.000Z',
+    createdAt: '2026-11-20T10:00:00.000Z',
+  };
+
+  it('PATCHes the signature as JSON and returns the sanitised mailbox for this session', async () => {
+    const fetchMock = mockResponses(mailbox);
+    expect(await frontendApi.updateSignature(session, '<p>Ops Desk<script></script></p>')).toEqual(
+      mailbox,
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/v1/mailbox/signature',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({ signatureHtml: '<p>Ops Desk<script></script></p>' }),
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    const otherAccount = mockResponses({ ...mailbox, mailboxId: image.id });
+    await expect(frontendApi.updateSignature(session, null)).rejects.toMatchObject({
+      status: 401,
+      code: 'session_changed',
+    });
+    expect(otherAccount.mock.calls[0]?.[1]).toMatchObject({
+      body: JSON.stringify({ signatureHtml: null }),
+    });
+  });
+
+  it('lists images and checks the cookie still belongs to this session', async () => {
+    const fetchMock = mockResponses({ images: [image] }, session);
+    expect(await frontendApi.signatureImages(session)).toEqual({ images: [image] });
+    expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([
+      '/v1/mailbox/signature/images',
+      '/v1/me',
+    ]);
+    mockResponses({ images: [image] }, { ...session, tenantId: image.id });
+    await expect(frontendApi.signatureImages(session)).rejects.toMatchObject({
+      code: 'session_changed',
+    });
+  });
+
+  it('uploads the raw bytes with the file type and name, never as JSON', async () => {
+    const fetchMock = mockResponses(image, session);
+    const file = new File([new Uint8Array([1, 2, 3])], 'logo.png', { type: 'image/png' });
+    expect(await frontendApi.uploadSignatureImage(session, file)).toEqual(image);
+    const [path, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(path).toBe('/v1/mailbox/signature/images?fileName=logo.png');
+    expect(options).toMatchObject({
+      method: 'POST',
+      headers: { 'Content-Type': 'image/png' },
+      body: file,
+    });
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/v1/me');
+
+    const unnamed = mockResponses(image, session);
+    await frontendApi.uploadSignatureImage(
+      session,
+      new File([new Uint8Array(3)], '', { type: 'image/gif' }),
+    );
+    expect(unnamed.mock.calls[0]?.[0]).toBe('/v1/mailbox/signature/images');
+  });
+
+  it('refuses an unsupported type or oversized file before any request is made', async () => {
+    const fetchMock = mockResponses(image, session);
+    const svg = new File(['<svg/>'], 'logo.svg', { type: 'image/svg+xml' });
+    await expect(frontendApi.uploadSignatureImage(session, svg)).rejects.toMatchObject({
+      status: 415,
+      code: 'unsupported_image_type',
+    });
+    const huge = new File([new Uint8Array(200 * 1024 + 1)], 'photo.jpg', { type: 'image/jpeg' });
+    await expect(frontendApi.uploadSignatureImage(session, huge)).rejects.toMatchObject({
+      status: 413,
+      code: 'image_too_large',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('does not replay an upload whose first attempt failed with a retryable status', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 503 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const file = new File([new Uint8Array(3)], 'logo.png', { type: 'image/png' });
+    await expect(frontendApi.uploadSignatureImage(session, file)).rejects.toMatchObject({
+      status: 503,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('deletes an image, accepts the empty response and surfaces an in-use refusal', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(session)));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(frontendApi.deleteSignatureImage(session, image.id)).resolves.toBeUndefined();
+    expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([
+      `/v1/mailbox/signature/images/${image.id}`,
+      '/v1/me',
+    ]);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'DELETE' });
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ error: 'signature_image_in_use' }), { status: 409 }),
+        ),
+    );
+    const refusal = frontendApi.deleteSignatureImage(session, image.id);
+    await expect(refusal).rejects.toMatchObject({ status: 409, code: 'signature_image_in_use' });
+    await expect(refusal.catch((error: unknown) => errorMessage(error))).resolves.toBe(
+      'This image is still in your signature. Remove it from the signature first.',
+    );
   });
 });
