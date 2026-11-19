@@ -7,6 +7,7 @@ import {
   getRfqResponseSchema,
   listAttachmentsResponseSchema,
   listRfqsResponseSchema,
+  listSignatureImagesResponseSchema,
   listVendorsResponseSchema,
   threadResponseSchema,
   gmailConnectResponseSchema,
@@ -15,6 +16,10 @@ import {
   rfqSuggestionResponseSchema,
   sendRfqResponseSchema,
   sessionResponseSchema,
+  signatureImageResponseSchema,
+  SIGNATURE_IMAGE_CONTENT_TYPES,
+  SIGNATURE_IMAGE_MAX_BYTES,
+  SIGNATURE_IMAGES_MAX_PER_MAILBOX,
 } from '@lc/contract';
 import type {
   ClassificationLabel,
@@ -64,8 +69,9 @@ async function requestJson<ResponseBody>(
       credentials: 'same-origin',
       cache: 'no-store',
       headers: {
-        ...options.headers,
+        // JSON unless the caller says otherwise (a raw image upload carries its own type).
         ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+        ...options.headers,
       },
     },
     readJsonBody,
@@ -99,6 +105,8 @@ export const RFQ_PAGE_SIZE = 20;
 const REPLAY_SAFE_POST: RequestRetryOptions = { replaySafe: true };
 /** The suggestion and drafts POSTs store nothing: a replay costs one more model call and nothing else. */
 const REPLAY_SAFE_LLM_POST: RequestRetryOptions = { replaySafe: true };
+/** Storing the same signature twice leaves the mailbox exactly as the first write did. */
+const REPLAY_SAFE_PATCH: RequestRetryOptions = { replaySafe: true };
 
 function requireMatchingSession<ResponseBody extends SessionResponse>(
   body: ResponseBody,
@@ -161,6 +169,65 @@ export const frontendApi = {
       await requestJson('/mailbox', mailboxResponseSchema, { signal }),
       session,
     );
+  },
+  /**
+   * Stores the HTML signature (null clears it) and returns the mailbox as the server now has it:
+   * the HTML comes back sanitised, so the editor should reload from the response, not keep its own.
+   */
+  async updateSignature(
+    session: SessionResponse,
+    signatureHtml: string | null,
+    signal?: AbortSignal,
+  ) {
+    return requireMatchingSession(
+      await requestJson(
+        '/mailbox/signature',
+        mailboxResponseSchema,
+        { method: 'PATCH', body: JSON.stringify({ signatureHtml }), signal },
+        REPLAY_SAFE_PATCH,
+      ),
+      session,
+    );
+  },
+  /** The mailbox's uploaded signature images, oldest first, each with a short-lived preview link. */
+  async signatureImages(session: SessionResponse, signal?: AbortSignal) {
+    const body = await requestJson('/mailbox/signature/images', listSignatureImagesResponseSchema, {
+      signal,
+    });
+    requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
+    return body;
+  },
+  /**
+   * Uploads one image as raw bytes. Type and size are checked here first with the server's own
+   * error codes, so an oversized photo never leaves the browser. Never replayed: a second copy
+   * would count against the per-mailbox limit.
+   */
+  async uploadSignatureImage(session: SessionResponse, file: File, signal?: AbortSignal) {
+    if (!isSignatureImageContentType(file.type)) {
+      throw new FrontendApiError(415, 'unsupported_image_type');
+    }
+    if (file.size > SIGNATURE_IMAGE_MAX_BYTES) throw new FrontendApiError(413, 'image_too_large');
+    const fileName = file.name.trim();
+    const path = fileName
+      ? `/mailbox/signature/images?${new URLSearchParams({ fileName })}`
+      : '/mailbox/signature/images';
+    const image = await requestJson(path, signatureImageResponseSchema, {
+      method: 'POST',
+      headers: { 'Content-Type': file.type },
+      body: file,
+      signal,
+    });
+    requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
+    return image;
+  },
+  /** Removes an uploaded image; the server refuses (signature_image_in_use) while the signature still shows it. */
+  async deleteSignatureImage(session: SessionResponse, imageId: string, signal?: AbortSignal) {
+    await requestJson(
+      `/mailbox/signature/images/${encodeURIComponent(imageId)}`,
+      { parse: () => undefined },
+      { method: 'DELETE', signal },
+    );
+    requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
   },
   async emails(
     session: SessionResponse,
@@ -389,6 +456,12 @@ export const frontendApi = {
   },
 };
 
+function isSignatureImageContentType(
+  contentType: string,
+): contentType is (typeof SIGNATURE_IMAGE_CONTENT_TYPES)[number] {
+  return (SIGNATURE_IMAGE_CONTENT_TYPES as readonly string[]).includes(contentType);
+}
+
 export function isUnauthenticated(error: unknown): boolean {
   return error instanceof FrontendApiError && error.status === 401;
 }
@@ -425,6 +498,18 @@ export function errorMessage(error: unknown): string {
       return 'Gmail is not connected for this mailbox. Connect it from the mailbox page, then send.';
     if (error.code === 'rfq_id_taken')
       return 'This request was already started for another message. Close the panel and start again.';
+    if (error.code === 'signature_too_long')
+      return 'The signature is too long. Shorten it and save again.';
+    if (error.code === 'unsupported_image_type')
+      return 'Only PNG, JPEG and GIF images can be used in a signature.';
+    if (error.code === 'image_too_large')
+      return `That image is larger than ${SIGNATURE_IMAGE_MAX_BYTES / 1024} KB. Use a smaller logo.`;
+    if (error.code === 'signature_image_limit_reached')
+      return `A signature can hold at most ${SIGNATURE_IMAGES_MAX_PER_MAILBOX} images. Remove one before adding another.`;
+    if (error.code === 'signature_images_unavailable')
+      return 'Signature images are temporarily unavailable. Please try again later.';
+    if (error.code === 'signature_image_in_use')
+      return 'This image is still in your signature. Remove it from the signature first.';
   }
   return 'We could not reach your workspace. Check your connection and try again.';
 }
