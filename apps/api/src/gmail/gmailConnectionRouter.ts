@@ -15,6 +15,7 @@ import type {
   GoogleOAuthClientCredentials,
   MailboxConnection,
   MailboxConnectionRepository,
+  SignatureImageRepository,
   EncryptionUtil,
   TenantRepository,
 } from '@lc/core';
@@ -30,6 +31,8 @@ import { sendConnectFlowOutcome } from './connectFlowOutcome.js';
 
 export interface GmailConnectionRouterDependencies {
   mailboxConnectionRepository: MailboxConnectionRepository;
+  /** Which `cid:` images a saved signature may reference: only this mailbox's uploads. */
+  signatureImageRepository: SignatureImageRepository;
   tenantRepository: TenantRepository;
   gmailOAuth: GmailOAuth;
   gmailWatch: GmailWatch;
@@ -57,6 +60,7 @@ const callbackQuerySchema = z.object({
  */
 export function createGmailConnectionRouter({
   mailboxConnectionRepository,
+  signatureImageRepository,
   tenantRepository,
   gmailOAuth,
   gmailWatch,
@@ -191,7 +195,11 @@ export function createGmailConnectionRouter({
     }
     // Sanitised here, never on the way out; nothing visible left means no signature, and
     // composeOutboundMime adds nothing for null.
-    const sanitized = sanitizeSignatureHtml(signatureHtml);
+    const ownImages = await signatureImageRepository.listSignatureImages(session);
+    const sanitized = sanitizeSignatureHtml(
+      signatureHtml,
+      ownImages.map((image) => image.id),
+    );
     if ((sanitized.signature?.length ?? 0) > MAILBOX_SIGNATURE_MAX_LENGTH) {
       throw createHttpError(400, 'signature_too_long');
     }

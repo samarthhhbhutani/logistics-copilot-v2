@@ -7,6 +7,7 @@ describe('sanitizeSignatureHtml', () => {
       '<table cellpadding="0"><tbody><tr><td valign="top"><img src="cid:logo" alt="Bhatia" width="80"></td>' +
         '<td style="color:#1a1a1a;font-size:13px"><p><b>Ops Desk</b><br>Bhatia Logistics<br>' +
         '<a href="https://bhatia.example">bhatia.example</a> · <a href="mailto:ops@bhatia.example">ops@bhatia.example</a></p></td></tr></tbody></table>',
+      ['logo'],
     );
     expect(sanitized.signatureHtml).toBe(
       '<table cellpadding="0"><tbody><tr><td valign="top"><img src="cid:logo" alt="Bhatia" width="80" /></td>' +
@@ -27,6 +28,7 @@ describe('sanitizeSignatureHtml', () => {
         '<img src="https://tracker.example/pixel.gif">' +
         '<img src="cid:logo">' +
         '<iframe src="https://evil.example"></iframe>',
+      ['logo'],
     );
     expect(sanitized.signatureHtml).toBe(
       '<p style="color:red">Ops Desk</p><a>site</a><img src="cid:logo" />',
@@ -35,14 +37,27 @@ describe('sanitizeSignatureHtml', () => {
   });
 
   it('clears the signature when nothing visible survives, and keeps an image-only signature', () => {
-    expect(sanitizeSignatureHtml(null)).toEqual({ signatureHtml: null, signature: null });
-    expect(sanitizeSignatureHtml('')).toEqual({ signatureHtml: null, signature: null });
-    expect(sanitizeSignatureHtml('<p>  </p><script>x()</script>')).toEqual({
+    expect(sanitizeSignatureHtml(null, [])).toEqual({ signatureHtml: null, signature: null });
+    expect(sanitizeSignatureHtml('', [])).toEqual({ signatureHtml: null, signature: null });
+    expect(sanitizeSignatureHtml('<p>  </p><script>x()</script>', [])).toEqual({
       signatureHtml: null,
       signature: null,
     });
-    expect(sanitizeSignatureHtml('<img src="cid:logo" alt="">')).toEqual({
+    expect(sanitizeSignatureHtml('<img src="cid:logo" alt="">', ['logo'])).toEqual({
       signatureHtml: '<img src="cid:logo" alt="" />',
+      signature: null,
+    });
+  });
+
+  it('drops a cid image the mailbox does not own, whole', () => {
+    expect(
+      sanitizeSignatureHtml('<p>Ops</p><img src="cid:logo"><img src="cid:badge">', ['badge']),
+    ).toEqual({
+      signatureHtml: '<p>Ops</p><img src="cid:badge" />',
+      signature: 'Ops',
+    });
+    expect(sanitizeSignatureHtml('<img src="cid:logo">', [])).toEqual({
+      signatureHtml: null,
       signature: null,
     });
   });
