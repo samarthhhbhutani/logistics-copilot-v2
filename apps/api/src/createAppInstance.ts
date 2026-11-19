@@ -181,6 +181,8 @@ export function createAppInstance({
       sentMailRepository,
       gmailSender,
       encryptionUtil,
+      signatureImageRepository,
+      signatureImageStore,
       requireSession,
     }),
   );
@@ -209,6 +211,8 @@ export function createAppInstance({
       tenantRepository,
       gmailSender,
       encryptionUtil,
+      signatureImageRepository,
+      signatureImageStore,
       requireSession,
     }),
   );

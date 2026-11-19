@@ -1,6 +1,7 @@
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { testTenantBody } from '../tenantFixture.test-helper.js';
+import { tinyPng, uploadSignatureImage } from '../signatureImageFixture.test-helper.js';
 import { createTestApp, testMailboxEmail } from '../testAppInstance.test-helper.js';
 import type { TestApp } from '../testAppInstance.test-helper.js';
 
@@ -85,10 +86,11 @@ describe('POST /v1/mailbox/emails/:emailId/replies', () => {
   it('writes the row, sends the reply into the original thread with our Message-ID, and returns 201 sent', async () => {
     const testApp = createTestApp();
     const { cookie, mailboxId } = await connectedMailbox(testApp);
+    const logo = await uploadSignatureImage(testApp.app, cookie, tinyPng, 'image/png', 'logo.png');
     await request(testApp.app)
       .patch('/v1/mailbox/signature')
       .set('Cookie', cookie)
-      .send({ signatureHtml: '<p>Ops Desk</p>' });
+      .send({ signatureHtml: `<p>Ops Desk</p><img src="cid:${logo.contentId}">` });
 
     const response = await request(testApp.app)
       .post(repliesPath(inboxEmailId))
@@ -122,7 +124,11 @@ describe('POST /v1/mailbox/emails/:emailId/replies', () => {
       subject: 'Re: RFQ 123: Mumbai to Rotterdam',
       text: 'Rates attached.',
       signature: 'Ops Desk',
-      signatureHtml: '<p>Ops Desk</p>',
+      signatureHtml: `<p>Ops Desk</p><img src="cid:${logo.contentId}" />`,
+      // The signature's image travels with the mail as an inline part, bytes from the bucket.
+      inlineImages: [
+        { contentId: logo.id, content: tinyPng, contentType: 'image/png', fileName: 'logo.png' },
+      ],
       messageId: `<${sentMailId}@bhatia.example>`,
       inReplyTo: '<vendor-reply@acme.com>',
       references: ['<first@bhatia.example>', '<vendor-reply@acme.com>'],

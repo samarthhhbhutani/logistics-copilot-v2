@@ -2,22 +2,30 @@ import createHttpError from 'http-errors';
 import type {
   EncryptionUtil,
   GoogleOAuthClientCredentials,
+  InlineImage,
   MailboxConnection,
   MailboxConnectionRepository,
   MailboxScope,
+  SignatureImageRepository,
   TenantRepository,
 } from '@lc/core';
+import { loadSignatureInlineImages } from '../signature/loadSignatureInlineImages.js';
+import type { SignatureImageStore } from '../signature/signatureImageStore.js';
 
 export interface SendingMailbox {
   connection: MailboxConnection;
   credentials: GoogleOAuthClientCredentials;
   refreshToken: string;
+  /** The HTML signature's images with their bytes; empty for a text-only signature. */
+  inlineImages: InlineImage[];
 }
 
 export interface SendingMailboxDependencies {
   mailboxConnectionRepository: MailboxConnectionRepository;
   tenantRepository: TenantRepository;
   encryptionUtil: EncryptionUtil;
+  signatureImageRepository: SignatureImageRepository;
+  signatureImageStore: SignatureImageStore | undefined;
 }
 
 /**
@@ -26,7 +34,13 @@ export interface SendingMailboxDependencies {
  * google_client_not_configured when the tenant has no OAuth client.
  */
 export async function loadSendingMailbox(
-  { mailboxConnectionRepository, tenantRepository, encryptionUtil }: SendingMailboxDependencies,
+  {
+    mailboxConnectionRepository,
+    tenantRepository,
+    encryptionUtil,
+    signatureImageRepository,
+    signatureImageStore,
+  }: SendingMailboxDependencies,
   scope: MailboxScope,
 ): Promise<SendingMailbox> {
   const connection = await mailboxConnectionRepository.findMailboxConnection(scope);
@@ -43,5 +57,10 @@ export async function loadSendingMailbox(
       clientSecret: encryptionUtil.decryptSecret(tenantClient.encryptedClientSecret),
     },
     refreshToken: encryptionUtil.decryptSecret(connection.encryptedRefreshToken),
+    inlineImages: await loadSignatureInlineImages(
+      { signatureImageRepository, signatureImageStore },
+      scope,
+      connection,
+    ),
   };
 }
