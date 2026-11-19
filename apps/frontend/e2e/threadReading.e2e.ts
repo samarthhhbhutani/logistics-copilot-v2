@@ -614,6 +614,8 @@ test('long table-heavy HTML auto-sizes across width changes without clipping, ov
     width: Math.max(320, Math.round(original.width / 2)),
     height: original.height,
   });
+  // Chrome stops rendering an offscreen cross-origin frame, so it only re-measures once in view.
+  await page.locator(messageFrameSelector).scrollIntoViewIfNeeded();
   await expect
     .poll(async () => (await measureMessageFrame(page)).frameHeight)
     .toBeGreaterThan(wide.frameHeight);

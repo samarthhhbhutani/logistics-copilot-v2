@@ -773,6 +773,50 @@ h2 {
   color: var(--green);
   text-decoration: underline;
 }
+.signatureEditorContent img {
+  max-width: 100%;
+  vertical-align: middle;
+}
+.signatureEditorContent img.ProseMirror-selectednode {
+  outline: 2px solid var(--green);
+}
+.signatureEditor > .finePrint {
+  font-size: 0.7rem;
+  margin-top: 8px;
+}
+.signatureImageList {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding: 0;
+}
+.signatureImageList li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--paper);
+}
+.signatureImageList img {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  background: #f4f7f3;
+  border-radius: 4px;
+}
+.signatureImageName {
+  flex: 1;
+  font-size: 0.82rem;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.toolbarButton[aria-disabled='true'] {
+  opacity: 0.45;
+}
 .signatureActions {
   display: flex;
   flex-wrap: wrap;

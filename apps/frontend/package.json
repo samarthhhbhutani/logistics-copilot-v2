@@ -15,6 +15,7 @@
     "@fontsource-variable/dm-sans": "^5.0.0",
     "@lc/contract": "*",
     "@tanstack/react-query": "^5.107.1",
+    "@tiptap/extension-image": "^3.34.0",
     "@tiptap/pm": "^3.34.0",
     "@tiptap/react": "^3.34.0",
     "@tiptap/starter-kit": "^3.34.0",

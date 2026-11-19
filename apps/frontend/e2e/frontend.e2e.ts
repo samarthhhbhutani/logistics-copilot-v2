@@ -286,7 +286,8 @@ test('signature editor saves formatted text with a link, reloads what the server
   page,
 }) => {
   await signIn(page);
-  await page.goto('/mailbox?setup=1');
+  await page.getByRole('link', { name: 'Signature', exact: true }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Gmail connected' })).toBeVisible();
   const editor = page.getByRole('textbox', { name: 'Email signature' });
   await expect(editor).toBeVisible();
   await editor.click();
@@ -326,4 +327,44 @@ test('signature editor saves formatted text with a link, reloads what the server
     signatureHtml: string | null;
   };
   expect(cleared.signatureHtml).toBeNull();
+});
+
+test('signature images: upload inserts a preview, save stores a cid, reload shows the image, delete is blocked while in use', async ({
+  page,
+}) => {
+  await signIn(page, 'sales@example.com');
+  await page.getByRole('link', { name: 'Signature', exact: true }).click();
+  await expect(page.getByRole('heading', { level: 2, name: 'Signature' })).toBeVisible();
+  const editor = page.getByRole('textbox', { name: 'Email signature' });
+  await editor.click();
+  await page.keyboard.type('Sales desk');
+  await page.getByTestId('signature-image-file').setInputFiles('e2e/fixtures/responsiveLogo.png');
+  // ProseMirror renders a presentational <img class="ProseMirror-separator"> after an inline node.
+  const inserted = editor.getByRole('img');
+  await expect(inserted).toHaveCount(1);
+  await expect(inserted).toHaveAttribute('src', /\/signatures\//);
+  const library = page.getByRole('list', { name: 'Uploaded images' });
+  await expect(library.getByRole('listitem')).toHaveCount(1);
+  await expect(library.getByRole('button', { name: /^Delete / })).toHaveAttribute(
+    'aria-disabled',
+    'true',
+  );
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+
+  await page.getByRole('button', { name: 'Save signature' }).click();
+  await expect(page.getByRole('status')).toHaveText('Saved');
+  const stored = (await (await page.request.get('/v1/mailbox')).json()) as {
+    signatureHtml: string;
+  };
+  expect(stored.signatureHtml).toMatch(/<img src="cid:[0-9a-f-]{36}"/);
+  expect(stored.signatureHtml).not.toContain('/signatures/');
+
+  await page.reload();
+  await expect(editor.getByRole('img')).toHaveAttribute('src', /\/signatures\//);
+  await expect(editor).toContainText('Sales desk');
+
+  await page.getByRole('button', { name: 'Remove signature' }).click();
+  await expect(page.getByRole('status')).toHaveText('Saved');
+  await library.getByRole('button', { name: /^Delete / }).click();
+  await expect(library.getByRole('listitem')).toHaveCount(0);
 });
