@@ -281,3 +281,49 @@ test('Google redirect stays guarded until navigation, and browser cache restore 
   );
   await expect(page.getByRole('button', { name: 'Connect Gmail', exact: true })).toBeEnabled();
 });
+
+test('signature editor saves formatted text with a link, reloads what the server kept and clears', async ({
+  page,
+}) => {
+  await signIn(page);
+  await page.goto('/mailbox?setup=1');
+  const editor = page.getByRole('textbox', { name: 'Email signature' });
+  await expect(editor).toBeVisible();
+  await editor.click();
+  await page.keyboard.type('Ops Desk');
+  await page.getByRole('button', { name: 'Bold' }).click();
+  await page.keyboard.type(' Bhatia Logistics');
+  await page.getByRole('button', { name: 'Bold' }).click();
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('Track shipments');
+  // Shift+Home reaches the document start on macOS; select the line's text key by key instead.
+  for (let index = 0; index < 'Track shipments'.length; index++)
+    await page.keyboard.press('Shift+ArrowLeft');
+  await page.getByRole('button', { name: 'Link' }).click();
+  await page.getByLabel('Link address').fill('https://track.example');
+  await page.getByRole('button', { name: 'Apply link' }).click();
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await page.getByRole('button', { name: 'Save signature' }).click();
+  await expect(page.getByRole('status')).toHaveText('Saved');
+
+  const stored = await page.request.get('/v1/mailbox');
+  const { signatureHtml, signature } = (await stored.json()) as {
+    signatureHtml: string;
+    signature: string;
+  };
+  expect(signatureHtml).toContain('<strong> Bhatia Logistics</strong>');
+  expect(signatureHtml).toContain('href="https://track.example"');
+  expect(signature).toContain('Ops Desk Bhatia Logistics');
+
+  await page.reload();
+  await expect(editor.locator('strong')).toHaveText(' Bhatia Logistics');
+  await expect(editor.locator('a[href="https://track.example"]')).toHaveText('Track shipments');
+
+  await page.getByRole('button', { name: 'Remove signature' }).click();
+  await expect(page.getByRole('status')).toHaveText('Saved');
+  await expect(editor).toHaveText('');
+  const cleared = (await (await page.request.get('/v1/mailbox')).json()) as {
+    signatureHtml: string | null;
+  };
+  expect(cleared.signatureHtml).toBeNull();
+});

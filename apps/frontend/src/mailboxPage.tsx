@@ -6,6 +6,7 @@ import type { SessionResponse } from '@lc/contract';
 import { ThreadView } from './threadView.js';
 import { ClassificationBadge } from './classificationBadge.js';
 import { ConnectionPanel } from './connectionPanel.js';
+import { SignatureEditor } from './signatureEditor.js';
 import { errorMessage, isUnauthenticated, frontendApi } from './frontendApi.js';
 import type { MailListFilter } from './frontendApi.js';
 import { WorkspaceShell, mailFolderFor, mailListFilterParams } from './workspaceShell.js';
@@ -121,16 +122,19 @@ export function MailboxPage({
         ) : (
           <>
             {isOutcomePage || isSetupPage ? (
-              <ConnectionPanel
-                mailbox={mailbox.data}
-                outcome={outcome}
-                connecting={connecting}
-                connectError={connect.error ? errorMessage(connect.error) : undefined}
-                onConnect={() => {
-                  if (!connecting) connect.mutate();
-                }}
-                onContinue={() => showNewestMail(filter)}
-              />
+              <>
+                <ConnectionPanel
+                  mailbox={mailbox.data}
+                  outcome={outcome}
+                  connecting={connecting}
+                  connectError={connect.error ? errorMessage(connect.error) : undefined}
+                  onConnect={() => {
+                    if (!connecting) connect.mutate();
+                  }}
+                  onContinue={() => showNewestMail(filter)}
+                />
+                {isSetupPage && <SignatureEditor session={session} mailbox={mailbox.data} />}
+              </>
             ) : selectedEmailId ? (
               <ThreadView
                 key={selectedEmailId}
