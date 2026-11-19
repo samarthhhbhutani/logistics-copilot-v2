@@ -198,6 +198,7 @@ describe('PUT /v1/mailbox/rfqs/:rfqId/send', () => {
     expect(sentMessages).toHaveLength(3);
     expect(sentMessages.every((sent) => sent.threadId === undefined)).toBe(true);
     expect(sentMessages.every((sent) => sent.message.signature === 'Bhatia Logistics')).toBe(true);
+    expect(sentMessages.every((sent) => sent.message.inlineImages?.length === 0)).toBe(true);
     expect(sentMessages.every((sent) => sent.message.inReplyTo === undefined)).toBe(true);
     expect(sentMessages.map((sent) => sent.message.messageId)).toEqual(
       body.mails.map((mail) => mail.rfcMessageId),
