@@ -37,6 +37,8 @@ export interface CurrentClassification {
 /** One mail in full, for the detail and thread views. */
 export interface EmailDetail extends EmailSummary {
   ccRecipients: EmailAddress[];
+  /** Gmail's id for this mailbox's copy; what the copilot's tools take. */
+  gmailMessageId: string;
   rfcMessageId: string | null;
   bodyText: string;
   bodyHtml: string | null;
@@ -100,6 +102,7 @@ export const EMAIL_DETAIL_SELECT = {
   subject: true,
   snippet: true,
   receivedAt: true,
+  gmailMessageId: true,
   rfcMessageId: true,
   bodyText: true,
   bodyHtml: true,
@@ -124,6 +127,7 @@ export type EmailDetailRow = {
   subject: string;
   snippet: string;
   receivedAt: Date;
+  gmailMessageId: string;
   rfcMessageId: string | null;
   bodyText: string;
   bodyHtml: string | null;
@@ -155,6 +159,7 @@ export function toEmailDetail(row: EmailDetailRow): EmailDetail {
     subject: row.subject,
     snippet: row.snippet,
     receivedAt: row.receivedAt,
+    gmailMessageId: row.gmailMessageId,
     rfcMessageId: row.rfcMessageId,
     bodyText: row.bodyText,
     bodyHtml: row.bodyHtml,

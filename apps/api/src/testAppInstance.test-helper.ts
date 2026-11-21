@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { createEncryptionUtil, loadConfig } from '@lc/core';
-import type { EncryptionUtil, RfqMailDrafter, RfqSuggester } from '@lc/core';
+import type { AgentReplyProposer, EncryptionUtil, RfqMailDrafter, RfqSuggester } from '@lc/core';
 import type { Express } from 'express';
 import { createAppInstance } from './createAppInstance.js';
 import { createFakeGmailOAuth } from './fakeGmailOAuth.test-helper.js';
@@ -35,6 +35,8 @@ export interface TestAppOptions {
   attachmentContentReader?: AttachmentContentReader;
   /** Default none, which exercises the 503 path. */
   rfqMailDrafter?: RfqMailDrafter;
+  /** Default none, which exercises the 503 path; tests pass a fake returning a scripted RunAgentResult. */
+  agentReplyProposer?: AgentReplyProposer;
   /** Default on: an in-memory bucket for signature images. Off exercises the 503 path. */
   signatureImagesEnabled?: boolean;
 }
@@ -61,6 +63,7 @@ export function createTestApp({
   rfqSuggester,
   attachmentContentReader,
   rfqMailDrafter,
+  agentReplyProposer,
   signatureImagesEnabled = true,
 }: TestAppOptions = {}): TestApp {
   const config = loadConfig({
@@ -84,6 +87,7 @@ export function createTestApp({
     rfqSuggester,
     attachmentContentReader,
     rfqMailDrafter,
+    agentReplyProposer,
     signatureImageStore: signatureImagesEnabled ? signatureImageStore : undefined,
     gmailOAuth,
     gmailWatch,

@@ -7,3 +7,4 @@ export * from './agentRunModels.js';
 export * from './agentRunRepository.js';
 export * from './prompts/proposeReplyPromptV1.js';
 export * from './runAgent.js';
+export * from './createAgentReplyProposer.js';

@@ -1,21 +1,17 @@
-import createHttpError from 'http-errors';
 import type {
   EncryptionUtil,
-  GoogleOAuthClientCredentials,
   InlineImage,
-  MailboxConnection,
   MailboxConnectionRepository,
   MailboxScope,
   SignatureImageRepository,
   TenantRepository,
 } from '@lc/core';
+import { loadConnectedMailbox } from '../gmail/loadConnectedMailbox.js';
+import type { ConnectedMailbox } from '../gmail/loadConnectedMailbox.js';
 import { loadSignatureInlineImages } from '../signature/loadSignatureInlineImages.js';
 import type { SignatureImageStore } from '../signature/signatureImageStore.js';
 
-export interface SendingMailbox {
-  connection: MailboxConnection;
-  credentials: GoogleOAuthClientCredentials;
-  refreshToken: string;
+export interface SendingMailbox extends ConnectedMailbox {
   /** The HTML signature's images with their bytes; empty for a text-only signature. */
   inlineImages: InlineImage[];
 }
@@ -29,9 +25,9 @@ export interface SendingMailboxDependencies {
 }
 
 /**
- * Everything messages.send needs for the session's mailbox, decrypted. 404 mailbox_not_found;
- * 409 mailbox_not_connected when Gmail is not (or no longer) connected; 409
- * google_client_not_configured when the tenant has no OAuth client.
+ * Everything messages.send needs for the session's mailbox: the connected mailbox (404
+ * mailbox_not_found; 409 mailbox_not_connected | google_client_not_configured) plus the signature's
+ * images.
  */
 export async function loadSendingMailbox(
   {
@@ -43,24 +39,16 @@ export async function loadSendingMailbox(
   }: SendingMailboxDependencies,
   scope: MailboxScope,
 ): Promise<SendingMailbox> {
-  const connection = await mailboxConnectionRepository.findMailboxConnection(scope);
-  if (!connection) throw createHttpError(404, 'mailbox_not_found');
-  if (connection.gmailConnectionStatus !== 'connected' || !connection.encryptedRefreshToken) {
-    throw createHttpError(409, 'mailbox_not_connected');
-  }
-  const tenantClient = await tenantRepository.findTenantGoogleClient(scope.tenantId);
-  if (!tenantClient) throw createHttpError(409, 'google_client_not_configured');
+  const mailbox = await loadConnectedMailbox(
+    { mailboxConnectionRepository, tenantRepository, encryptionUtil },
+    scope,
+  );
   return {
-    connection,
-    credentials: {
-      clientId: tenantClient.clientId,
-      clientSecret: encryptionUtil.decryptSecret(tenantClient.encryptedClientSecret),
-    },
-    refreshToken: encryptionUtil.decryptSecret(connection.encryptedRefreshToken),
+    ...mailbox,
     inlineImages: await loadSignatureInlineImages(
       { signatureImageRepository, signatureImageStore },
       scope,
-      connection,
+      mailbox.connection,
     ),
   };
 }
