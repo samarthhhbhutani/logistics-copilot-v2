@@ -35,6 +35,8 @@ export function ConnectionPanel({
   const isConnected = mailbox.gmailConnectionStatus === 'connected';
   const success = outcome.connected && isConnected;
   const failed = Boolean(outcome.error) || (outcome.connected && !isConnected);
+  // Reached from the sidebar with Gmail already connected: settings, not a connection prompt.
+  const settled = isConnected && !outcome.connected && !failed;
   const errorCode = connectFlowErrorSchema.safeParse(outcome.error);
   const reason = outcome.error
     ? errorCode.success
@@ -44,7 +46,7 @@ export function ConnectionPanel({
   return (
     <section className="connectionPanel" aria-labelledby="connection-title">
       <span className={`connectionIcon ${failed ? 'warning' : ''}`}>
-        {success ? (
+        {success || settled ? (
           <Check size={28} aria-hidden="true" />
         ) : failed ? (
           <TriangleAlert size={28} aria-hidden="true" />
@@ -52,16 +54,24 @@ export function ConnectionPanel({
           <Link2 size={28} aria-hidden="true" />
         )}
       </span>
-      <p className="eyebrow">Gmail connection</p>
+      <p className="eyebrow">{settled ? 'Mailbox settings' : 'Gmail connection'}</p>
       <h1 id="connection-title">
-        {success ? 'Connection successful' : failed ? 'Connection failed' : 'Connect your mailbox'}
+        {success
+          ? 'Connection successful'
+          : settled
+            ? 'Gmail connected'
+            : failed
+              ? 'Connection failed'
+              : 'Connect your mailbox'}
       </h1>
       <p>
         {success
           ? 'Your mailbox is connected. New mail will appear here as it arrives.'
-          : failed
-            ? reason
-            : 'Connect Gmail to bring new conversations into your workspace. Older mail is not imported.'}
+          : settled
+            ? 'New mail arrives here as it comes in. Set the signature for outgoing mail below.'
+            : failed
+              ? reason
+              : 'Connect Gmail to bring new conversations into your workspace. Older mail is not imported.'}
       </p>
       <div className="mailboxIdentity">
         <span>
@@ -77,7 +87,7 @@ export function ConnectionPanel({
         </p>
       )}
       <div className="connectionActions">
-        {success ? (
+        {success || settled ? (
           <button className="button primary" onClick={onContinue}>
             Continue to mailbox
           </button>
@@ -92,13 +102,15 @@ export function ConnectionPanel({
             {connecting ? 'Opening Google…' : failed ? 'Try again' : 'Connect Gmail'}
           </button>
         )}
-        {!success && (
+        {!success && !settled && (
           <button className="button textButton" onClick={onContinue}>
             View stored mail
           </button>
         )}
       </div>
-      {!success && <p className="finePrint">You will continue on Google to approve access.</p>}
+      {!success && !settled && (
+        <p className="finePrint">You will continue on Google to approve access.</p>
+      )}
     </section>
   );
 }

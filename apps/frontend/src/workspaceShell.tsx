@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
-import { Archive, FileText, Inbox, LogOut, MessageSquareText, Send } from 'lucide-react';
+import { Archive, FileText, Inbox, LogOut, MessageSquareText, PenLine, Send } from 'lucide-react';
 import { Brand } from './brand.js';
 import { errorMessage, frontendApi, isUnauthenticated } from './frontendApi.js';
 import type { MailListFilter } from './frontendApi.js';
@@ -94,7 +94,9 @@ export function WorkspaceShell({
 }) {
   const location = useLocation();
   const [searchParams] = useSearchParams();
-  const activeFolder = pageTitle === 'Mailbox' ? mailFolderFor(searchParams) : null;
+  const isSettingsPage = pageTitle === 'Mailbox' && searchParams.get('setup') === '1';
+  const activeFolder =
+    pageTitle === 'Mailbox' && !isSettingsPage ? mailFolderFor(searchParams) : null;
   const logoutController = useRef<AbortController | null>(null);
   useEffect(() => () => logoutController.current?.abort(), []);
   const logout = useMutation({
@@ -134,6 +136,18 @@ export function WorkspaceShell({
             <FileText size={19} aria-hidden="true" />
             <span>Vendor quotes</span>
             {pageTitle === 'Vendor quotes' && <span className="activeDot" />}
+          </Link>
+        </nav>
+        <div className="workspaceLabel">Mailbox settings</div>
+        <nav aria-label="Mailbox settings">
+          <Link
+            className={`folderButton ${isSettingsPage ? 'active' : ''}`}
+            aria-current={isSettingsPage ? 'page' : undefined}
+            to="/mailbox?setup=1"
+          >
+            <PenLine size={19} aria-hidden="true" />
+            <span>Signature</span>
+            {isSettingsPage && <span className="activeDot" />}
           </Link>
         </nav>
         <div className="sidebarBottom">
