@@ -19,7 +19,7 @@ export const searchGmailArguments = z.object({
     .string()
     .min(1)
     .describe(
-      "Gmail search syntax, e.g. 'from:ops@carrier.example subject:quote newer_than:30d'. Use it to find mail outside the thread you were given, such as vendor quotes for the same shipment.",
+      "Gmail search syntax, e.g. 'in:sent to:customer@example.com newer_than:180d'. Use it to find mail outside the thread you were given, such as the desk's earlier mails to the same sender or its earlier quotes for a similar request.",
     ),
   maxResults: z
     .number()
