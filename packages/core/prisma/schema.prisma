@@ -41,6 +41,7 @@ model Tenant {
   vendors                     Vendor[]
   vendorContacts              VendorContact[]
   rfqs                        Rfq[]
+  agentRuns                   AgentRun[]
 
   @@map("tenants")
 }
@@ -84,6 +85,7 @@ model Mailbox {
   sentMails             SentMail[]
   rfqs                  Rfq[]
   signatureImages       SignatureImage[]
+  agentRuns             AgentRun[]
 
   @@index([tenantId])
   @@map("mailboxes")
@@ -177,6 +179,8 @@ model Email {
   repliesSent       SentMail[]       @relation("SentMailInReplyTo")
   /// The RFQs sent from this mail; more than one when it was processed again (source_email_id is indexed, not unique).
   rfqs              Rfq[]            @relation("RfqSourceEmail")
+  /// Copilot runs the operator started from this mail (roadmap 6.2).
+  agentRuns         AgentRun[]
 
   @@unique([mailboxId, gmailMessageId])
   @@index([mailboxId, receivedAt])
@@ -437,4 +441,50 @@ model SentMail {
   @@index([rfqId])
   @@index([tenantId])
   @@map("sent_mails")
+}
+
+/// running: the loop is talking to the model. proposed: a draft reply is on the row. failed: the
+/// run ended without one; error_code says why.
+enum AgentRunStatus {
+  RUNNING  @map("running")
+  PROPOSED @map("proposed")
+  FAILED   @map("failed")
+
+  @@map("agent_run_status")
+}
+
+/// One "Ask the copilot" run (roadmap 6.2): the operator, looking at a thread, asked the agent for
+/// help and the agent answered with a proposed reply. The agent never sends; the operator takes the
+/// proposal into the reply composer. email_id is the anchor: the newest inbound mail of the thread
+/// at the time of the ask, so a run always points at mail the portal can show, and the proposal
+/// knows which mail it answers. gmail_thread_id is what the agent's tools read.
+/// proposal: { subject, bodyText, citedGmailMessageIds } once proposed. tool_calls: every tool call
+/// the model made, in order ({ name, arguments, outcome, durationMs }), for the trace view.
+model AgentRun {
+  id            String         @id @default(uuid()) @db.Uuid
+  tenantId      String         @map("tenant_id") @db.Uuid
+  tenant        Tenant         @relation(fields: [tenantId], references: [id])
+  mailboxId     String         @map("mailbox_id") @db.Uuid
+  mailbox       Mailbox        @relation(fields: [mailboxId], references: [id])
+  emailId       String         @map("email_id") @db.Uuid
+  email         Email          @relation(fields: [emailId], references: [id])
+  gmailThreadId String         @map("gmail_thread_id")
+  /// What the operator asked, or the default job when the box was left as is.
+  instruction   String
+  status        AgentRunStatus @default(RUNNING)
+  proposal      Json?
+  toolCalls     Json           @default("[]") @map("tool_calls")
+  model         String
+  promptVersion String         @map("prompt_version")
+  inputTokens   Int            @default(0) @map("input_tokens")
+  outputTokens  Int            @default(0) @map("output_tokens")
+  /// Why a failed run ended: an LLM failure kind, a GmailApiError code or `tool_budget_exhausted`.
+  errorCode     String?        @map("error_code")
+  createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  finishedAt    DateTime?      @map("finished_at") @db.Timestamptz
+
+  @@index([mailboxId, gmailThreadId, createdAt(sort: Desc)])
+  @@index([emailId])
+  @@index([tenantId])
+  @@map("agent_runs")
 }
