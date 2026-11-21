@@ -23,6 +23,7 @@ import type {
   TenantRepository,
   VendorRepository,
 } from '@lc/core';
+import { createAgentRunsRouter } from './agent/agentRunsRouter.js';
 import { createAuthRouter } from './auth/authRouter.js';
 import { createRequireSession, getSession } from './auth/requireSession.js';
 import type { AttachmentContentReader } from './emails/attachmentContentReader.js';
@@ -55,9 +56,8 @@ export interface AppDependencies {
   sentMailRepository: SentMailRepository;
   rfqRepository: RfqRepository;
   signatureImageRepository: SignatureImageRepository;
-  /** Copilot runs (roadmap 6.2); the routes mount in the next change. */
   agentRunRepository: AgentRunRepository;
-  /** Runs the copilot for a thread; undefined without an OpenAI key, so its route will answer 503. */
+  /** Runs the copilot for a thread; undefined without an OpenAI key, so POST /agent/runs answers 503. */
   agentReplyProposer: AgentReplyProposer | undefined;
   /** Stores signature images in the raw-mail bucket; undefined without one, so image routes answer 503 and mails go out without them. */
   signatureImageStore: SignatureImageStore | undefined;
@@ -101,6 +101,8 @@ export function createAppInstance({
   sentMailRepository,
   rfqRepository,
   signatureImageRepository,
+  agentRunRepository,
+  agentReplyProposer,
   signatureImageStore,
   attachmentDownloadUrlSigner,
   rfqSuggester,
@@ -222,7 +224,18 @@ export function createAppInstance({
       requireSession,
     }),
   );
-  // Feature routers mount here as they land: agent.
+  v1Router.use(
+    '/mailbox/agent/runs',
+    createAgentRunsRouter({
+      agentRunRepository,
+      emailReadRepository,
+      mailboxConnectionRepository,
+      tenantRepository,
+      encryptionUtil,
+      agentReplyProposer,
+      requireSession,
+    }),
+  );
   expressApp.use('/v1', v1Router);
 
   expressApp.use((request, response) => {
