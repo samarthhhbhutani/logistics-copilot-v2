@@ -5,5 +5,6 @@ export * from './gmailWatch.js';
 export * from './gmailApiError.js';
 export * from './gmailHistory.js';
 export * from './gmailMessages.js';
+export * from './gmailSearch.js';
 export * from './mailboxSyncRepository.js';
 export * from './gmailSender.js';
