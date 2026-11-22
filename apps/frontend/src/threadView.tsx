@@ -9,6 +9,7 @@ import { ClassificationBadge } from './classificationBadge.js';
 import { EmailBody } from './emailBody.js';
 import { ClassificationCorrection } from './classificationCorrection.js';
 import { RfqPanel } from './rfqPanel.js';
+import { newestInboundEmail, ReplyComposer } from './replyComposer.js';
 
 const sourceTitles: Record<ClassificationSource, string> = {
   thread: 'From this conversation',
@@ -38,6 +39,7 @@ export function ThreadView({
   const expired = isUnauthenticated(thread.error);
   const missing = thread.error instanceof FrontendApiError && thread.error.status === 404;
   const openedEmail = thread.data?.emails.find((email) => email.id === emailId);
+  const answeredEmail = thread.data ? newestInboundEmail(thread.data.emails) : undefined;
   const subject = openedEmail?.subject || '(No subject)';
   useEffect(() => {
     if (expired) onSignedOut();
@@ -127,6 +129,9 @@ export function ThreadView({
               </li>
             ))}
           </ol>
+          {answeredEmail && (
+            <ReplyComposer email={answeredEmail} session={session} onSignedOut={onSignedOut} />
+          )}
           <p className="threadFootnote">
             Remote images load automatically and may notify the sender. Messages may include quoted
             history. This conversation contains only messages already stored in your mailbox.

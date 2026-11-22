@@ -65,7 +65,7 @@ const FAILURE_DETAILS: Record<string, string> = {
     'Delivery could not be verified. Check your Sent folder before retrying, or the vendor may get it twice.',
 };
 
-export function describeRfqMailStatus(mail: SentMailResponse): RfqMailStatusView {
+export function describeSentMailStatus(mail: SentMailResponse): RfqMailStatusView {
   switch (mail.status) {
     case 'sent':
       return { tone: 'sent', label: 'Sent', detail: null };

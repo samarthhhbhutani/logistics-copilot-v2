@@ -1105,3 +1105,114 @@ describe('copilot runs', () => {
     }
   });
 });
+
+describe('replies', () => {
+  const emailId = '00000000-0000-4000-8000-000000000011';
+  const sentMailId = '00000000-0000-4000-8000-000000000041';
+  const sentMail = {
+    id: sentMailId,
+    kind: 'reply',
+    status: 'sent',
+    inReplyToEmailId: emailId,
+    rfqId: null,
+    vendorId: null,
+    vendorContactId: null,
+    gmailThreadId: 'abc123',
+    rfcMessageId: '<x@example.com>',
+    toRecipients: [{ name: 'Ravi', address: 'ravi@example.com' }],
+    ccRecipients: [],
+    subject: 'Re: Rates',
+    bodyText: 'Dear Ravi',
+    gmailMessageId: 'gm-9',
+    errorCode: null,
+    createdAt: '2026-11-22T10:00:00.000Z',
+    updatedAt: '2026-11-22T10:00:01.000Z',
+  };
+
+  it('sends the reply as a POST that is never replayed, then checks the cookie still belongs to this session', async () => {
+    let fetchMock = mockResponses(sentMail, session);
+    expect(
+      await frontendApi.sendReply(session, emailId, { sentMailId, text: 'Dear Ravi' }),
+    ).toEqual(sentMail);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      `/v1/mailbox/emails/${emailId}/replies`,
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ sentMailId, text: 'Dear Ravi' }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/v1/me', expect.anything());
+
+    fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'oops' }), { status: 503 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(
+      frontendApi.sendReply(session, emailId, { sentMailId, text: 'Dear Ravi' }),
+    ).rejects.toMatchObject({ status: 503, code: 'oops' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    mockResponses(sentMail, { ...session, mailboxId: emailId });
+    await expect(
+      frontendApi.sendReply(session, emailId, { sentMailId, text: 'Dear Ravi' }),
+    ).rejects.toMatchObject({ code: 'session_changed' });
+  });
+
+  it('returns the failed or still-sending mail out of a 502 send_failed body instead of throwing', async () => {
+    const failedMail = {
+      ...sentMail,
+      status: 'failed',
+      gmailMessageId: null,
+      errorCode: 'bad_request',
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ error: 'send_failed', sentMail: failedMail }), {
+            status: 502,
+          }),
+        )
+        .mockResolvedValueOnce(new Response(JSON.stringify(session))),
+    );
+    expect(
+      await frontendApi.sendReply(session, emailId, { sentMailId, text: 'Dear Ravi' }),
+    ).toEqual(failedMail);
+
+    // A 502 without that body (a proxy, or another error) is still an error.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValueOnce(new Response('<html>bad gateway</html>', { status: 502 })),
+    );
+    await expect(
+      frontendApi.sendReply(session, emailId, { sentMailId, text: 'Dear Ravi' }),
+    ).rejects.toMatchObject({ status: 502, code: 'request_failed' });
+  });
+
+  it('refuses a sent mail whose id is not the one minted for this send', async () => {
+    mockResponses({ ...sentMail, id: emailId }, session);
+    await expect(
+      frontendApi.sendReply(session, emailId, { sentMailId, text: 'Dear Ravi' }),
+    ).rejects.toMatchObject({ code: 'invalid_response' });
+  });
+
+  it('explains the reply refusals in the operator words', async () => {
+    for (const [code, status, text] of [
+      ['not_inbound', 409, 'Only incoming mail can be answered here.'],
+      ['no_sender', 409, 'This message has no sender address to reply to.'],
+      ['sent_mail_id_taken', 409, 'This reply could not be started. Press Send again.'],
+    ] as const) {
+      vi.stubGlobal(
+        'fetch',
+        vi
+          .fn()
+          .mockResolvedValueOnce(new Response(JSON.stringify({ error: code }), { status }))
+          .mockResolvedValueOnce(new Response(JSON.stringify(session))),
+      );
+      const refusal = frontendApi.sendReply(session, emailId, { sentMailId, text: 'Dear Ravi' });
+      await expect(refusal.catch((error: unknown) => errorMessage(error))).resolves.toBe(text);
+    }
+  });
+});

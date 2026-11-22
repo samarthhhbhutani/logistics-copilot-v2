@@ -15,7 +15,9 @@ import {
   listEmailsResponseSchema,
   mailboxResponseSchema,
   rfqSuggestionResponseSchema,
+  sendReplyFailedResponseSchema,
   sendRfqResponseSchema,
+  sentMailResponseSchema,
   sessionResponseSchema,
   signatureImageResponseSchema,
   SIGNATURE_IMAGE_CONTENT_TYPES,
@@ -27,7 +29,9 @@ import type {
   CreateAgentRunRequest,
   DraftRfqMailsBody,
   GmailLabel,
+  SendReplyBody,
   SendRfqBody,
+  SentMailResponse,
   SessionResponse,
 } from '@lc/contract';
 import { readNetworkResponse, requestWithRetry } from './frontendRequest.js';
@@ -63,6 +67,7 @@ async function requestJson<ResponseBody>(
   schema: { parse(value: unknown): ResponseBody },
   options: RequestInit = {},
   retryOptions?: RequestRetryOptions,
+  readBody: (response: Response) => Promise<unknown> = readJsonBody,
 ): Promise<ResponseBody> {
   const body = await requestWithRetry(
     `/v1${path}`,
@@ -76,7 +81,7 @@ async function requestJson<ResponseBody>(
         ...options.headers,
       },
     },
-    readJsonBody,
+    readBody,
     undefined,
     retryOptions,
   );
@@ -85,20 +90,50 @@ async function requestJson<ResponseBody>(
 }
 
 async function readJsonBody(response: Response): Promise<unknown> {
-  if (!response.ok) {
-    let code = 'request_failed';
-    try {
-      const body: unknown = await response.json();
-      if (body && typeof body === 'object' && 'error' in body && typeof body.error === 'string') {
-        code = body.error;
-      }
-    } catch {
-      /* A proxy outage can return HTML rather than JSON. */
-    }
-    throw new FrontendApiError(response.status, code);
-  }
+  if (!response.ok) throw await errorFromFailedResponse(response);
   return response.status === 204 ? undefined : await readNetworkResponse(response.json());
 }
+
+async function errorFromFailedResponse(response: Response): Promise<FrontendApiError> {
+  let code = 'request_failed';
+  try {
+    code = errorCodeOf(await response.json());
+  } catch {
+    /* A proxy outage can return HTML rather than JSON. */
+  }
+  return new FrontendApiError(response.status, code);
+}
+
+function errorCodeOf(body: unknown): string {
+  return body && typeof body === 'object' && 'error' in body && typeof body.error === 'string'
+    ? body.error
+    : 'request_failed';
+}
+
+/**
+ * The reply endpoint's 502 `send_failed` carries the sent mail (status `failed`, or `sending` when
+ * the outcome is unknown), which the composer shows like a 2xx body; any other failure is the
+ * usual FrontendApiError.
+ */
+async function readSendReplyBody(response: Response): Promise<unknown> {
+  if (response.status !== 502) return readJsonBody(response);
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new FrontendApiError(502, 'request_failed');
+  }
+  if (sendReplyFailedResponseSchema.safeParse(body).success) return body;
+  throw new FrontendApiError(502, errorCodeOf(body));
+}
+
+/** The sent mail out of a 201, a 200 replay or a 502 send_failed body. */
+const sentMailFromReplyBodySchema = {
+  parse(value: unknown): SentMailResponse {
+    const failed = sendReplyFailedResponseSchema.safeParse(value);
+    return failed.success ? failed.data.sentMail : sentMailResponseSchema.parse(value);
+  },
+};
 
 /** Customer mails per page on the vendor quotes page; a desk's week fits on one. */
 export const RFQ_PAGE_SIZE = 20;
@@ -130,9 +165,10 @@ async function requestMailJson<ResponseBody>(
   signal?: AbortSignal,
   options: RequestInit = {},
   retryOptions?: RequestRetryOptions,
+  readBody?: (response: Response) => Promise<unknown>,
 ): Promise<ResponseBody> {
   try {
-    return await requestJson(path, schema, { ...options, signal }, retryOptions);
+    return await requestJson(path, schema, { ...options, signal }, retryOptions, readBody);
   } catch (error) {
     if (error instanceof FrontendApiError && error.status === 404) {
       requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
@@ -406,6 +442,33 @@ export const frontendApi = {
     requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
     return result;
   },
+  /**
+   * Answers an inbound mail from the mailbox. `sentMailId` is minted by the caller (crypto.randomUUID)
+   * and is the idempotency key: the same POST again returns the first attempt's row rather than
+   * sending twice, so a send that did not answer is retried with the same id and one that came back
+   * `failed` with a new one. Resolves with the sent mail whether Gmail took it (201), already had it
+   * (200) or refused it (502 send_failed: status `failed`, or `sending` when the outcome is
+   * unknown). Never replayed by the transport.
+   */
+  async sendReply(
+    session: SessionResponse,
+    emailId: string,
+    body: SendReplyBody,
+    signal?: AbortSignal,
+  ) {
+    const sentMail = await requestMailJson(
+      session,
+      `/mailbox/emails/${encodeURIComponent(emailId)}/replies`,
+      sentMailFromReplyBodySchema,
+      signal,
+      { method: 'POST', body: JSON.stringify(body) },
+      undefined,
+      readSendReplyBody,
+    );
+    if (sentMail.id !== body.sentMailId) throw new FrontendApiError(502, 'invalid_response');
+    requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
+    return sentMail;
+  },
   /** The RFQ and its mails as they stand now; polled while a mail is still `sending`. */
   async rfq(session: SessionResponse, rfqId: string, signal?: AbortSignal) {
     const result = await requestMailJson(
@@ -529,6 +592,10 @@ export function errorMessage(error: unknown): string {
       return 'A chosen vendor contact is no longer available. Reload the vendor list and choose again.';
     if (error.code === 'missing_mail_text')
       return 'A ticked vendor has no mail text for its category. Write the vendor mails first.';
+    if (error.code === 'not_inbound') return 'Only incoming mail can be answered here.';
+    if (error.code === 'no_sender') return 'This message has no sender address to reply to.';
+    if (error.code === 'sent_mail_id_taken')
+      return 'This reply could not be started. Press Send again.';
     if (error.code === 'mailbox_not_connected')
       return 'Gmail is not connected for this mailbox. Connect it from the mailbox page, then send.';
     if (error.code === 'rfq_id_taken')

@@ -1209,6 +1209,70 @@ a.emailRow:focus-visible {
   margin: 24px 0 0;
   max-width: 75ch;
 }
+.replyComposer {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 28px;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f5f8f1;
+}
+.replyComposer h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+.replyComposer > .muted {
+  margin: -8px 0 0;
+  font-size: 0.87rem;
+}
+.replyField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.replyField label {
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 0.84rem;
+}
+.replyField textarea {
+  padding: 8px 10px;
+  border: 1px solid #cdd7cd;
+  border-radius: 5px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  resize: vertical;
+}
+.replyField textarea[aria-invalid='true'] {
+  border-color: #a33223;
+}
+.replyField .formError {
+  margin: 0;
+}
+.replyComposerActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.replyOutcome {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.87rem;
+}
+.replyOutcome.sent {
+  color: var(--green);
+}
+.replyComposer .inlineAlert {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
 @media (max-width: 600px) {
   .messageSummary {
     grid-template-columns: minmax(0, 1fr) 18px;
