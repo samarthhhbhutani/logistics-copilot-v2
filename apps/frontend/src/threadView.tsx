@@ -11,6 +11,8 @@ import { ClassificationCorrection } from './classificationCorrection.js';
 import { RfqPanel } from './rfqPanel.js';
 import { newestInboundEmail, ReplyComposer } from './replyComposer.js';
 import { threadMessageElementId } from './threadMessageAnchor.js';
+import { awaitSentReply, sentReplyPollInterval } from './awaitSentReply.js';
+import type { AwaitedSentReply } from './awaitSentReply.js';
 
 const sourceTitles: Record<ClassificationSource, string> = {
   thread: 'From this conversation',
@@ -33,9 +35,13 @@ export function ThreadView({
   backLabel: string;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
+  const [awaitedSentReply, setAwaitedSentReply] = useState<AwaitedSentReply | null>(null);
   const thread = useQuery({
     queryKey: ['thread', session.tenantId, session.mailboxId, emailId],
     queryFn: ({ signal }) => frontendApi.thread(session, emailId, signal),
+    // A reply just sent reaches the stored conversation through Gmail's push a few seconds later.
+    refetchInterval: (query) =>
+      sentReplyPollInterval(awaitedSentReply, query.state.data?.emails, Date.now()),
   });
   const expired = isUnauthenticated(thread.error);
   const missing = thread.error instanceof FrontendApiError && thread.error.status === 404;
@@ -131,7 +137,12 @@ export function ThreadView({
             ))}
           </ol>
           {answeredEmail && (
-            <ReplyComposer email={answeredEmail} session={session} onSignedOut={onSignedOut} />
+            <ReplyComposer
+              email={answeredEmail}
+              session={session}
+              onSignedOut={onSignedOut}
+              onSent={(sentMail) => setAwaitedSentReply(awaitSentReply(sentMail, Date.now()))}
+            />
           )}
           <p className="threadFootnote">
             Remote images load automatically and may notify the sender. Messages may include quoted
