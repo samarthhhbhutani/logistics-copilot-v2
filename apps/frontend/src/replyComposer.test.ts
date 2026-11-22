@@ -32,7 +32,12 @@ function email(id: string, gmailLabel: EmailDetailResponse['gmailLabel']): Email
   };
 }
 const inbound = email('00000000-0000-4000-8000-000000000011', 'inbox');
-function sentMail(id: string, status: SentMailResponse['status'], errorCode: string | null = null) {
+function sentMail(
+  id: string,
+  status: SentMailResponse['status'],
+  errorCode: string | null = null,
+  ccRecipients: SentMailResponse['ccRecipients'] = [],
+) {
   return {
     id,
     kind: 'reply',
@@ -44,7 +49,7 @@ function sentMail(id: string, status: SentMailResponse['status'], errorCode: str
     gmailThreadId: 'abc123',
     rfcMessageId: '<x@example.com>',
     toRecipients: [{ name: 'Ravi', address: 'ravi@example.com' }],
-    ccRecipients: [],
+    ccRecipients,
     subject: 'Re: Rates',
     bodyText: 'Dear Ravi',
     gmailMessageId: status === 'sent' ? 'gm-9' : null,
@@ -61,7 +66,12 @@ function answerSends(...statuses: (SentMailResponse['status'] | Error)[]) {
     else
       sendReply.mockImplementationOnce((_session, _emailId, body) =>
         Promise.resolve(
-          sentMail(body.sentMailId, status, status === 'failed' ? 'bad_request' : null),
+          sentMail(
+            body.sentMailId,
+            status,
+            status === 'failed' ? 'bad_request' : null,
+            (body.cc ?? []).map((recipient) => ({ name: recipient.name ?? '', ...recipient })),
+          ),
         ),
       );
   }
@@ -94,6 +104,19 @@ async function settle() {
 }
 function textarea() {
   return container.querySelector('textarea')!;
+}
+function ccField() {
+  const label = [...container.querySelectorAll('label')].find(
+    (candidate) => candidate.textContent === 'Cc',
+  )!;
+  return container.querySelector<HTMLInputElement>(`#${CSS.escape(label.htmlFor)}`)!;
+}
+async function typeCc(value: string) {
+  await act(async () => {
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    setValue.call(ccField(), value);
+    ccField().dispatchEvent(new Event('input', { bubbles: true }));
+  });
 }
 function button(name: string) {
   return [...container.querySelectorAll('button')].find((candidate) =>
@@ -167,6 +190,32 @@ describe('ReplyComposer', () => {
     await click('Send reply');
     const [, , secondBody] = sendReply.mock.calls[1]!;
     expect(secondBody.sentMailId).not.toBe(firstBody.sentMailId);
+  });
+
+  it('copies the Cc addresses in, refusing a bad one before anything is sent', async () => {
+    const sendReply = answerSends('sent');
+    await render();
+    await type('Dear Ravi');
+    await typeCc('priya@example.com, vikram.example.com');
+    await click('Send reply');
+    expect(sendReply).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      '"vikram.example.com" is not an email address.',
+    );
+    expect(ccField().getAttribute('aria-invalid')).toBe('true');
+
+    await typeCc('priya@example.com, Vikram Joshi <vikram@example.com>');
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    await click('Send reply');
+    const [, , body] = sendReply.mock.calls[0]!;
+    expect(body.cc).toEqual([
+      { name: '', address: 'priya@example.com' },
+      { name: 'Vikram Joshi', address: 'vikram@example.com' },
+    ]);
+    expect(container.textContent).toContain(
+      'Reply sent to ravi@example.com, cc priya@example.com, vikram@example.com.',
+    );
+    expect(ccField().disabled).toBe(true);
   });
 
   it('asks for text instead of sending an empty reply', async () => {

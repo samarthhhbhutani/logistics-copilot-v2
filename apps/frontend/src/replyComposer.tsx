@@ -6,6 +6,8 @@ import { MAX_REPLY_TEXT_LENGTH } from '@lc/contract';
 import { errorMessage, frontendApi, FrontendApiError, isUnauthenticated } from './frontendApi.js';
 import { describeSentMailStatus } from './rfqSend.js';
 import { AskCopilot } from './askCopilot.js';
+import { parseReplyCc } from './replyCcRecipients.js';
+import type { ReplyCcRecipient } from './replyCcRecipients.js';
 
 /** The mail a reply answers: the thread's newest inbound message (`emails` arrive oldest first). */
 export function newestInboundEmail(emails: EmailDetailResponse[]): EmailDetailResponse | undefined {
@@ -17,7 +19,8 @@ export function newestInboundEmail(emails: EmailDetailResponse[]): EmailDetailRe
 
 /**
  * Writes a plain-text reply to one inbound mail and sends it from the operator's mailbox; the API
- * adds the subject, the recipients, the threading headers and the mailbox signature.
+ * adds the subject, the To recipient, the threading headers and the mailbox signature. Cc is the
+ * operator's choice, typed as addresses separated by commas.
  *
  * `sentMailId` is the idempotency key the API expects: it is kept across a retry of a request that
  * never answered (the same id can only ever produce one mail) and replaced after a `failed` answer
@@ -39,14 +42,24 @@ export function ReplyComposer({
 }) {
   const headingId = useId();
   const textareaId = useId();
+  const ccFieldId = useId();
+  const ccHintId = useId();
   const statusLine = useRef<HTMLParagraphElement>(null);
   const messageField = useRef<HTMLTextAreaElement>(null);
   const [bodyText, setBodyText] = useState('');
+  const [ccText, setCcText] = useState('');
+  const [ccProblem, setCcProblem] = useState<string | null>(null);
   const [sentMailId, setSentMailId] = useState(() => crypto.randomUUID());
   const [sentMail, setSentMail] = useState<SentMailResponse | null>(null);
   const [validationMessage, setValidationMessage] = useState<string | null>(null);
   const send = useMutation({
-    mutationFn: (text: string) => frontendApi.sendReply(session, email.id, { sentMailId, text }),
+    mutationFn: ({ text, cc }: { text: string; cc: ReplyCcRecipient[] }) =>
+      frontendApi.sendReply(
+        session,
+        email.id,
+        // The API defaults cc to none; leave it out rather than send an empty list.
+        cc.length > 0 ? { sentMailId, text, cc } : { sentMailId, text },
+      ),
     onSuccess: (mail) => {
       setSentMail(mail);
       // The failed row keeps this id; the next attempt needs its own.
@@ -80,13 +93,19 @@ export function ReplyComposer({
   /** Sends, or for a mail still `sending` repeats the same request to see where it stands. */
   function submit() {
     if (send.isPending || sentMail?.status === 'sent') return;
+    const cc = parseReplyCc(ccText);
+    if ('problem' in cc) {
+      setCcProblem(cc.problem);
+      return;
+    }
+    setCcProblem(null);
     const text = bodyText.trim();
     if (!text) {
       setValidationMessage('Write the reply before sending.');
       return;
     }
     setValidationMessage(null);
-    send.mutate(text);
+    send.mutate({ text, cc: cc.recipients });
   }
 
   function startAnother() {
@@ -124,6 +143,32 @@ export function ReplyComposer({
           messageField.current?.focus();
         }}
       />
+      <div className="replyField">
+        <label htmlFor={ccFieldId}>Cc</label>
+        <input
+          id={ccFieldId}
+          type="text"
+          autoComplete="off"
+          spellCheck={false}
+          placeholder="Optional: addresses separated by commas"
+          aria-describedby={ccHintId}
+          value={ccText}
+          disabled={handedOff || send.isPending}
+          aria-invalid={ccProblem ? true : undefined}
+          onChange={(event) => {
+            setCcText(event.target.value);
+            if (ccProblem) setCcProblem(null);
+          }}
+        />
+        <p id={ccHintId} className="muted fieldHint">
+          Also sent to these people. The sender is always the To recipient.
+        </p>
+        {ccProblem && (
+          <p className="formError" role="alert">
+            {ccProblem}
+          </p>
+        )}
+      </div>
       <div className="replyField">
         <label htmlFor={textareaId}>Message</label>
         <textarea
@@ -172,7 +217,11 @@ export function ReplyComposer({
       ) : outcome?.tone === 'sent' ? (
         <p className="replyOutcome sent" role="status" ref={statusLine} tabIndex={-1}>
           <Check size={16} aria-hidden="true" />
-          Reply sent to {email.sender.email}.
+          Reply sent to {email.sender.email}
+          {sentMail && sentMail.ccRecipients.length > 0
+            ? `, cc ${sentMail.ccRecipients.map((recipient) => recipient.address).join(', ')}`
+            : ''}
+          .
         </p>
       ) : outcome?.tone === 'failed' ? (
         <p className="inlineAlert" role="alert" ref={statusLine} tabIndex={-1}>
