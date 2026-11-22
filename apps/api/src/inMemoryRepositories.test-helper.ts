@@ -218,6 +218,11 @@ export function createInMemoryRepositories(): {
               (left.id > right.id ? 1 : -1),
           );
       },
+      async listEmailsByGmailMessageIds(scope, gmailMessageIds) {
+        return emailsInScope(scope).filter((email) =>
+          gmailMessageIds.includes(email.gmailMessageId),
+        );
+      },
     },
     attachmentRepository: {
       async listAttachments(scope, emailId) {

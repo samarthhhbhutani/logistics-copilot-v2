@@ -38,7 +38,12 @@ const running: AgentRunResponse = {
 const proposed: AgentRunResponse = {
   ...running,
   status: 'proposed',
-  proposal: { subject: 'Re: hi', bodyText: 'Dear Ravi,', citedGmailMessageIds: ['gm-1'] },
+  proposal: {
+    subject: 'Re: hi',
+    bodyText: 'Dear Ravi,',
+    citedGmailMessageIds: ['gm-1'],
+    citedMessages: [],
+  },
   finishedAt: '2026-11-22T10:00:20.000Z',
 };
 

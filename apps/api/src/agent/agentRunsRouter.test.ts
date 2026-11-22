@@ -182,7 +182,31 @@ describe('POST /v1/mailbox/agent/runs', () => {
     const finished = await request(testApp.app).get(`${runsPath}/${runId}`).set('Cookie', cookie);
     expect(finished.body).toMatchObject({
       status: 'proposed',
-      proposal,
+      proposal: {
+        ...proposal,
+        // Citations resolved against the mailbox's stored mail, in the proposal's order; the quote
+        // the copilot found in Gmail was never ingested here, so it is listed with nothing to open.
+        citedMessages: [
+          {
+            gmailMessageId: `gmail-${newestInboundEmailId}`,
+            emailId: newestInboundEmailId,
+            gmailThreadId: 'abc123',
+            gmailLabel: 'inbox',
+            sender: { name: 'Ravi Kumar', email: 'ravi@acme.com' },
+            subject: 'Re: RFQ 123: Mumbai to Rotterdam',
+            receivedAt: '2026-11-11T10:00:00.000Z',
+          },
+          {
+            gmailMessageId: 'gm-earlier-quote',
+            emailId: null,
+            gmailThreadId: null,
+            gmailLabel: null,
+            sender: null,
+            subject: null,
+            receivedAt: null,
+          },
+        ],
+      },
       toolCalls: trace.toolCalls,
       usage: trace.usage,
       errorCode: null,

@@ -252,6 +252,7 @@ describe('ReplyComposer', () => {
         subject: 'Re: Rates',
         bodyText: 'Dear Ravi,\n\nNoted.',
         citedGmailMessageIds: [],
+        citedMessages: [],
       },
       finishedAt: '2026-11-22T10:00:20.000Z',
     });

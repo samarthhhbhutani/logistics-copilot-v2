@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { gmailLabelSchema } from './emails.js';
 
 export const MAX_AGENT_INSTRUCTION_LENGTH = 2000;
 
@@ -23,12 +24,29 @@ export type CreateAgentRunRequest = z.infer<typeof createAgentRunRequestSchema>;
 export const agentRunStatusSchema = z.enum(['running', 'proposed', 'failed']);
 export type AgentRunStatus = z.infer<typeof agentRunStatusSchema>;
 
+/**
+ * One mail the proposal drew on, as far as the mailbox stores it: `emailId` and the rest are null
+ * when the copilot read a Gmail message ingestion never saw, so the page can still say it was used.
+ */
+export const agentCitedMessageResponseSchema = z.object({
+  gmailMessageId: z.string(),
+  emailId: z.uuid().nullable(),
+  gmailThreadId: z.string().nullable(),
+  gmailLabel: gmailLabelSchema.nullable(),
+  sender: z.object({ name: z.string(), email: z.string().nullable() }).nullable(),
+  subject: z.string().nullable(),
+  receivedAt: z.iso.datetime().nullable(),
+});
+export type AgentCitedMessageResponse = z.infer<typeof agentCitedMessageResponseSchema>;
+
 /** The proposed reply; the operator takes it into the reply composer, nothing is sent from here. */
 export const agentProposalResponseSchema = z.object({
   subject: z.string(),
   bodyText: z.string(),
   /** Gmail message ids the proposal drew on: the mail answered, the format source, the cost source. */
   citedGmailMessageIds: z.array(z.string()),
+  /** The same citations, in the same order, resolved against the mailbox's stored mail at read time. */
+  citedMessages: z.array(agentCitedMessageResponseSchema),
 });
 export type AgentProposalResponse = z.infer<typeof agentProposalResponseSchema>;
 

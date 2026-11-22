@@ -43,6 +43,7 @@ export const RUN_CRASHED_CODE = 'run_crashed';
  *                                      409 mailbox_not_connected | google_client_not_configured
  *                                      503 agent_unavailable
  *   GET  /:agentRunId  200 AgentRunResponse   404 outside the session's mailbox
+ *                      proposal.citedMessages resolves the cited Gmail ids against stored mail
  *
  * The run is written as running before the response and finished in this process afterwards:
  * the loop takes tens of seconds, longer than a request should hold, and the API is a long-lived
@@ -87,10 +88,18 @@ export function createAgentRunsRouter({
   });
 
   router.get('/:agentRunId', requireSession, async (request, response) => {
+    const scope = getSession(response);
     const agentRunId = parseIdOr404(request.params.agentRunId);
-    const run = await agentRunRepository.findAgentRun(getSession(response), agentRunId);
+    const run = await agentRunRepository.findAgentRun(scope, agentRunId);
     if (!run) throw createHttpError(404, 'not_found');
-    response.json(toAgentRunResponse(run));
+    // Resolved at read time, in the mailbox's scope: a cited mail ingested after the run still shows.
+    const citedEmails = run.proposal
+      ? await emailReadRepository.listEmailsByGmailMessageIds(
+          scope,
+          run.proposal.citedGmailMessageIds,
+        )
+      : [];
+    response.json(toAgentRunResponse(run, citedEmails));
   });
 
   /** Runs the loop and records how it ended; nothing here can reach the already-sent response. */
