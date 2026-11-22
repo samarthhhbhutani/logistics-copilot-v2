@@ -10,6 +10,7 @@ import { EmailBody } from './emailBody.js';
 import { ClassificationCorrection } from './classificationCorrection.js';
 import { RfqPanel } from './rfqPanel.js';
 import { newestInboundEmail, ReplyComposer } from './replyComposer.js';
+import { threadMessageElementId } from './threadMessageAnchor.js';
 
 const sourceTitles: Record<ClassificationSource, string> = {
   thread: 'From this conversation',
@@ -160,6 +161,7 @@ function ThreadMessage({
   const sender = email.sender.name || email.sender.email || 'Unknown sender';
   return (
     <details
+      id={threadMessageElementId(email.id)}
       className="threadMessage"
       open={open}
       onToggle={(event) => setOpen(event.currentTarget.open)}

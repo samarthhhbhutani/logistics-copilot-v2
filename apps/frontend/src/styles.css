@@ -1327,6 +1327,48 @@ a.emailRow:focus-visible {
 .copilotProposal .eyebrow {
   margin: 0;
 }
+.citedMessages {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  font-size: 0.82rem;
+}
+.citedMessagesLabel {
+  color: var(--muted);
+}
+.citedMessages ul {
+  display: contents;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.citedChip {
+  display: inline-block;
+  max-width: 100%;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  text-decoration: none;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.citedChip:hover,
+.citedChip:focus-visible {
+  border-color: var(--green);
+}
+.citedChip.unstored {
+  color: var(--muted);
+  border-style: dashed;
+  cursor: default;
+}
 .copilotProposal pre {
   margin: 0;
   padding: 12px 14px;
