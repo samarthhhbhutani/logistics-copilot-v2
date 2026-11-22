@@ -1013,3 +1013,95 @@ describe('signature and its images', () => {
     );
   });
 });
+
+describe('copilot runs', () => {
+  const runId = '00000000-0000-4000-8000-000000000031';
+  const run = {
+    id: runId,
+    emailId: '00000000-0000-4000-8000-000000000011',
+    gmailThreadId: 'abc123',
+    instruction: 'draft a reply',
+    status: 'running',
+    proposal: null,
+    toolCalls: [],
+    model: 'gpt-6.1-sol',
+    promptVersion: 'propose-reply-v1',
+    usage: { inputTokens: 0, outputTokens: 0 },
+    errorCode: null,
+    createdAt: '2026-11-22T10:00:00.000Z',
+    finishedAt: null,
+  };
+
+  it('starts a run as a POST that is never replayed, then checks the cookie still belongs to this session', async () => {
+    let fetchMock = mockResponses(run, session);
+    expect(
+      await frontendApi.createAgentRun(session, {
+        gmailThreadId: 'abc123',
+        instruction: 'be brief',
+      }),
+    ).toEqual(run);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      '/v1/mailbox/agent/runs',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ gmailThreadId: 'abc123', instruction: 'be brief' }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/v1/me', expect.anything());
+
+    fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'oops' }), { status: 503 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(
+      frontendApi.createAgentRun(session, { gmailThreadId: 'abc123' }),
+    ).rejects.toMatchObject({ status: 503, code: 'oops' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    mockResponses(run, { ...session, mailboxId: runId });
+    await expect(
+      frontendApi.createAgentRun(session, { gmailThreadId: 'abc123' }),
+    ).rejects.toMatchObject({ code: 'session_changed' });
+  });
+
+  it('reads a run, refusing one whose id differs from the one asked for', async () => {
+    const fetchMock = mockResponses(run, session);
+    expect(await frontendApi.agentRun(session, runId)).toEqual(run);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      `/v1/mailbox/agent/runs/${runId}`,
+      expect.not.objectContaining({ method: 'POST' }),
+    );
+    mockResponses({ ...run, id: run.emailId }, session);
+    await expect(frontendApi.agentRun(session, runId)).rejects.toMatchObject({
+      code: 'invalid_response',
+    });
+  });
+
+  it('explains the copilot refusals in the operator words', async () => {
+    for (const [code, status, text] of [
+      ['thread_not_found', 404, 'This conversation has no incoming mail to reply to.'],
+      [
+        'agent_unavailable',
+        503,
+        'The copilot is not available right now. Write the reply by hand or try again later.',
+      ],
+      [
+        'mailbox_not_connected',
+        409,
+        'Gmail is not connected for this mailbox. Connect it from the mailbox page, then send.',
+      ],
+    ] as const) {
+      vi.stubGlobal(
+        'fetch',
+        vi
+          .fn()
+          .mockResolvedValueOnce(new Response(JSON.stringify({ error: code }), { status }))
+          .mockResolvedValueOnce(new Response(JSON.stringify(session))),
+      );
+      const refusal = frontendApi.createAgentRun(session, { gmailThreadId: 'abc123' });
+      await expect(refusal.catch((error: unknown) => errorMessage(error))).resolves.toBe(text);
+    }
+  });
+});

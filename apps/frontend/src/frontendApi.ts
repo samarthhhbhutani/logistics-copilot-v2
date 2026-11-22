@@ -1,4 +1,5 @@
 import {
+  agentRunResponseSchema,
   attachmentDownloadUrlResponseSchema,
   currentClassificationSchema,
   draftRfqMailsResponseSchema,
@@ -23,6 +24,7 @@ import {
 } from '@lc/contract';
 import type {
   ClassificationLabel,
+  CreateAgentRunRequest,
   DraftRfqMailsBody,
   GmailLabel,
   SendRfqBody,
@@ -416,6 +418,37 @@ export const frontendApi = {
     requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
     return result;
   },
+  /**
+   * Asks the copilot for a reply to a thread; answers at once with the run in `running`, to be
+   * polled with agentRun. Never replayed by the transport: a replay would start a second run.
+   */
+  async createAgentRun(
+    session: SessionResponse,
+    body: CreateAgentRunRequest,
+    signal?: AbortSignal,
+  ) {
+    const run = await requestMailJson(
+      session,
+      '/mailbox/agent/runs',
+      agentRunResponseSchema,
+      signal,
+      { method: 'POST', body: JSON.stringify(body) },
+    );
+    requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
+    return run;
+  },
+  /** The run as it stands now; polled while its status is `running`. */
+  async agentRun(session: SessionResponse, runId: string, signal?: AbortSignal) {
+    const run = await requestMailJson(
+      session,
+      `/mailbox/agent/runs/${encodeURIComponent(runId)}`,
+      agentRunResponseSchema,
+      signal,
+    );
+    if (run.id !== runId) throw new FrontendApiError(502, 'invalid_response');
+    requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
+    return run;
+  },
   /** A page of the mailbox's RFQs newest first, grouped by customer mail; `cursor` from the previous page's nextCursor. */
   async rfqs(session: SessionResponse, cursor: string | undefined, signal?: AbortSignal) {
     const query = new URLSearchParams({ limit: String(RFQ_PAGE_SIZE) });
@@ -476,6 +509,8 @@ export function errorMessage(error: unknown): string {
     if (error.status === 429) return 'Too many requests. Please try again in a moment.';
     if (error.code === 'mailbox_not_found')
       return 'Your mailbox is unavailable. Please contact your workspace administrator.';
+    if (error.code === 'thread_not_found')
+      return 'This conversation has no incoming mail to reply to.';
     if (error.status === 404) return 'This message is no longer available in your mailbox.';
     if (error.code === 'google_client_not_configured' || error.code === 'pubsub_not_configured') {
       return 'Gmail setup is not complete for your workspace. Please contact your administrator.';
@@ -510,6 +545,8 @@ export function errorMessage(error: unknown): string {
       return 'Signature images are temporarily unavailable. Please try again later.';
     if (error.code === 'signature_image_in_use')
       return 'This image is still in your signature. Remove it from the signature first.';
+    if (error.code === 'agent_unavailable')
+      return 'The copilot is not available right now. Write the reply by hand or try again later.';
   }
   return 'We could not reach your workspace. Check your connection and try again.';
 }
