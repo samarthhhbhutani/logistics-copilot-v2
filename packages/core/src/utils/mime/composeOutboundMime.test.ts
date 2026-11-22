@@ -147,6 +147,52 @@ describe('composeOutboundMime', () => {
     });
   });
 
+  it('carries the files the operator attached as attachments, next to the signature images, in order', async () => {
+    const rateCard = Buffer.from('%PDF-1.4 rate card', 'utf8');
+    const photo = Buffer.from('ffd8ffe000104a464946', 'hex');
+    const rawMessage = await composeOutboundMime({
+      ...baseMessage,
+      signatureHtml: '<p>Ops Desk</p><img src="cid:logo" alt="" />',
+      inlineImages: [
+        {
+          contentId: 'logo',
+          content: Buffer.from('89504e470d0a1a0a', 'hex'),
+          contentType: 'image/png',
+          fileName: 'logo.png',
+        },
+      ],
+      attachments: [
+        { content: rateCard, contentType: 'application/pdf', fileName: 'Rate card Q4.pdf' },
+        { content: photo, contentType: 'image/jpeg', fileName: 'container.jpg' },
+      ],
+    });
+    const raw = Buffer.from(rawMessage).toString('utf8');
+    expect(headersOf(rawMessage)).toContain('Content-Type: multipart/mixed');
+    expect(raw).toMatch(/Content-Disposition: attachment; filename="Rate card Q4\.pdf"/);
+    expect(raw).toMatch(/Content-Disposition: attachment; filename=container\.jpg/);
+
+    const parsed = await parseRawEmail(rawMessage);
+    expect(
+      parsed.attachments.map((attachment) => [attachment.fileName, attachment.isInline]),
+    ).toEqual([
+      ['logo.png', true],
+      ['Rate card Q4.pdf', false],
+      ['container.jpg', false],
+    ]);
+    expect(Buffer.from(parsed.attachments[1]!.content)).toEqual(rateCard);
+    expect(Buffer.from(parsed.attachments[2]!.content)).toEqual(photo);
+    expect(parsed.attachments[1]).toMatchObject({
+      contentType: 'application/pdf',
+      contentId: undefined,
+    });
+  });
+
+  it('keeps a text-only mail text-only when the attachment list is empty', async () => {
+    const rawMessage = await composeOutboundMime({ ...baseMessage, attachments: [] });
+    expect(headersOf(rawMessage)).toContain('Content-Type: text/plain');
+    expect((await parseRawEmail(rawMessage)).attachments).toEqual([]);
+  });
+
   it('rejects a Message-ID that is not <left@right>', async () => {
     expect(isWellFormedMessageId('<a.1@b.example>')).toBe(true);
     expect(isWellFormedMessageId('a.1@b.example')).toBe(false);

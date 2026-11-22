@@ -11,11 +11,19 @@ export interface InlineImage {
   fileName: string;
 }
 
+/** A file the recipient gets as a regular attachment, listed under the message. */
+export interface OutboundAttachment {
+  content: Uint8Array;
+  contentType: string;
+  fileName: string;
+}
+
 /**
  * One message we send. The body is plain text; a mailbox with an HTML signature gets a
  * multipart/alternative with the same text and an HTML part (escaped body + signature HTML +
- * its inline images). `messageId` is chosen by the caller so the reply we get back can be
- * matched to the thing we sent without a lookup: Gmail keeps a caller-supplied Message-ID as is.
+ * its inline images). Files the operator attached ride along as multipart/mixed attachments.
+ * `messageId` is chosen by the caller so the reply we get back can be matched to the thing we
+ * sent without a lookup: Gmail keeps a caller-supplied Message-ID as is.
  */
 export interface OutboundMessage {
   from: EmailAddress;
@@ -34,6 +42,8 @@ export interface OutboundMessage {
    */
   signatureHtml?: string;
   inlineImages?: InlineImage[];
+  /** Files attached by the operator, in the order they are listed. Unset or empty: none. */
+  attachments?: OutboundAttachment[];
   /** Full RFC 5322 form, angle brackets included: `<rfq-123.1@tenant.example>`. */
   messageId: string;
   /** Message-ID of the mail being answered; set together with `references` on every reply. */
@@ -89,13 +99,21 @@ export async function composeOutboundMime(message: OutboundMessage): Promise<Uin
     subject: message.subject,
     text: appendSignature(message.text, message.signature),
     html: buildHtmlBody(message.text, message.signatureHtml),
-    attachments: message.inlineImages?.map((image) => ({
-      cid: image.contentId,
-      content: Buffer.from(image.content),
-      contentType: image.contentType,
-      filename: image.fileName,
-      contentDisposition: 'inline' as const,
-    })),
+    attachments: [
+      ...(message.inlineImages ?? []).map((image) => ({
+        cid: image.contentId,
+        content: Buffer.from(image.content),
+        contentType: image.contentType,
+        filename: image.fileName,
+        contentDisposition: 'inline' as const,
+      })),
+      ...(message.attachments ?? []).map((attachment) => ({
+        content: Buffer.from(attachment.content),
+        contentType: attachment.contentType,
+        filename: attachment.fileName,
+        contentDisposition: 'attachment' as const,
+      })),
+    ],
     messageId: message.messageId,
     inReplyTo: message.inReplyTo,
     references: message.references,
