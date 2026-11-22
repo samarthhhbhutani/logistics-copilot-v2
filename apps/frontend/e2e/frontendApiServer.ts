@@ -6,7 +6,8 @@ import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:https';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { hashPassword, parseRawEmail } from '@lc/core';
+import { hashPassword, parseRawEmail, PROPOSE_REPLY_PROMPT_VERSION } from '@lc/core';
+import type { AgentReplyProposer } from '@lc/core';
 import { createTestApp } from '../../api/src/testAppInstance.test-helper.js';
 import {
   createFakeAttachmentDownloadUrlSigner,
@@ -17,8 +18,28 @@ const port = Number(process.env.FRONTEND_TEST_PORT ?? 4181);
 const imagePort = Number(process.env.FRONTEND_TEST_IMAGE_PORT ?? 4184);
 const imagePath = '/synthetic/inlineImage/logo.png';
 const fallbackSigner = createFakeAttachmentDownloadUrlSigner();
+/** Proposes the same reply after a short wait, so the page's poll is exercised without a model. */
+const syntheticReplyProposer: AgentReplyProposer = {
+  model: 'synthetic-copilot',
+  async propose(input) {
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    return {
+      outcome: 'proposed',
+      proposal: {
+        subject: 'Re: synthetic',
+        bodyText: `Dear Coastal Shipping,\n\nThank you for the update on ${input.gmailThreadId}. Noted on our side.\n\nBest regards,`,
+        citedGmailMessageIds: ['synthetic-cited-1'],
+      },
+      toolCalls: [{ name: 'get_thread', arguments: '{}', outcome: 'ok', durationMs: 10 }],
+      usage: { inputTokens: 100, outputTokens: 20 },
+      model: 'synthetic-copilot',
+      promptVersion: PROPOSE_REPLY_PROMPT_VERSION,
+    };
+  },
+};
 const testApp = createTestApp({
   frontendUrl: process.env.FRONTEND_TEST_ORIGIN ?? 'http://127.0.0.1:4180',
+  agentReplyProposer: syntheticReplyProposer,
   attachmentDownloadUrlSigner: {
     createDownloadUrl: (attachment) =>
       attachment.s3Key === 'synthetic/inlineImage/logo.png'

@@ -5,6 +5,7 @@ import type { EmailDetailResponse, SentMailResponse, SessionResponse } from '@lc
 import { MAX_REPLY_TEXT_LENGTH } from '@lc/contract';
 import { errorMessage, frontendApi, FrontendApiError, isUnauthenticated } from './frontendApi.js';
 import { describeSentMailStatus } from './rfqSend.js';
+import { AskCopilot } from './askCopilot.js';
 
 /** The mail a reply answers: the thread's newest inbound message (`emails` arrive oldest first). */
 export function newestInboundEmail(emails: EmailDetailResponse[]): EmailDetailResponse | undefined {
@@ -36,6 +37,7 @@ export function ReplyComposer({
   const headingId = useId();
   const textareaId = useId();
   const statusLine = useRef<HTMLParagraphElement>(null);
+  const messageField = useRef<HTMLTextAreaElement>(null);
   const [bodyText, setBodyText] = useState('');
   const [sentMailId, setSentMailId] = useState(() => crypto.randomUUID());
   const [sentMail, setSentMail] = useState<SentMailResponse | null>(null);
@@ -107,10 +109,22 @@ export function ReplyComposer({
       <p className="muted">
         To {recipient}, in this conversation. Your signature is added when it is sent.
       </p>
+      <AskCopilot
+        email={email}
+        session={session}
+        onSignedOut={onSignedOut}
+        disabled={handedOff}
+        onUseReply={(text) => {
+          setBodyText(text);
+          setValidationMessage(null);
+          messageField.current?.focus();
+        }}
+      />
       <div className="replyField">
         <label htmlFor={textareaId}>Message</label>
         <textarea
           id={textareaId}
+          ref={messageField}
           rows={8}
           maxLength={MAX_REPLY_TEXT_LENGTH}
           value={bodyText}

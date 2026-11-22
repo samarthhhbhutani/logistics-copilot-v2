@@ -1273,6 +1273,69 @@ a.emailRow:focus-visible {
   align-items: flex-start;
   gap: 8px;
 }
+.askCopilot {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper);
+}
+.askCopilotAsk {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.askCopilotAsk label {
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 0.84rem;
+}
+.askCopilotAsk > .muted {
+  margin: 0;
+  font-size: 0.82rem;
+}
+.askCopilotRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.askCopilotRow input {
+  flex: 1 1 260px;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid #cdd7cd;
+  border-radius: 5px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+}
+.copilotOutcome {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.87rem;
+}
+.copilotProposal {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.copilotProposal .eyebrow {
+  margin: 0;
+}
+.copilotProposal pre {
+  margin: 0;
+  padding: 12px 14px;
+  border-left: 3px solid var(--green);
+  background: #f5f8f1;
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 @media (max-width: 600px) {
   .messageSummary {
     grid-template-columns: minmax(0, 1fr) 18px;
