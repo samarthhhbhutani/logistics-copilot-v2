@@ -18,6 +18,8 @@ import type {
   MailboxConnectionRepository,
   MailboxCredentials,
   MailboxCredentialsRepository,
+  ReplyAttachment,
+  ReplyAttachmentRepository,
   Rfq,
   RfqRepository,
   SentMail,
@@ -43,6 +45,7 @@ export function createInMemoryRepositories(): {
   sentMailRepository: SentMailRepository;
   rfqRepository: RfqRepository;
   signatureImageRepository: SignatureImageRepository;
+  replyAttachmentRepository: ReplyAttachmentRepository;
   agentRunRepository: AgentRunRepository;
   /** Seeds the inbox list directly; the processor's insert path is not part of the API. Detail fields default to empty. */
   addEmail(
@@ -72,6 +75,7 @@ export function createInMemoryRepositories(): {
   const sentMails: (SentMail & { mailboxId: string; tenantId: string })[] = [];
   const rfqs: (Rfq & { mailboxId: string; tenantId: string })[] = [];
   const signatureImages: (SignatureImage & { mailboxId: string; tenantId: string })[] = [];
+  const replyAttachments: (ReplyAttachment & { mailboxId: string; tenantId: string })[] = [];
   const agentRuns: (AgentRun & { mailboxId: string; tenantId: string })[] = [];
 
   function emailsInScope({ mailboxId, tenantId }: { mailboxId: string; tenantId: string }) {
@@ -613,6 +617,68 @@ export function createInMemoryRepositories(): {
         return removed ? stripScope(removed) : undefined;
       },
     },
+    replyAttachmentRepository: {
+      async createReplyAttachment({ mailboxId, tenantId }, attachmentToCreate) {
+        const attachment = {
+          ...attachmentToCreate,
+          sentMailId: null,
+          createdAt: new Date(2026, 0, 1, 0, 0, replyAttachments.length),
+          mailboxId,
+          tenantId,
+        };
+        replyAttachments.push(attachment);
+        return stripAttachmentScope(attachment);
+      },
+      async findReplyAttachments({ mailboxId, tenantId }, attachmentIds) {
+        return attachmentIds.flatMap((attachmentId) => {
+          const attachment = replyAttachments.find(
+            (candidate) =>
+              candidate.id === attachmentId &&
+              candidate.mailboxId === mailboxId &&
+              candidate.tenantId === tenantId,
+          );
+          return attachment ? [stripAttachmentScope(attachment)] : [];
+        });
+      },
+      async listReplyAttachmentsOfSentMail({ mailboxId, tenantId }, sentMailId) {
+        return replyAttachments
+          .filter(
+            (attachment) =>
+              attachment.sentMailId === sentMailId &&
+              attachment.mailboxId === mailboxId &&
+              attachment.tenantId === tenantId,
+          )
+          .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
+          .map(stripAttachmentScope);
+      },
+      async attachToSentMail({ mailboxId, tenantId }, attachmentIds, sentMailId) {
+        let changed = 0;
+        for (const attachment of replyAttachments) {
+          if (
+            attachmentIds.includes(attachment.id) &&
+            attachment.mailboxId === mailboxId &&
+            attachment.tenantId === tenantId &&
+            attachment.sentMailId === null
+          ) {
+            attachment.sentMailId = sentMailId;
+            changed += 1;
+          }
+        }
+        return changed;
+      },
+      async deleteUnsentReplyAttachment({ mailboxId, tenantId }, attachmentId) {
+        const index = replyAttachments.findIndex(
+          (attachment) =>
+            attachment.id === attachmentId &&
+            attachment.mailboxId === mailboxId &&
+            attachment.tenantId === tenantId &&
+            attachment.sentMailId === null,
+        );
+        if (index === -1) return undefined;
+        const [removed] = replyAttachments.splice(index, 1);
+        return removed ? stripAttachmentScope(removed) : undefined;
+      },
+    },
     rfqRepository: {
       async listRfqs(scope, { limit, before }) {
         return rfqs
@@ -764,5 +830,20 @@ function stripScope(
     sizeBytes: image.sizeBytes,
     s3Key: image.s3Key,
     createdAt: image.createdAt,
+  };
+}
+
+function stripAttachmentScope(
+  attachment: ReplyAttachment & { mailboxId: string; tenantId: string },
+): ReplyAttachment {
+  return {
+    id: attachment.id,
+    fileName: attachment.fileName,
+    contentType: attachment.contentType,
+    sizeBytes: attachment.sizeBytes,
+    sha256: attachment.sha256,
+    s3Key: attachment.s3Key,
+    sentMailId: attachment.sentMailId,
+    createdAt: attachment.createdAt,
   };
 }

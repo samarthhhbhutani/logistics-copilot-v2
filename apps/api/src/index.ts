@@ -17,6 +17,7 @@ import {
   createPrismaEmailReadRepository,
   createPrismaMailboxConnectionRepository,
   createPrismaMailboxCredentialsRepository,
+  createPrismaReplyAttachmentRepository,
   createPrismaRfqRepository,
   createPrismaSentMailRepository,
   createPrismaSignatureImageRepository,
@@ -28,6 +29,7 @@ import {
 import { createAppInstance } from './createAppInstance.js';
 import { createS3AttachmentContentReader } from './emails/attachmentContentReader.js';
 import { createS3AttachmentDownloadUrlSigner } from './emails/attachmentDownloadUrlSigner.js';
+import { createS3ReplyAttachmentStore } from './sending/replyAttachmentStore.js';
 import { createS3SignatureImageStore } from './signature/signatureImageStore.js';
 import { shutdownTelemetry } from './instrumentation.js';
 
@@ -50,6 +52,10 @@ if (!attachmentDownloadUrlSigner)
 // Optional for the same reason: without a bucket the signature image routes answer 503.
 const signatureImageStore = config.RAW_MAIL_BUCKET_NAME
   ? createS3SignatureImageStore({ s3Client, bucketName: config.RAW_MAIL_BUCKET_NAME })
+  : undefined;
+// Optional for the same reason: without a bucket the reply attachment routes answer 503.
+const replyAttachmentStore = config.RAW_MAIL_BUCKET_NAME
+  ? createS3ReplyAttachmentStore({ s3Client, bucketName: config.RAW_MAIL_BUCKET_NAME })
   : undefined;
 // Optional: the suggester reads PDF and image attachments only when switched on and the bucket is known.
 const attachmentContentReader =
@@ -87,9 +93,11 @@ const expressApp = createAppInstance({
   sentMailRepository: createPrismaSentMailRepository(prismaClient),
   rfqRepository: createPrismaRfqRepository(prismaClient),
   signatureImageRepository: createPrismaSignatureImageRepository(prismaClient),
+  replyAttachmentRepository: createPrismaReplyAttachmentRepository(prismaClient),
   agentRunRepository: createPrismaAgentRunRepository(prismaClient),
   agentReplyProposer,
   signatureImageStore,
+  replyAttachmentStore,
   attachmentDownloadUrlSigner,
   rfqSuggester,
   attachmentContentReader,
