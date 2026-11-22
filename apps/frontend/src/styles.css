@@ -1237,16 +1237,24 @@ a.emailRow:focus-visible {
   font-weight: 600;
   font-size: 0.84rem;
 }
-.replyField textarea {
+.replyField textarea,
+.replyField input {
   padding: 8px 10px;
   border: 1px solid #cdd7cd;
   border-radius: 5px;
   background: var(--paper);
   color: var(--ink);
   font: inherit;
+}
+.replyField textarea {
   resize: vertical;
 }
-.replyField textarea[aria-invalid='true'] {
+.replyField .fieldHint {
+  margin: 0;
+  font-size: 0.82rem;
+}
+.replyField textarea[aria-invalid='true'],
+.replyField input[aria-invalid='true'] {
   border-color: #a33223;
 }
 .replyField .formError {

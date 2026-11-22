@@ -36,6 +36,14 @@ test('replies to the newest inbound mail of a conversation from under the messag
 
   const message = composer.getByLabel('Message', { exact: true });
   await message.fill('Dear team,\n\nNoted, thank you.');
+  // A Cc entry that is not an address is refused on the page too.
+  const ccField = composer.getByLabel('Cc', { exact: true });
+  await ccField.fill('priya@example.com, vikram.example.com');
+  await sendButton.click();
+  await expect(composer.getByRole('alert')).toHaveText(
+    '"vikram.example.com" is not an email address.',
+  );
+  await ccField.fill('priya@example.com, Vikram Joshi <vikram@example.com>');
   const sendRequest = page.waitForRequest(
     (request) => request.method() === 'POST' && request.url().includes('/replies'),
   );
@@ -43,9 +51,17 @@ test('replies to the newest inbound mail of a conversation from under the messag
     (response) => response.request().method() === 'POST' && response.url().includes('/replies'),
   );
   await sendButton.click();
-  const body = (await sendRequest).postDataJSON() as { sentMailId: string; text: string };
+  const body = (await sendRequest).postDataJSON() as {
+    sentMailId: string;
+    text: string;
+    cc: { name: string; address: string }[];
+  };
   expect(body.text).toBe('Dear team,\n\nNoted, thank you.');
   expect(body.sentMailId).toMatch(/^[0-9a-f-]{36}$/);
+  expect(body.cc).toEqual([
+    { name: '', address: 'priya@example.com' },
+    { name: 'Vikram Joshi', address: 'vikram@example.com' },
+  ]);
   const sentMail = (await (await sendResponse).json()) as { rfcMessageId: string };
 
   // Ingestion files our sent copy a few seconds after the send. Stand in for it here, on the
@@ -63,7 +79,10 @@ test('replies to the newest inbound mail of a conversation from under the messag
         gmailLabel: 'sent',
         sender: { name: '', email: 'ops@example.com' },
         toRecipients: [{ name: 'Coastal Shipping', address: 'ravi@example.com' }],
-        ccRecipients: [],
+        ccRecipients: [
+          { name: '', address: 'priya@example.com' },
+          { name: 'Vikram Joshi', address: 'vikram@example.com' },
+        ],
         subject: `Re: ${subject}`,
         snippet: 'Noted, thank you.',
         receivedAt: new Date().toISOString(),
@@ -76,7 +95,10 @@ test('replies to the newest inbound mail of a conversation from under the messag
     await route.fulfill({ response, json: thread });
   });
 
-  await expect(composer.getByRole('status')).toHaveText('Reply sent to ravi@example.com.');
+  await expect(composer.getByRole('status')).toHaveText(
+    'Reply sent to ravi@example.com, cc priya@example.com, vikram@example.com.',
+  );
+  await expect(ccField).toBeDisabled();
   await expect(message).toBeDisabled();
   await expect(sendButton).toHaveCount(0);
 
