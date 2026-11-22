@@ -44,6 +44,16 @@ test('asks the copilot for a reply, waits for it, and puts the proposal into the
   await expect(proposal.locator('pre')).toContainText('Thank you for the update on 100d.');
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 
+  // Citations: the answered mail (in this conversation, opens it) and one not stored here (plain).
+  const chips = proposal.locator('.citedChip');
+  await expect(chips).toHaveCount(2);
+  await expect(chips.nth(0)).toHaveText(/^Coastal Shipping · .+ · Shipment update 13$/);
+  await expect(chips.nth(1)).toHaveText('A mail not stored here');
+  await chips.nth(0).click();
+  const citedMessage = page.locator('details.threadMessage').first();
+  await expect(citedMessage).toHaveJSProperty('open', true);
+  await expect(citedMessage.locator('summary')).toBeFocused();
+
   await proposal.getByRole('button', { name: 'Use this reply', exact: true }).click();
   const message = composer.getByLabel('Message', { exact: true });
   await expect(message).toHaveValue(

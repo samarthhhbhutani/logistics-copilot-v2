@@ -28,7 +28,8 @@ const syntheticReplyProposer: AgentReplyProposer = {
       proposal: {
         subject: 'Re: synthetic',
         bodyText: `Dear Coastal Shipping,\n\nThank you for the update on ${input.gmailThreadId}. Noted on our side.\n\nBest regards,`,
-        citedGmailMessageIds: ['synthetic-cited-1'],
+        // The mail answered (stored here) and one the copilot found in Gmail that ingestion never saw.
+        citedGmailMessageIds: [input.anchor.gmailMessageId, 'synthetic-cited-1'],
       },
       toolCalls: [{ name: 'get_thread', arguments: '{}', outcome: 'ok', durationMs: 10 }],
       usage: { inputTokens: 100, outputTokens: 20 },

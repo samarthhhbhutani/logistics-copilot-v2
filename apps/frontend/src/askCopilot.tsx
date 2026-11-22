@@ -1,10 +1,11 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Check, RefreshCw, Sparkles, TriangleAlert } from 'lucide-react';
-import type { EmailDetailResponse, SessionResponse } from '@lc/contract';
+import type { AgentCitedMessageResponse, EmailDetailResponse, SessionResponse } from '@lc/contract';
 import { MAX_AGENT_INSTRUCTION_LENGTH } from '@lc/contract';
 import { errorMessage, frontendApi, isUnauthenticated } from './frontendApi.js';
 import { AGENT_RUN_POLL_TIMEOUT_MS, agentRunQueryKey, useAgentRun } from './useAgentRun.js';
+import { threadMessageElementId } from './threadMessageAnchor.js';
 
 const FAILURE_EXPLANATIONS: Record<string, string> = {
   llm_retry: 'The model did not answer in time.',
@@ -174,6 +175,7 @@ export function AskCopilot({
         >
           <p className="eyebrow">Proposed reply</p>
           <pre>{proposal.bodyText}</pre>
+          <CitedMessages citedMessages={proposal.citedMessages} threadId={email.gmailThreadId} />
           <div className="replyComposerActions">
             {usedRunId === run.id ? (
               <p className="copilotOutcome" role="status">
@@ -196,6 +198,92 @@ export function AskCopilot({
           </div>
         </section>
       )}
+    </div>
+  );
+}
+
+export type CitedMessageView =
+  /** Stored, in the open conversation: the chip opens and scrolls to that message. */
+  | { kind: 'inThread'; emailId: string; label: string }
+  /** Stored elsewhere in the mailbox: the chip opens that conversation in a new tab, so the proposal here stays. */
+  | { kind: 'otherThread'; emailId: string; label: string }
+  /** Read by the copilot through Gmail but never ingested here: nothing to open. */
+  | { kind: 'unstored'; gmailMessageId: string; label: string };
+
+/** What a citation chip says and does, given the conversation the proposal belongs to. */
+export function describeCitedMessage(
+  cited: AgentCitedMessageResponse,
+  threadId: string,
+): CitedMessageView {
+  if (cited.emailId === null) {
+    return {
+      kind: 'unstored',
+      gmailMessageId: cited.gmailMessageId,
+      label: 'A mail not stored here',
+    };
+  }
+  const who =
+    cited.gmailLabel === 'sent'
+      ? 'You'
+      : cited.sender?.name || cited.sender?.email || 'Unknown sender';
+  const when = cited.receivedAt
+    ? new Date(cited.receivedAt).toLocaleDateString(undefined, { dateStyle: 'medium' })
+    : '';
+  const label = [who, when, cited.subject || '(No subject)'].filter(Boolean).join(' \u00b7 ');
+  return {
+    kind: cited.gmailThreadId === threadId ? 'inThread' : 'otherThread',
+    emailId: cited.emailId,
+    label,
+  };
+}
+
+/** Opens the cited message's <details> in this conversation and brings it into view. */
+function revealThreadMessage(emailId: string) {
+  const message = document.getElementById(threadMessageElementId(emailId));
+  if (!(message instanceof HTMLDetailsElement)) return;
+  message.open = true;
+  message.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  message.querySelector('summary')?.focus();
+}
+
+function CitedMessages({
+  citedMessages,
+  threadId,
+}: {
+  citedMessages: AgentCitedMessageResponse[];
+  threadId: string;
+}) {
+  if (citedMessages.length === 0) return null;
+  return (
+    <div className="citedMessages">
+      <span className="citedMessagesLabel">Based on</span>
+      <ul>
+        {citedMessages.map((cited) => {
+          const view = describeCitedMessage(cited, threadId);
+          return (
+            <li key={cited.gmailMessageId}>
+              {view.kind === 'inThread' ? (
+                <button className="citedChip" onClick={() => revealThreadMessage(view.emailId)}>
+                  {view.label}
+                </button>
+              ) : view.kind === 'otherThread' ? (
+                <a
+                  className="citedChip"
+                  href={`/mailbox?${new URLSearchParams({ email: view.emailId })}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {view.label}
+                </a>
+              ) : (
+                <span className="citedChip unstored" title={`Gmail message ${view.gmailMessageId}`}>
+                  {view.label}
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

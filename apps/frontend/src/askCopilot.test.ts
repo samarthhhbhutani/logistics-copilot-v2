@@ -5,9 +5,14 @@ import { createRoot } from 'react-dom/client';
 import type { Root } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AgentRunResponse, EmailDetailResponse } from '@lc/contract';
+import type {
+  AgentCitedMessageResponse,
+  AgentRunResponse,
+  EmailDetailResponse,
+} from '@lc/contract';
 import { frontendApi, FrontendApiError } from './frontendApi.js';
-import { AskCopilot, describeAgentRunFailure } from './askCopilot.js';
+import { AskCopilot, describeAgentRunFailure, describeCitedMessage } from './askCopilot.js';
+import { threadMessageElementId } from './threadMessageAnchor.js';
 import { AGENT_RUN_POLL_MS, AGENT_RUN_POLL_TIMEOUT_MS } from './useAgentRun.js';
 
 const session = {
@@ -51,8 +56,36 @@ const proposed: AgentRunResponse = {
   proposal: {
     subject: 'Re: Rates',
     bodyText: 'Dear Ravi,\n\nUSD 1,450 per 40HC.',
-    citedGmailMessageIds: ['gm-1'],
-    citedMessages: [],
+    citedGmailMessageIds: ['gm-1', 'gm-2', 'gm-3'],
+    citedMessages: [
+      {
+        gmailMessageId: 'gm-1',
+        emailId: email.id,
+        gmailThreadId: 'abc123',
+        gmailLabel: 'inbox',
+        sender: { name: 'Ravi', email: 'ravi@example.com' },
+        subject: 'Rates',
+        receivedAt: '2026-11-22T09:00:00.000Z',
+      },
+      {
+        gmailMessageId: 'gm-2',
+        emailId: '00000000-0000-4000-8000-000000000021',
+        gmailThreadId: 'other',
+        gmailLabel: 'sent',
+        sender: { name: '', email: 'ops@example.com' },
+        subject: 'Quote: Mundra to Rotterdam',
+        receivedAt: '2026-10-28T09:00:00.000Z',
+      },
+      {
+        gmailMessageId: 'gm-3',
+        emailId: null,
+        gmailThreadId: null,
+        gmailLabel: null,
+        sender: null,
+        subject: null,
+        receivedAt: null,
+      },
+    ],
   },
   finishedAt: '2026-11-22T10:00:20.000Z',
 };
@@ -141,6 +174,34 @@ describe('describeAgentRunFailure', () => {
   });
 });
 
+describe('describeCitedMessage', () => {
+  const stored: AgentCitedMessageResponse = proposed.proposal!.citedMessages[0]!;
+  it('names the sender, the day and the subject, says You for our own mail, and tells the threads apart', () => {
+    expect(describeCitedMessage(stored, 'abc123')).toEqual({
+      kind: 'inThread',
+      emailId: email.id,
+      label: expect.stringMatching(/^Ravi · .*2026 · Rates$/),
+    });
+    expect(describeCitedMessage(proposed.proposal!.citedMessages[1]!, 'abc123')).toMatchObject({
+      kind: 'otherThread',
+      label: expect.stringMatching(/^You · .*2026 · Quote: Mundra to Rotterdam$/),
+    });
+    expect(
+      describeCitedMessage({ ...stored, sender: { name: '', email: null } }, 'abc123').label,
+    ).toMatch(/^Unknown sender ·/);
+    expect(describeCitedMessage({ ...stored, subject: '' }, 'abc123').label).toMatch(
+      /\(No subject\)$/,
+    );
+  });
+  it('has nothing to open for a mail the mailbox never stored', () => {
+    expect(describeCitedMessage(proposed.proposal!.citedMessages[2]!, 'abc123')).toEqual({
+      kind: 'unstored',
+      gmailMessageId: 'gm-3',
+      label: 'A mail not stored here',
+    });
+  });
+});
+
 describe('AskCopilot', () => {
   it('starts a run for the thread, waits one interval before the first poll, shows the proposal and hands it over', async () => {
     const createAgentRun = vi.spyOn(frontendApi, 'createAgentRun').mockResolvedValueOnce(running);
@@ -159,6 +220,31 @@ describe('AskCopilot', () => {
     expect(agentRun).toHaveBeenCalledTimes(1);
     expect(container.querySelector('pre')?.textContent).toBe('Dear Ravi,\n\nUSD 1,450 per 40HC.');
     expect(button('Ask again')).toBeDefined();
+
+    // One chip per citation, in the proposal's order: this thread (a button), another thread (a
+    // link opening it in a new tab so this proposal is not lost), and one the mailbox never stored
+    // (plain).
+    const chips = [...container.querySelectorAll('.citedChip')];
+    expect(chips.map((chip) => chip.tagName)).toEqual(['BUTTON', 'A', 'SPAN']);
+    expect(chips[1]?.getAttribute('href')).toBe(
+      '/mailbox?email=00000000-0000-4000-8000-000000000021',
+    );
+    expect(chips[1]?.getAttribute('target')).toBe('_blank');
+    expect(chips[1]?.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(chips[2]?.textContent).toBe('A mail not stored here');
+    const message = document.createElement('details');
+    message.id = threadMessageElementId(email.id);
+    message.append(document.createElement('summary'));
+    const scrollIntoView = vi.fn();
+    message.scrollIntoView = scrollIntoView;
+    document.body.append(message);
+    await act(async () => {
+      chips[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(message.open).toBe(true);
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'start', behavior: 'smooth' });
+    expect(document.activeElement).toBe(message.querySelector('summary'));
+    message.remove();
 
     await click('Use this reply');
     expect(onUseReply).toHaveBeenCalledWith('Dear Ravi,\n\nUSD 1,450 per 40HC.');
