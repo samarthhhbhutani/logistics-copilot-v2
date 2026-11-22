@@ -29,10 +29,13 @@ export function ReplyComposer({
   email,
   session,
   onSignedOut,
+  onSent,
 }: {
   email: EmailDetailResponse;
   session: SessionResponse;
   onSignedOut: () => void;
+  /** Gmail took the mail (first answer or a later "Check status"): the conversation can look for it. */
+  onSent?: (sentMail: SentMailResponse) => void;
 }) {
   const headingId = useId();
   const textareaId = useId();
@@ -48,6 +51,7 @@ export function ReplyComposer({
       setSentMail(mail);
       // The failed row keeps this id; the next attempt needs its own.
       if (mail.status === 'failed') setSentMailId(crypto.randomUUID());
+      if (mail.status === 'sent') onSent?.(mail);
     },
     onError: (error) => {
       if (error instanceof FrontendApiError && error.code === 'sent_mail_id_taken') {

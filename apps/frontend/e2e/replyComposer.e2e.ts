@@ -39,14 +39,56 @@ test('replies to the newest inbound mail of a conversation from under the messag
   const sendRequest = page.waitForRequest(
     (request) => request.method() === 'POST' && request.url().includes('/replies'),
   );
+  const sendResponse = page.waitForResponse(
+    (response) => response.request().method() === 'POST' && response.url().includes('/replies'),
+  );
   await sendButton.click();
   const body = (await sendRequest).postDataJSON() as { sentMailId: string; text: string };
   expect(body.text).toBe('Dear team,\n\nNoted, thank you.');
   expect(body.sentMailId).toMatch(/^[0-9a-f-]{36}$/);
+  const sentMail = (await (await sendResponse).json()) as { rfcMessageId: string };
+
+  // Ingestion files our sent copy a few seconds after the send. Stand in for it here, on the
+  // second read after the send, so the page is seen to keep polling until the copy is there; the
+  // synthetic mailbox itself stays as seeded for every other spec.
+  let threadReadsAfterSend = 0;
+  await page.route('**/v1/mailbox/threads/*', async (route) => {
+    const response = await route.fetch();
+    const thread = (await response.json()) as { gmailThreadId: string; emails: object[] };
+    threadReadsAfterSend += 1;
+    if (threadReadsAfterSend >= 2) {
+      thread.emails.push({
+        id: '00000000-0000-4000-8000-00000000e2e1',
+        gmailThreadId: thread.gmailThreadId,
+        gmailLabel: 'sent',
+        sender: { name: '', email: 'ops@example.com' },
+        toRecipients: [{ name: 'Coastal Shipping', address: 'ravi@example.com' }],
+        ccRecipients: [],
+        subject: `Re: ${subject}`,
+        snippet: 'Noted, thank you.',
+        receivedAt: new Date().toISOString(),
+        classification: null,
+        rfcMessageId: sentMail.rfcMessageId,
+        bodyText: 'Dear team,\n\nNoted, thank you.',
+        bodyHtml: null,
+      });
+    }
+    await route.fulfill({ response, json: thread });
+  });
 
   await expect(composer.getByRole('status')).toHaveText('Reply sent to ravi@example.com.');
   await expect(message).toBeDisabled();
   await expect(sendButton).toHaveCount(0);
+
+  // Picked up on the page's own re-read, newest first, without a reload.
+  await expect(page.getByText('2 messages · Latest first · Stored mail only')).toBeVisible({
+    timeout: 10_000,
+  });
+  expect(threadReadsAfterSend).toBe(2);
+  const newestSummary = page.locator('.threadMessages > li').first().locator('summary');
+  await expect(newestSummary.getByText('Sent', { exact: true })).toBeVisible();
+  await expect(newestSummary.locator('strong')).toHaveText('ops@example.com');
+  await page.unroute('**/v1/mailbox/threads/*');
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 
   await composer.getByRole('button', { name: 'Write another reply', exact: true }).click();

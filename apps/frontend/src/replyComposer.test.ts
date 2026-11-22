@@ -72,6 +72,7 @@ let container: HTMLDivElement;
 let root: Root | undefined;
 let queryClient: QueryClient;
 const onSignedOut = vi.fn();
+const onSent = vi.fn();
 
 async function render() {
   root ??= createRoot(container);
@@ -80,7 +81,7 @@ async function render() {
       createElement(
         QueryClientProvider,
         { client: queryClient },
-        createElement(ReplyComposer, { email: inbound, session, onSignedOut }),
+        createElement(ReplyComposer, { email: inbound, session, onSignedOut, onSent }),
       ),
     );
   });
@@ -121,6 +122,7 @@ beforeEach(() => {
   document.body.append(container);
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   onSignedOut.mockReset();
+  onSent.mockReset();
 });
 
 afterEach(async () => {
@@ -154,6 +156,7 @@ describe('ReplyComposer', () => {
     expect(emailId).toBe(inbound.id);
     expect(firstBody).toEqual({ sentMailId: expect.any(String), text: 'Dear Ravi' });
     expect(container.textContent).toContain('Reply sent to ravi@example.com.');
+    expect(onSent).toHaveBeenCalledWith(expect.objectContaining({ status: 'sent' }));
     expect(textarea().disabled).toBe(true);
     expect(button('Send reply')).toBeUndefined();
 
@@ -184,6 +187,8 @@ describe('ReplyComposer', () => {
       'Reply not sent. Gmail rejected the message. Check the address and the text.',
     );
     expect(textarea().disabled).toBe(false);
+    // Nothing went out, so the conversation has nothing to wait for.
+    expect(onSent).not.toHaveBeenCalled();
 
     await type('Dear Ravi, corrected');
     await click('Try again');
