@@ -192,6 +192,24 @@ describe('findEmail and listThreadEmails', () => {
     );
   });
 
+  it('reads the stored copies of cited Gmail messages inside the scope, and nothing at all for no ids', async () => {
+    const { prismaClient, calls } = stubPrisma([detailRow]);
+    const repository = createPrismaEmailReadRepository(prismaClient);
+
+    expect(await repository.listEmailsByGmailMessageIds(scope, [])).toEqual([]);
+    expect(calls).toHaveLength(0);
+
+    const cited = await repository.listEmailsByGmailMessageIds(scope, ['gm-1', 'gm-missing']);
+    expect(cited.map((email) => email.gmailMessageId)).toEqual(['gm-1']);
+    expect(calls[0]?.args.where).toEqual({
+      ...scope,
+      gmailMessageId: { in: ['gm-1', 'gm-missing'] },
+    });
+    expect((calls[0]?.args.select as { classifications: unknown }).classifications).toEqual(
+      currentClassificationSelect,
+    );
+  });
+
   it('returns undefined when the email is not in the scope', async () => {
     const { prismaClient } = stubPrisma([]);
     expect(

@@ -52,6 +52,7 @@ const proposed: AgentRunResponse = {
     subject: 'Re: Rates',
     bodyText: 'Dear Ravi,\n\nUSD 1,450 per 40HC.',
     citedGmailMessageIds: ['gm-1'],
+    citedMessages: [],
   },
   finishedAt: '2026-11-22T10:00:20.000Z',
 };

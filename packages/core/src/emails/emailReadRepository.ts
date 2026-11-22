@@ -32,6 +32,14 @@ export interface EmailReadRepository {
   findEmail(scope: MailboxScope, emailId: string): Promise<EmailDetail | undefined>;
   /** Every stored message of the thread in this mailbox, inbox and sent, oldest first. Empty when none. */
   listThreadEmails(scope: MailboxScope, gmailThreadId: string): Promise<EmailDetail[]>;
+  /**
+   * The mailbox's stored copies of these Gmail messages, in no particular order; ids the mailbox
+   * never stored are simply absent. How the copilot's citations become mails the operator can open.
+   */
+  listEmailsByGmailMessageIds(
+    scope: MailboxScope,
+    gmailMessageIds: string[],
+  ): Promise<EmailDetail[]>;
 }
 
 /**
@@ -143,6 +151,15 @@ export function createPrismaEmailReadRepository(prismaClient: PrismaClient): Ema
       const emails = await prismaClient.email.findMany({
         where: { mailboxId, tenantId, gmailThreadId },
         orderBy: [{ receivedAt: 'asc' }, { id: 'asc' }],
+        select: EMAIL_DETAIL_SELECT,
+      });
+      return emails.map(toEmailDetail);
+    },
+
+    async listEmailsByGmailMessageIds({ mailboxId, tenantId }, gmailMessageIds) {
+      if (gmailMessageIds.length === 0) return [];
+      const emails = await prismaClient.email.findMany({
+        where: { mailboxId, tenantId, gmailMessageId: { in: gmailMessageIds } },
         select: EMAIL_DETAIL_SELECT,
       });
       return emails.map(toEmailDetail);
