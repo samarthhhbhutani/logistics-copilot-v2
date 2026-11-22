@@ -5,9 +5,10 @@ import { createRoot } from 'react-dom/client';
 import type { Root } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { EmailDetailResponse, SentMailResponse } from '@lc/contract';
+import type { AgentRunResponse, EmailDetailResponse, SentMailResponse } from '@lc/contract';
 import { frontendApi, FrontendApiError } from './frontendApi.js';
 import { newestInboundEmail, ReplyComposer } from './replyComposer.js';
+import { AGENT_RUN_POLL_MS } from './useAgentRun.js';
 
 const session = {
   tenantId: '00000000-0000-4000-8000-000000000002',
@@ -224,6 +225,62 @@ describe('ReplyComposer', () => {
     await type('Again');
     await click('Send reply');
     expect(onSignedOut).toHaveBeenCalledTimes(1);
+  });
+
+  it('puts the copilot proposal into the message, ready to edit and send', async () => {
+    vi.useFakeTimers();
+    const running: AgentRunResponse = {
+      id: '00000000-0000-4000-8000-000000000031',
+      emailId: inbound.id,
+      gmailThreadId: 'abc123',
+      instruction: 'draft a reply',
+      status: 'running',
+      proposal: null,
+      toolCalls: [],
+      model: 'gpt-6.1-sol',
+      promptVersion: 'propose-reply-v1',
+      usage: { inputTokens: 0, outputTokens: 0 },
+      errorCode: null,
+      createdAt: '2026-11-22T10:00:00.000Z',
+      finishedAt: null,
+    };
+    vi.spyOn(frontendApi, 'createAgentRun').mockResolvedValueOnce(running);
+    vi.spyOn(frontendApi, 'agentRun').mockResolvedValueOnce({
+      ...running,
+      status: 'proposed',
+      proposal: {
+        subject: 'Re: Rates',
+        bodyText: 'Dear Ravi,\n\nNoted.',
+        citedGmailMessageIds: [],
+      },
+      finishedAt: '2026-11-22T10:00:20.000Z',
+    });
+    const advance = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
+    try {
+      root ??= createRoot(container);
+      await act(async () => {
+        root!.render(
+          createElement(
+            QueryClientProvider,
+            { client: queryClient },
+            createElement(ReplyComposer, { email: inbound, session, onSignedOut }),
+          ),
+        );
+      });
+      await type('my own start');
+      await act(async () => {
+        button('Ask the copilot')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+      await advance(AGENT_RUN_POLL_MS + 1);
+      await act(async () => {
+        button('Use this reply')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+      await advance(1);
+      expect(textarea().value).toBe('Dear Ravi,\n\nNoted.');
+      expect(document.activeElement).toBe(textarea());
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('freezes a reply Gmail may have taken and lets the operator check on it with the same id', async () => {
