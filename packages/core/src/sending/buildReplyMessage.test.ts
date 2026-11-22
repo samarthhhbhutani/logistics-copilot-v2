@@ -32,6 +32,7 @@ describe('buildReplyMessage', () => {
       ccRecipients: [],
       subject: 'RFQ',
       snippet: '',
+      gmailMessageId: 'gm-1',
       bodyText: '',
       bodyHtml: null,
       receivedAt: new Date(),

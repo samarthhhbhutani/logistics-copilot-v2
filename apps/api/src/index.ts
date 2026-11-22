@@ -1,11 +1,15 @@
 import { S3Client } from '@aws-sdk/client-s3';
 import {
+  createAgentReplyProposer,
+  createGoogleGmailMessages,
   createGoogleGmailOAuth,
+  createGoogleGmailSearch,
   createGoogleGmailSender,
   createGoogleGmailWatch,
   createOpenAiClient,
   createOpenAiRfqMailDrafter,
   createOpenAiRfqSuggester,
+  createPrismaAgentRunRepository,
   createPrismaAttachmentRepository,
   createPrismaClassificationRuleRepository,
   createPrismaVendorRepository,
@@ -60,7 +64,16 @@ const rfqSuggester = openAiClient
 const rfqMailDrafter = openAiClient
   ? createOpenAiRfqMailDrafter({ openAiClient, model: config.MODEL_DRAFT_RFQ })
   : undefined;
-if (!openAiClient) console.warn('OPENAI_API_KEY unset: RFQ suggestions and drafts disabled');
+const agentReplyProposer = openAiClient
+  ? createAgentReplyProposer({
+      openAiClient,
+      model: config.MODEL_AGENT,
+      gmailMessages: createGoogleGmailMessages(),
+      gmailSearch: createGoogleGmailSearch(),
+    })
+  : undefined;
+if (!openAiClient)
+  console.warn('OPENAI_API_KEY unset: RFQ suggestions, drafts and the copilot disabled');
 const expressApp = createAppInstance({
   config,
   tenantRepository: createPrismaTenantRepository(prismaClient),
@@ -74,6 +87,8 @@ const expressApp = createAppInstance({
   sentMailRepository: createPrismaSentMailRepository(prismaClient),
   rfqRepository: createPrismaRfqRepository(prismaClient),
   signatureImageRepository: createPrismaSignatureImageRepository(prismaClient),
+  agentRunRepository: createPrismaAgentRunRepository(prismaClient),
+  agentReplyProposer,
   signatureImageStore,
   attachmentDownloadUrlSigner,
   rfqSuggester,

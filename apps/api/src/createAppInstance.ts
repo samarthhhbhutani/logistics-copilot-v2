@@ -2,6 +2,8 @@ import express from 'express';
 import type { Express, NextFunction, Request, Response } from 'express';
 import cookieParser from 'cookie-parser';
 import type {
+  AgentReplyProposer,
+  AgentRunRepository,
   AttachmentRepository,
   ClassificationRuleRepository,
   Config,
@@ -53,6 +55,10 @@ export interface AppDependencies {
   sentMailRepository: SentMailRepository;
   rfqRepository: RfqRepository;
   signatureImageRepository: SignatureImageRepository;
+  /** Copilot runs (roadmap 6.2); the routes mount in the next change. */
+  agentRunRepository: AgentRunRepository;
+  /** Runs the copilot for a thread; undefined without an OpenAI key, so its route will answer 503. */
+  agentReplyProposer: AgentReplyProposer | undefined;
   /** Stores signature images in the raw-mail bucket; undefined without one, so image routes answer 503 and mails go out without them. */
   signatureImageStore: SignatureImageStore | undefined;
   /** Presigns S3 download links; undefined when no bucket is configured, so download links answer 503. */

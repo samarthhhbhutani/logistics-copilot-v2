@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { MAX_CLASSIFICATION_RULES_PER_TENANT } from '@lc/core';
 import type {
+  AgentRun,
+  AgentRunRepository,
   AttachmentRepository,
   AttachmentSummary,
   ClassificationRule,
@@ -41,6 +43,7 @@ export function createInMemoryRepositories(): {
   sentMailRepository: SentMailRepository;
   rfqRepository: RfqRepository;
   signatureImageRepository: SignatureImageRepository;
+  agentRunRepository: AgentRunRepository;
   /** Seeds the inbox list directly; the processor's insert path is not part of the API. Detail fields default to empty. */
   addEmail(
     email: Omit<EmailSummary, 'classification'> &
@@ -69,6 +72,7 @@ export function createInMemoryRepositories(): {
   const sentMails: (SentMail & { mailboxId: string; tenantId: string })[] = [];
   const rfqs: (Rfq & { mailboxId: string; tenantId: string })[] = [];
   const signatureImages: (SignatureImage & { mailboxId: string; tenantId: string })[] = [];
+  const agentRuns: (AgentRun & { mailboxId: string; tenantId: string })[] = [];
 
   function emailsInScope({ mailboxId, tenantId }: { mailboxId: string; tenantId: string }) {
     return emails.filter((email) => email.mailboxId === mailboxId && email.tenantId === tenantId);
@@ -107,6 +111,27 @@ export function createInMemoryRepositories(): {
     );
     if (!sentMail) return { moved: false };
     Object.assign(sentMail, changes, { status: transition.to, updatedAt: new Date() });
+    return { moved: true };
+  }
+
+  function agentRunInScope(scope: { mailboxId: string; tenantId: string }, agentRunId: string) {
+    return agentRuns.find(
+      (candidate) =>
+        candidate.id === agentRunId &&
+        candidate.mailboxId === scope.mailboxId &&
+        candidate.tenantId === scope.tenantId,
+    );
+  }
+  /** Same guard as the Prisma repository: only a running row moves. */
+  async function finishAgentRun(
+    scope: { mailboxId: string; tenantId: string },
+    agentRunId: string,
+    changes: Pick<AgentRun, 'status' | 'toolCalls' | 'usage'> &
+      Partial<Pick<AgentRun, 'proposal' | 'errorCode'>>,
+  ): Promise<{ moved: boolean }> {
+    const run = agentRunInScope(scope, agentRunId);
+    if (!run || run.status !== 'running') return { moved: false };
+    Object.assign(run, changes, { finishedAt: new Date() });
     return { moved: true };
   }
 
@@ -350,6 +375,7 @@ export function createInMemoryRepositories(): {
     addEmail(email) {
       emails.push({
         ccRecipients: [],
+        gmailMessageId: `gmail-${email.id}`,
         rfcMessageId: null,
         bodyText: '',
         bodyHtml: null,
@@ -493,6 +519,55 @@ export function createInMemoryRepositories(): {
           { from: 'sending', to: 'sent' },
           { ...gmailIds, errorCode: null },
         );
+      },
+    },
+    agentRunRepository: {
+      async create(scope, run) {
+        const created: AgentRun & { mailboxId: string; tenantId: string } = {
+          ...scope,
+          id: randomUUID(),
+          emailId: run.emailId,
+          gmailThreadId: run.gmailThreadId,
+          instruction: run.instruction,
+          status: 'running',
+          proposal: null,
+          toolCalls: [],
+          model: run.model,
+          promptVersion: run.promptVersion,
+          usage: { inputTokens: 0, outputTokens: 0 },
+          errorCode: null,
+          createdAt: new Date(),
+          finishedAt: null,
+        };
+        agentRuns.push(created);
+        return stripRunScope(created);
+      },
+      async findAgentRun(scope, agentRunId) {
+        const run = agentRunInScope(scope, agentRunId);
+        return run ? stripRunScope(run) : null;
+      },
+      async listForThread(scope, gmailThreadId, limit) {
+        return agentRuns
+          .filter(
+            (run) =>
+              run.mailboxId === scope.mailboxId &&
+              run.tenantId === scope.tenantId &&
+              run.gmailThreadId === gmailThreadId,
+          )
+          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+          .slice(0, limit)
+          .map(stripRunScope);
+      },
+      markProposed(scope, agentRunId, { toolCalls, usage, proposal }) {
+        return finishAgentRun(scope, agentRunId, {
+          status: 'proposed',
+          toolCalls,
+          usage,
+          proposal,
+        });
+      },
+      markFailed(scope, agentRunId, { toolCalls, usage, errorCode }) {
+        return finishAgentRun(scope, agentRunId, { status: 'failed', toolCalls, usage, errorCode });
       },
     },
     signatureImageRepository: {
@@ -652,6 +727,24 @@ export function createInMemoryRepositories(): {
         }
       },
     },
+  };
+}
+
+function stripRunScope(run: AgentRun & { mailboxId: string; tenantId: string }): AgentRun {
+  return {
+    id: run.id,
+    emailId: run.emailId,
+    gmailThreadId: run.gmailThreadId,
+    instruction: run.instruction,
+    status: run.status,
+    proposal: run.proposal,
+    toolCalls: [...run.toolCalls],
+    model: run.model,
+    promptVersion: run.promptVersion,
+    usage: { ...run.usage },
+    errorCode: run.errorCode,
+    createdAt: run.createdAt,
+    finishedAt: run.finishedAt,
   };
 }
 
