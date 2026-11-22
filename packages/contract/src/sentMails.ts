@@ -20,6 +20,8 @@ export const sendReplyRequestSchema = z.object({
   cc: z.array(recipientSchema).max(MAX_REPLY_CC_RECIPIENTS).default([]),
 });
 export type SendReplyRequest = z.infer<typeof sendReplyRequestSchema>;
+/** What a client sends: `cc` may be left out. */
+export type SendReplyBody = z.input<typeof sendReplyRequestSchema>;
 
 export const sentMailKindSchema = z.enum(['reply', 'rfq']);
 export const sentMailStatusSchema = z.enum(['pending', 'sending', 'sent', 'failed']);

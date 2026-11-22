@@ -6,7 +6,7 @@ import {
   countReachableContacts,
   countRepliedContacts,
   countRetryableMails,
-  describeRfqMailStatus,
+  describeSentMailStatus,
   mailTextsForSend,
   rfqProgressLabel,
 } from './rfqSend.js';
@@ -68,29 +68,29 @@ describe('mailTextsForSend', () => {
   });
 });
 
-describe('describeRfqMailStatus', () => {
+describe('describeSentMailStatus', () => {
   it('maps each status and the known failure codes to operator wording', () => {
-    expect(describeRfqMailStatus(mail('sent'))).toEqual({
+    expect(describeSentMailStatus(mail('sent'))).toEqual({
       tone: 'sent',
       label: 'Sent',
       detail: null,
     });
-    expect(describeRfqMailStatus(mail('sending')).tone).toBe('sending');
-    expect(describeRfqMailStatus(mail('pending'))).toMatchObject({
+    expect(describeSentMailStatus(mail('sending')).tone).toBe('sending');
+    expect(describeSentMailStatus(mail('pending'))).toMatchObject({
       tone: 'waiting',
       label: 'Not sent yet',
     });
-    expect(describeRfqMailStatus(mail('failed', 'invalid_grant')).detail).toContain('reconnected');
-    expect(describeRfqMailStatus(mail('failed', 'send_unconfirmed')).detail).toContain(
+    expect(describeSentMailStatus(mail('failed', 'invalid_grant')).detail).toContain('reconnected');
+    expect(describeSentMailStatus(mail('failed', 'send_unconfirmed')).detail).toContain(
       'did not confirm',
     );
-    expect(describeRfqMailStatus(mail('failed', 'send_unverifiable')).detail).toContain(
+    expect(describeSentMailStatus(mail('failed', 'send_unverifiable')).detail).toContain(
       'Sent folder',
     );
-    expect(describeRfqMailStatus(mail('failed', 'odd_code')).detail).toBe(
+    expect(describeSentMailStatus(mail('failed', 'odd_code')).detail).toBe(
       'Gmail refused the send (odd_code).',
     );
-    expect(describeRfqMailStatus(mail('failed')).detail).toBe('Gmail refused the send.');
+    expect(describeSentMailStatus(mail('failed')).detail).toBe('Gmail refused the send.');
   });
 });
 

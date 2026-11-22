@@ -9,7 +9,7 @@ import {
   countReachableContacts,
   countRepliedContacts,
   countRetryableMails,
-  describeRfqMailStatus,
+  describeSentMailStatus,
 } from './rfqSend.js';
 import type { RfqMailTone } from './rfqSend.js';
 
@@ -75,7 +75,7 @@ export function RfqSendStatus({
       </h3>
       <ul className="rfqMailStatusList">
         {mails.map((mail) => {
-          const view = describeRfqMailStatus(mail);
+          const view = describeSentMailStatus(mail);
           const Icon = TONE_ICONS[view.tone];
           const recipient = mail.toRecipients[0];
           return (
