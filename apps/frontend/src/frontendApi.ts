@@ -14,12 +14,17 @@ import {
   gmailConnectResponseSchema,
   listEmailsResponseSchema,
   mailboxResponseSchema,
+  replyAttachmentResponseSchema,
   rfqSuggestionResponseSchema,
   sendReplyFailedResponseSchema,
   sendRfqResponseSchema,
   sentMailResponseSchema,
   sessionResponseSchema,
   signatureImageResponseSchema,
+  hasGmailBlockedExtension,
+  REPLY_ATTACHMENT_MAX_BYTES,
+  REPLY_ATTACHMENTS_MAX_PER_REPLY,
+  REPLY_ATTACHMENTS_MAX_TOTAL_BYTES,
   SIGNATURE_IMAGE_CONTENT_TYPES,
   SIGNATURE_IMAGE_MAX_BYTES,
   SIGNATURE_IMAGES_MAX_PER_MAILBOX,
@@ -262,6 +267,45 @@ export const frontendApi = {
   async deleteSignatureImage(session: SessionResponse, imageId: string, signal?: AbortSignal) {
     await requestJson(
       `/mailbox/signature/images/${encodeURIComponent(imageId)}`,
+      { parse: () => undefined },
+      { method: 'DELETE', signal },
+    );
+    requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
+  },
+  /**
+   * Uploads one file for a reply as raw bytes, as the operator picks it; the send names the returned
+   * id. Size and a Gmail-blocked name are refused here first with the server's own codes, so a
+   * 50 MB video never leaves the browser. Never replayed: a second copy would be an orphan upload.
+   */
+  async uploadReplyAttachment(session: SessionResponse, file: File, signal?: AbortSignal) {
+    if (file.size === 0) throw new FrontendApiError(400, 'empty_attachment');
+    if (file.size > REPLY_ATTACHMENT_MAX_BYTES) {
+      throw new FrontendApiError(413, 'attachment_too_large');
+    }
+    const fileName = file.name.trim() || 'attachment';
+    if (hasGmailBlockedExtension(fileName)) throw new FrontendApiError(415, 'blocked_file_type');
+    const attachment = await requestJson(
+      `/mailbox/reply-attachments?${new URLSearchParams({ fileName })}`,
+      replyAttachmentResponseSchema,
+      {
+        method: 'POST',
+        // A browser leaves `type` empty for unknown extensions; the server then types the bytes itself.
+        headers: { 'Content-Type': file.type || 'application/octet-stream' },
+        body: file,
+        signal,
+      },
+    );
+    requireMatchingSession(await requestJson('/me', sessionResponseSchema, { signal }), session);
+    return attachment;
+  },
+  /** Removes an upload no reply has been sent with; 404 once one has. */
+  async deleteReplyAttachment(
+    session: SessionResponse,
+    attachmentId: string,
+    signal?: AbortSignal,
+  ) {
+    await requestJson(
+      `/mailbox/reply-attachments/${encodeURIComponent(attachmentId)}`,
       { parse: () => undefined },
       { method: 'DELETE', signal },
     );
@@ -614,6 +658,19 @@ export function errorMessage(error: unknown): string {
       return 'This image is still in your signature. Remove it from the signature first.';
     if (error.code === 'agent_unavailable')
       return 'The copilot is not available right now. Write the reply by hand or try again later.';
+    if (error.code === 'empty_attachment') return 'That file is empty and cannot be attached.';
+    if (error.code === 'attachment_too_large')
+      return `That file is larger than ${REPLY_ATTACHMENT_MAX_BYTES / (1024 * 1024)} MB. Share it another way or attach a smaller file.`;
+    if (error.code === 'blocked_file_type')
+      return 'Gmail does not deliver files of this type. Zip it with a different name or share it another way.';
+    if (error.code === 'reply_attachments_unavailable')
+      return 'Attachments are temporarily unavailable. Send without files or try again later.';
+    if (error.code === 'attachment_not_found' || error.code === 'attachment_already_sent')
+      return 'An attached file is no longer available. Remove it and attach it again.';
+    if (error.code === 'attachments_too_large')
+      return `Attachments total more than ${REPLY_ATTACHMENTS_MAX_TOTAL_BYTES / (1024 * 1024)} MB. Remove a file to send.`;
+    if (error.code === 'attachment_limit_reached')
+      return `A reply can carry at most ${REPLY_ATTACHMENTS_MAX_PER_REPLY} files.`;
   }
   return 'We could not reach your workspace. Check your connection and try again.';
 }
