@@ -32,6 +32,7 @@ function mail(
     bodyText: 'Dear Ravi',
     gmailMessageId: null,
     errorCode,
+    attachments: [],
     createdAt: '2026-11-16T00:00:00.000Z',
     updatedAt: '2026-11-16T00:00:00.000Z',
   };

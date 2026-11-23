@@ -389,6 +389,7 @@ describe('scoped mail 404 after an account switch', () => {
       bodyText: 'Hello',
       gmailMessageId: 'm1',
       errorCode: null,
+      attachments: [],
       createdAt: '2026-11-16T00:00:00.000Z',
       updatedAt: '2026-11-16T00:00:00.000Z',
       replies: { count: 0, latest: null },
@@ -1125,6 +1126,7 @@ describe('replies', () => {
     bodyText: 'Dear Ravi',
     gmailMessageId: 'gm-9',
     errorCode: null,
+    attachments: [],
     createdAt: '2026-11-22T10:00:00.000Z',
     updatedAt: '2026-11-22T10:00:01.000Z',
   };

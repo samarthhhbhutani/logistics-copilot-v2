@@ -1,5 +1,7 @@
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
+import { REPLY_ATTACHMENT_MAX_BYTES } from '@lc/contract';
+import type { ReplyAttachmentResponse } from '@lc/contract';
 import { testTenantBody } from '../tenantFixture.test-helper.js';
 import { tinyPng, uploadSignatureImage } from '../signatureImageFixture.test-helper.js';
 import { createTestApp, testMailboxEmail } from '../testAppInstance.test-helper.js';
@@ -285,6 +287,224 @@ describe('POST /v1/mailbox/emails/:emailId/replies', () => {
       ).status,
     ).toBe(400);
     expect((await agent.post(repliesPath(inboxEmailId)).send(body)).status).toBe(401);
+    expect(testApp.gmailSender.sentMessages).toHaveLength(0);
+  });
+});
+
+const tinyPdf = Buffer.concat([Buffer.from('%PDF-1.7\n', 'ascii'), Buffer.alloc(16, 0)]);
+const csv = Buffer.from('container,eta\nMSKU1234567,2026-12-01\n', 'utf8');
+
+async function uploadReplyAttachment(
+  testApp: TestApp,
+  cookie: string,
+  content: Buffer,
+  fileName: string,
+  contentType: string,
+): Promise<ReplyAttachmentResponse> {
+  const response = await request(testApp.app)
+    .post('/v1/mailbox/reply-attachments')
+    .query({ fileName })
+    .set('Cookie', cookie)
+    .set('Content-Type', contentType)
+    .send(content);
+  if (response.status !== 201) {
+    throw new Error(`upload failed: ${response.status} ${JSON.stringify(response.body)}`);
+  }
+  return response.body;
+}
+
+describe('POST /v1/mailbox/emails/:emailId/replies with attachmentIds', () => {
+  it('sends the uploads as attachments in upload order, stamps them with the row, and lists them on the response', async () => {
+    const testApp = createTestApp();
+    const { cookie, ...scope } = await connectedMailbox(testApp);
+    const rateCard = await uploadReplyAttachment(
+      testApp,
+      cookie,
+      tinyPdf,
+      'Rate card.pdf',
+      'application/pdf',
+    );
+    const eta = await uploadReplyAttachment(testApp, cookie, csv, 'eta.csv', 'text/csv');
+
+    const response = await request(testApp.app)
+      .post(repliesPath(inboxEmailId))
+      .set('Cookie', cookie)
+      .send({ sentMailId, text: 'Rates attached.', attachmentIds: [eta.id, rateCard.id] });
+
+    expect(response.status).toBe(201);
+    expect(response.body.attachments).toEqual([rateCard, eta]);
+    const [sent] = testApp.gmailSender.sentMessages;
+    expect(sent.message.attachments).toEqual([
+      { content: tinyPdf, contentType: 'application/pdf', fileName: 'Rate card.pdf' },
+      { content: csv, contentType: 'text/csv', fileName: 'eta.csv' },
+    ]);
+    expect(
+      await testApp.repositories.replyAttachmentRepository.listReplyAttachmentsOfSentMail(
+        scope,
+        sentMailId,
+      ),
+    ).toHaveLength(2);
+    // Stamped files can no longer be deleted from the composer.
+    expect(
+      (
+        await request(testApp.app)
+          .delete(`/v1/mailbox/reply-attachments/${rateCard.id}`)
+          .set('Cookie', cookie)
+      ).status,
+    ).toBe(404);
+
+    // A replay keeps the files it was stamped with, whatever the body says now.
+    const replay = await request(testApp.app)
+      .post(repliesPath(inboxEmailId))
+      .set('Cookie', cookie)
+      .send({ sentMailId, text: 'Rates attached.', attachmentIds: [] });
+    expect(replay.status).toBe(200);
+    expect(replay.body.attachments).toEqual([rateCard, eta]);
+    expect(testApp.gmailSender.sentMessages).toHaveLength(1);
+  });
+
+  it('resumes a row left pending before the stamp with the files the body names', async () => {
+    const testApp = createTestApp();
+    const { cookie, ...scope } = await connectedMailbox(testApp);
+    const rateCard = await uploadReplyAttachment(
+      testApp,
+      cookie,
+      tinyPdf,
+      'Rate card.pdf',
+      'application/pdf',
+    );
+    await testApp.repositories.sentMailRepository.createPending(scope, {
+      id: sentMailId,
+      kind: 'reply',
+      inReplyToEmailId: inboxEmailId,
+      gmailThreadId: 'thread-1',
+      rfcMessageId: `<${sentMailId}@bhatia.example>`,
+      toRecipients: [{ name: 'Ravi Kumar', address: 'ravi@acme.com' }],
+      ccRecipients: [],
+      subject: 'Re: RFQ 123: Mumbai to Rotterdam',
+      bodyText: 'Rates attached.',
+    });
+
+    const resumed = await request(testApp.app)
+      .post(repliesPath(inboxEmailId))
+      .set('Cookie', cookie)
+      .send({ sentMailId, text: 'Rates attached.', attachmentIds: [rateCard.id] });
+    expect(resumed.status).toBe(201);
+    expect(resumed.body.attachments).toEqual([rateCard]);
+    expect(testApp.gmailSender.sentMessages[0].message.attachments).toHaveLength(1);
+  });
+
+  it('sends a reply without attachmentIds exactly as before', async () => {
+    const testApp = createTestApp();
+    const { cookie } = await connectedMailbox(testApp);
+    const response = await request(testApp.app)
+      .post(repliesPath(inboxEmailId))
+      .set('Cookie', cookie)
+      .send({ sentMailId, text: 'Rates attached.' });
+    expect(response.status).toBe(201);
+    expect(response.body.attachments).toEqual([]);
+    expect(testApp.gmailSender.sentMessages[0].message).not.toHaveProperty('attachments');
+  });
+
+  it('refuses an unknown or foreign id, a file already on another mail, a total past the limit, duplicates, and files without a bucket', async () => {
+    const testApp = createTestApp();
+    const { cookie, ...scope } = await connectedMailbox(testApp);
+    const agent = request(testApp.app);
+    const rateCard = await uploadReplyAttachment(
+      testApp,
+      cookie,
+      tinyPdf,
+      'Rate card.pdf',
+      'application/pdf',
+    );
+    const send = (sentMailIdForSend: string, attachmentIds: string[]) =>
+      agent
+        .post(repliesPath(inboxEmailId))
+        .set('Cookie', cookie)
+        .send({ sentMailId: sentMailIdForSend, text: 'Rates attached.', attachmentIds });
+
+    const unknown = await send(sentMailId, ['00000000-0000-4000-8000-00000000dead']);
+    expect(unknown.status).toBe(409);
+    expect(unknown.body.error).toBe('attachment_not_found');
+
+    const duplicate = await send(sentMailId, [rateCard.id, rateCard.id]);
+    expect(duplicate.status).toBe(400);
+
+    const otherMailId = '22222222-2222-4222-8222-222222222222';
+    await testApp.repositories.replyAttachmentRepository.attachToSentMail(
+      scope,
+      [rateCard.id],
+      otherMailId,
+    );
+    const alreadySent = await send(sentMailId, [rateCard.id]);
+    expect(alreadySent.status).toBe(409);
+    expect(alreadySent.body.error).toBe('attachment_already_sent');
+
+    const big = await uploadReplyAttachment(
+      testApp,
+      cookie,
+      Buffer.alloc(REPLY_ATTACHMENT_MAX_BYTES, 1),
+      'big-1.bin',
+      'application/octet-stream',
+    );
+    const bigger = await uploadReplyAttachment(
+      testApp,
+      cookie,
+      Buffer.alloc(REPLY_ATTACHMENT_MAX_BYTES, 2),
+      'big-2.bin',
+      'application/octet-stream',
+    );
+    const tooLarge = await send(sentMailId, [big.id, bigger.id]);
+    expect(tooLarge.status).toBe(413);
+    expect(tooLarge.body.error).toBe('attachments_too_large');
+
+    // Nothing above reached the write-ahead row or Gmail.
+    expect(
+      await testApp.repositories.sentMailRepository.findSentMail(scope, sentMailId),
+    ).toBeUndefined();
+    expect(testApp.gmailSender.sentMessages).toHaveLength(0);
+
+    const noBucket = createTestApp({ replyAttachmentsEnabled: false });
+    const session = await connectedMailbox(noBucket);
+    const unavailable = await request(noBucket.app)
+      .post(repliesPath(inboxEmailId))
+      .set('Cookie', session.cookie)
+      .send({ sentMailId, text: 'Rates attached.', attachmentIds: [rateCard.id] });
+    expect(unavailable.status).toBe(503);
+    expect(unavailable.body.error).toBe('reply_attachments_unavailable');
+  });
+
+  it('fails the fresh row and answers 409 when a file disappears between the check and the stamp', async () => {
+    const testApp = createTestApp();
+    const { cookie, ...scope } = await connectedMailbox(testApp);
+    const rateCard = await uploadReplyAttachment(
+      testApp,
+      cookie,
+      tinyPdf,
+      'Rate card.pdf',
+      'application/pdf',
+    );
+    const repository = testApp.repositories.replyAttachmentRepository;
+    const findReplyAttachments = repository.findReplyAttachments.bind(repository);
+    repository.findReplyAttachments = async (findScope, attachmentIds) => {
+      const found = await findReplyAttachments(findScope, attachmentIds);
+      // The composer's delete lands right after the send's check.
+      await repository.deleteUnsentReplyAttachment(findScope, rateCard.id);
+      return found;
+    };
+
+    const response = await request(testApp.app)
+      .post(repliesPath(inboxEmailId))
+      .set('Cookie', cookie)
+      .send({ sentMailId, text: 'Rates attached.', attachmentIds: [rateCard.id] });
+    expect(response.status).toBe(409);
+    expect(response.body.error).toBe('attachment_not_found');
+    expect(
+      await testApp.repositories.sentMailRepository.findSentMail(scope, sentMailId),
+    ).toMatchObject({
+      status: 'failed',
+      errorCode: 'attachment_not_found',
+    });
     expect(testApp.gmailSender.sentMessages).toHaveLength(0);
   });
 });

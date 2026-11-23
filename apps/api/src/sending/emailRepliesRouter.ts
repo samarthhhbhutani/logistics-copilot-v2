@@ -13,6 +13,7 @@ import type {
   EncryptionUtil,
   GmailSender,
   MailboxConnectionRepository,
+  ReplyAttachmentRepository,
   SentMailRepository,
   SignatureImageRepository,
   TenantRepository,
@@ -23,6 +24,8 @@ import { getSession } from '../auth/requireSession.js';
 import { parseIdOr404 } from '../http/parseIdOr404.js';
 import { parseRequestBody } from '../http/parseRequestBody.js';
 import { loadSendingMailbox } from './loadSendingMailbox.js';
+import { checkPickedReplyAttachments, readOutboundAttachments } from './pickedReplyAttachments.js';
+import type { ReplyAttachmentStore } from './replyAttachmentStore.js';
 import type { SignatureImageStore } from '../signature/signatureImageStore.js';
 import { toSentMailResponse } from './sentMailResponses.js';
 
@@ -36,19 +39,28 @@ export interface EmailRepliesRouterDependencies {
   signatureImageRepository: SignatureImageRepository;
   /** Undefined without a bucket: HTML signatures then go out without their images. */
   signatureImageStore: SignatureImageStore | undefined;
+  replyAttachmentRepository: ReplyAttachmentRepository;
+  /** Undefined without a bucket: a reply naming attachments then answers 503. */
+  replyAttachmentStore: ReplyAttachmentStore | undefined;
   requireSession: RequestHandler;
 }
 
 /**
  * Replying to an inbound mail from the signed-in mailbox, mounted at /v1/mailbox/emails.
- *   POST /:emailId/replies  { sentMailId, text, cc? }
+ *   POST /:emailId/replies  { sentMailId, text, cc?, attachmentIds? }
  *     201 SentMailResponse (sent)            404 mail outside the session's mailbox and tenant
  *     200 SentMailResponse (same sentMailId  409 not_inbound | no_sender | mailbox_not_connected |
  *         seen before: idempotent replay,        google_client_not_configured | sent_mail_id_taken
  *         body differences ignored)
  *     502 { error: send_failed, sentMail }   sentMail.status is `failed` when Gmail rejected it (4xx) or
  *                                            `sending` when the outcome is unknown (timeout, 5xx)
+ *     409 attachment_not_found | attachment_already_sent, 413 attachments_too_large,
+ *     503 reply_attachments_unavailable: see sendReplyRequestSchema
  *
+ * Attachments are uploads the composer made earlier; the row is stamped on them once it is claimed
+ * for sending, so a crash after Gmail accepted the mail still records what went out. A replayed or
+ * resumed row keeps the files it was stamped with (the body's ids are ignored then); a resumed row
+ * never stamped takes the body's.
  * Write-ahead: the sent_mails row is written before messages.send and moved pending -> sending ->
  * sent | failed, so a timeout or crash can never lose a mail Gmail may have accepted. The reply
  * carries In-Reply-To, References and Gmail's threadId so it lands in the original thread, and
@@ -63,6 +75,8 @@ export function createEmailRepliesRouter({
   encryptionUtil,
   signatureImageRepository,
   signatureImageStore,
+  replyAttachmentRepository,
+  replyAttachmentStore,
   requireSession,
 }: EmailRepliesRouterDependencies): Router {
   const router = express.Router();
@@ -76,6 +90,16 @@ export function createEmailRepliesRouter({
     if (!answeredEmail) throw createHttpError(404, 'not_found');
     if (answeredEmail.gmailLabel !== 'inbox') throw createHttpError(409, 'not_inbound');
     if (!answeredEmail.senderEmail) throw createHttpError(409, 'no_sender');
+    if (replyRequest.attachmentIds.length > 0 && !replyAttachmentStore) {
+      response.status(503).json({ error: 'reply_attachments_unavailable' });
+      return;
+    }
+    await checkPickedReplyAttachments(
+      replyAttachmentRepository,
+      scope,
+      replyRequest.attachmentIds,
+      replyRequest.sentMailId,
+    );
     const { connection, credentials, refreshToken, inlineImages } = await loadSendingMailbox(
       {
         mailboxConnectionRepository,
@@ -115,15 +139,21 @@ export function createEmailRepliesRouter({
     // (crash between the insert and markSending) is resumed: markSending below still lets only one
     // request through.
     if (createResult.outcome === 'already_exists' && createResult.sentMail.status !== 'pending') {
-      response.status(200).json(toSentMailResponse(createResult.sentMail));
+      response
+        .status(200)
+        .json(
+          toSentMailResponse(
+            createResult.sentMail,
+            await replyAttachmentRepository.listReplyAttachmentsOfSentMail(
+              scope,
+              createResult.sentMail.id,
+            ),
+          ),
+        );
       return;
     }
     const pendingSentMail = createResult.sentMail;
 
-    const outboundMessage = {
-      ...buildReplyMessage(pendingSentMail, answeredEmail, threadEmails, connection),
-      inlineImages,
-    };
     const { moved: claimedForSending } = await sentMailRepository.markSending(
       scope,
       pendingSentMail.id,
@@ -131,9 +161,62 @@ export function createEmailRepliesRouter({
     if (!claimedForSending) {
       // Another request with this id is sending right now; report the row as it stands.
       const sentMailNow = await sentMailRepository.findSentMail(scope, pendingSentMail.id);
-      response.status(200).json(toSentMailResponse(sentMailNow ?? pendingSentMail));
+      response
+        .status(200)
+        .json(
+          toSentMailResponse(
+            sentMailNow ?? pendingSentMail,
+            await replyAttachmentRepository.listReplyAttachmentsOfSentMail(
+              scope,
+              pendingSentMail.id,
+            ),
+          ),
+        );
       return;
     }
+
+    // The row is ours and nothing has reached Gmail yet, so a problem with the files fails it
+    // outright (the client mints a new id). Stamping here, before the send, means a crash after
+    // Gmail accepted the mail still records what went out. A resumed row that was stamped earlier
+    // keeps those files; one that never got that far takes the body's.
+    let attachments = await replyAttachmentRepository.listReplyAttachmentsOfSentMail(
+      scope,
+      pendingSentMail.id,
+    );
+    if (attachments.length === 0 && replyRequest.attachmentIds.length > 0) {
+      const stamped = await replyAttachmentRepository.attachToSentMail(
+        scope,
+        replyRequest.attachmentIds,
+        pendingSentMail.id,
+      );
+      if (stamped !== replyRequest.attachmentIds.length) {
+        // A file was deleted or taken by another send between the check above and this write.
+        await sentMailRepository.markFailed(scope, pendingSentMail.id, 'attachment_not_found');
+        throw createHttpError(409, 'attachment_not_found');
+      }
+      attachments = await replyAttachmentRepository.listReplyAttachmentsOfSentMail(
+        scope,
+        pendingSentMail.id,
+      );
+    }
+    if (attachments.length > 0 && !replyAttachmentStore) {
+      // A resumed row names files but this process has no bucket to read them from.
+      await sentMailRepository.markFailed(
+        scope,
+        pendingSentMail.id,
+        'reply_attachments_unavailable',
+      );
+      response.status(503).json({ error: 'reply_attachments_unavailable' });
+      return;
+    }
+
+    const outboundMessage = {
+      ...buildReplyMessage(pendingSentMail, answeredEmail, threadEmails, connection),
+      inlineImages,
+      ...(attachments.length > 0 && replyAttachmentStore
+        ? { attachments: await readOutboundAttachments(replyAttachmentStore, attachments) }
+        : {}),
+    };
 
     let gmailSendResult;
     try {
@@ -163,7 +246,7 @@ export function createEmailRepliesRouter({
       const sentMailAfterFailure = await sentMailRepository.findSentMail(scope, pendingSentMail.id);
       const body: SendReplyFailedResponse = {
         error: 'send_failed',
-        sentMail: toSentMailResponse(sentMailAfterFailure ?? pendingSentMail),
+        sentMail: toSentMailResponse(sentMailAfterFailure ?? pendingSentMail, attachments),
       };
       response.status(502).json(body);
       return;
@@ -175,7 +258,9 @@ export function createEmailRepliesRouter({
     // check: only the markSending winner reaches this line.
     await sentMailRepository.markSent(scope, pendingSentMail.id, gmailSendResult);
     const sentMailAfterSend = await sentMailRepository.findSentMail(scope, pendingSentMail.id);
-    response.status(201).json(toSentMailResponse(sentMailAfterSend ?? pendingSentMail));
+    response
+      .status(201)
+      .json(toSentMailResponse(sentMailAfterSend ?? pendingSentMail, attachments));
   });
 
   return router;

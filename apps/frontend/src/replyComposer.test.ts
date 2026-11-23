@@ -54,6 +54,7 @@ function sentMail(
     bodyText: 'Dear Ravi',
     gmailMessageId: status === 'sent' ? 'gm-9' : null,
     errorCode,
+    attachments: [],
     createdAt: '2026-11-22T10:00:00.000Z',
     updatedAt: '2026-11-22T10:00:01.000Z',
   } satisfies SentMailResponse;
