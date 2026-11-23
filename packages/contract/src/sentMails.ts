@@ -1,4 +1,8 @@
 import { z } from 'zod';
+import {
+  REPLY_ATTACHMENTS_MAX_PER_REPLY,
+  replyAttachmentResponseSchema,
+} from './replyAttachments.js';
 
 export const MAX_REPLY_TEXT_LENGTH = 20_000;
 export const MAX_REPLY_CC_RECIPIENTS = 10;
@@ -18,6 +22,17 @@ export const sendReplyRequestSchema = z.object({
   sentMailId: z.uuid(),
   text: z.string().trim().min(1).max(MAX_REPLY_TEXT_LENGTH),
   cc: z.array(recipientSchema).max(MAX_REPLY_CC_RECIPIENTS).default([]),
+  /**
+   * Uploads (POST /v1/mailbox/reply-attachments) to carry, in the order given. 409
+   * attachment_not_found for an id that is not this mailbox's unsent upload, 409
+   * attachment_already_sent for one on another mail, 413 attachments_too_large past the per-reply
+   * total, 503 reply_attachments_unavailable when files are named but no bucket is configured.
+   */
+  attachmentIds: z
+    .array(z.uuid())
+    .max(REPLY_ATTACHMENTS_MAX_PER_REPLY)
+    .refine((ids) => new Set(ids).size === ids.length, 'attachment ids must be unique')
+    .default([]),
 });
 export type SendReplyRequest = z.infer<typeof sendReplyRequestSchema>;
 /** What a client sends: `cc` may be left out. */
@@ -46,6 +61,8 @@ export const sentMailResponseSchema = z.object({
   gmailMessageId: z.string().nullable(),
   /** GmailApiError code when status is failed; null otherwise. */
   errorCode: z.string().nullable(),
+  /** Files the reply carries, upload order; always empty for an `rfq` mail. */
+  attachments: z.array(replyAttachmentResponseSchema).default([]),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 });
