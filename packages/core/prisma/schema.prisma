@@ -38,6 +38,7 @@ model Tenant {
   classifications             Classification[]
   sentMails                   SentMail[]
   signatureImages             SignatureImage[]
+  replyAttachments            ReplyAttachment[]
   vendors                     Vendor[]
   vendorContacts              VendorContact[]
   rfqs                        Rfq[]
@@ -85,6 +86,7 @@ model Mailbox {
   sentMails             SentMail[]
   rfqs                  Rfq[]
   signatureImages       SignatureImage[]
+  replyAttachments      ReplyAttachment[]
   agentRuns             AgentRun[]
 
   @@index([tenantId])
@@ -400,40 +402,42 @@ model VendorContact {
 /// the idempotency key: a retried request with the same id returns this row instead of sending twice.
 /// rfc_message_id is `<id@mailbox-domain>`, so the SENT copy and any `rfc822msgid:` search find it.
 model SentMail {
-  id               String         @id @db.Uuid
-  tenantId         String         @map("tenant_id") @db.Uuid
-  tenant           Tenant         @relation(fields: [tenantId], references: [id])
-  mailboxId        String         @map("mailbox_id") @db.Uuid
-  mailbox          Mailbox        @relation(fields: [mailboxId], references: [id])
+  id               String            @id @db.Uuid
+  tenantId         String            @map("tenant_id") @db.Uuid
+  tenant           Tenant            @relation(fields: [tenantId], references: [id])
+  mailboxId        String            @map("mailbox_id") @db.Uuid
+  mailbox          Mailbox           @relation(fields: [mailboxId], references: [id])
   kind             SentMailKind
   /// The inbound mail a reply answers; null for mails that start a thread.
-  inReplyToEmailId String?        @map("in_reply_to_email_id") @db.Uuid
-  inReplyToEmail   Email?         @relation("SentMailInReplyTo", fields: [inReplyToEmailId], references: [id])
+  inReplyToEmailId String?           @map("in_reply_to_email_id") @db.Uuid
+  inReplyToEmail   Email?            @relation("SentMailInReplyTo", fields: [inReplyToEmailId], references: [id])
   /// Inbound mails that answered this one (roadmap 5.1); set by the processor, read by GET rfq.
-  repliesReceived  Email[]        @relation("EmailAnswersSentMail")
+  repliesReceived  Email[]           @relation("EmailAnswersSentMail")
   /// The RFQ and the vendor an `rfq` mail was sent for; both null for a reply.
-  rfqId            String?        @map("rfq_id") @db.Uuid
-  rfq              Rfq?           @relation(fields: [rfqId], references: [id])
-  vendorId         String?        @map("vendor_id") @db.Uuid
-  vendor           Vendor?        @relation(fields: [vendorId], references: [id])
+  rfqId            String?           @map("rfq_id") @db.Uuid
+  rfq              Rfq?              @relation(fields: [rfqId], references: [id])
+  vendorId         String?           @map("vendor_id") @db.Uuid
+  vendor           Vendor?           @relation(fields: [vendorId], references: [id])
   /// The person the `rfq` mail went to; with rfqId it keys one mail per contact per RFQ.
-  vendorContactId  String?        @map("vendor_contact_id") @db.Uuid
-  vendorContact    VendorContact? @relation(fields: [vendorContactId], references: [id])
+  vendorContactId  String?           @map("vendor_contact_id") @db.Uuid
+  vendorContact    VendorContact?    @relation(fields: [vendorContactId], references: [id])
   /// Known up front for a reply; filled from Gmail's response for a new thread.
-  gmailThreadId    String?        @map("gmail_thread_id")
-  rfcMessageId     String         @map("rfc_message_id")
+  gmailThreadId    String?           @map("gmail_thread_id")
+  rfcMessageId     String            @map("rfc_message_id")
   /// EmailAddress[] ({ name, address }), the same shape as emails.to_recipients.
-  toRecipients     Json           @map("to_recipients")
-  ccRecipients     Json           @map("cc_recipients")
+  toRecipients     Json              @map("to_recipients")
+  ccRecipients     Json              @map("cc_recipients")
   subject          String
   /// What the operator wrote; the signature and any safe-mode note are added at compose time, not stored.
-  bodyText         String         @map("body_text")
-  status           SentMailStatus @default(PENDING)
-  gmailMessageId   String?        @map("gmail_message_id")
+  bodyText         String            @map("body_text")
+  status           SentMailStatus    @default(PENDING)
+  gmailMessageId   String?           @map("gmail_message_id")
   /// GmailApiError code of the failed attempt; null unless status is failed.
-  errorCode        String?        @map("error_code")
-  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt        DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  errorCode        String?           @map("error_code")
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  /// Files the operator attached to this reply (phase 6.5).
+  attachments      ReplyAttachment[]
 
   @@unique([mailboxId, rfcMessageId])
   @@unique([rfqId, vendorContactId])
@@ -441,6 +445,31 @@ model SentMail {
   @@index([rfqId])
   @@index([tenantId])
   @@map("sent_mails")
+}
+
+/// A file the operator uploaded for a reply. Uploaded before the send (the composer shows it as a
+/// chip), stamped with the sent_mails row when the reply is created; a row still null there is an
+/// upload nobody sent (removed by the operator, or abandoned) and may be deleted.
+model ReplyAttachment {
+  id          String    @id @db.Uuid
+  tenantId    String    @map("tenant_id") @db.Uuid
+  tenant      Tenant    @relation(fields: [tenantId], references: [id])
+  mailboxId   String    @map("mailbox_id") @db.Uuid
+  mailbox     Mailbox   @relation(fields: [mailboxId], references: [id])
+  sentMailId  String?   @map("sent_mail_id") @db.Uuid
+  sentMail    SentMail? @relation(fields: [sentMailId], references: [id])
+  fileName    String    @map("file_name")
+  contentType String    @map("content_type")
+  sizeBytes   Int       @map("size_bytes")
+  /// Hex digest of the bytes, as on inbound attachments.
+  sha256      String
+  /// <tenant_id>/outbound/<mailbox_id>/<id> in the raw-mail bucket.
+  s3Key       String    @map("s3_key")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([mailboxId])
+  @@index([sentMailId])
+  @@map("reply_attachments")
 }
 
 /// running: the loop is talking to the model. proposed: a draft reply is on the row. failed: the
