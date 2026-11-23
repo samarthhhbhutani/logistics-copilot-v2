@@ -15,6 +15,7 @@ import type {
   GmailWatch,
   MailboxConnectionRepository,
   MailboxCredentialsRepository,
+  ReplyAttachmentRepository,
   RfqMailDrafter,
   RfqRepository,
   RfqSuggester,
@@ -39,6 +40,8 @@ import { createRfqDraftsRouter } from './rfqs/rfqDraftsRouter.js';
 import { createRfqsRouter } from './rfqs/rfqsRouter.js';
 import { createRfqSuggestionsRouter } from './rfqs/rfqSuggestionsRouter.js';
 import { createEmailRepliesRouter } from './sending/emailRepliesRouter.js';
+import { createReplyAttachmentsRouter } from './sending/replyAttachmentsRouter.js';
+import type { ReplyAttachmentStore } from './sending/replyAttachmentStore.js';
 import { createSignatureImagesRouter } from './signature/signatureImagesRouter.js';
 import type { SignatureImageStore } from './signature/signatureImageStore.js';
 import { createTenantsRouter } from './tenants/tenantsRouter.js';
@@ -56,11 +59,14 @@ export interface AppDependencies {
   sentMailRepository: SentMailRepository;
   rfqRepository: RfqRepository;
   signatureImageRepository: SignatureImageRepository;
+  replyAttachmentRepository: ReplyAttachmentRepository;
   agentRunRepository: AgentRunRepository;
   /** Runs the copilot for a thread; undefined without an OpenAI key, so POST /agent/runs answers 503. */
   agentReplyProposer: AgentReplyProposer | undefined;
   /** Stores signature images in the raw-mail bucket; undefined without one, so image routes answer 503 and mails go out without them. */
   signatureImageStore: SignatureImageStore | undefined;
+  /** Stores the files an operator attaches to a reply in the raw-mail bucket; undefined without one, so the upload routes answer 503. */
+  replyAttachmentStore: ReplyAttachmentStore | undefined;
   /** Presigns S3 download links; undefined when no bucket is configured, so download links answer 503. */
   attachmentDownloadUrlSigner: AttachmentDownloadUrlSigner | undefined;
   /** Reads shipment details out of a customer mail; undefined without an OpenAI key, so the route answers 503. */
@@ -101,9 +107,11 @@ export function createAppInstance({
   sentMailRepository,
   rfqRepository,
   signatureImageRepository,
+  replyAttachmentRepository,
   agentRunRepository,
   agentReplyProposer,
   signatureImageStore,
+  replyAttachmentStore,
   attachmentDownloadUrlSigner,
   rfqSuggester,
   attachmentContentReader,
@@ -191,6 +199,14 @@ export function createAppInstance({
       encryptionUtil,
       signatureImageRepository,
       signatureImageStore,
+      requireSession,
+    }),
+  );
+  v1Router.use(
+    '/mailbox/reply-attachments',
+    createReplyAttachmentsRouter({
+      replyAttachmentRepository,
+      replyAttachmentStore,
       requireSession,
     }),
   );
