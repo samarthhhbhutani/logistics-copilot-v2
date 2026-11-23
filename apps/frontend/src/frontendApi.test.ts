@@ -1015,6 +1015,91 @@ describe('signature and its images', () => {
   });
 });
 
+describe('reply attachments', () => {
+  const attachment = {
+    id: '00000000-0000-4000-8000-00000000000a',
+    fileName: 'Rate card.pdf',
+    contentType: 'application/pdf',
+    sizeBytes: 3,
+    createdAt: '2026-11-22T10:00:00.000Z',
+  };
+
+  it('uploads the raw bytes with the file type and name, octet-stream when the browser has no type', async () => {
+    const fetchMock = mockResponses(attachment, session);
+    const file = new File([new Uint8Array([1, 2, 3])], 'Rate card.pdf', {
+      type: 'application/pdf',
+    });
+    expect(await frontendApi.uploadReplyAttachment(session, file)).toEqual(attachment);
+    const [path, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(path).toBe('/v1/mailbox/reply-attachments?fileName=Rate+card.pdf');
+    expect(options).toMatchObject({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/pdf' },
+      body: file,
+    });
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/v1/me');
+
+    const untyped = mockResponses(attachment, session);
+    await frontendApi.uploadReplyAttachment(session, new File([new Uint8Array(3)], 'eta.dat'));
+    expect(untyped.mock.calls[0]?.[1]).toMatchObject({
+      headers: { 'Content-Type': 'application/octet-stream' },
+    });
+  });
+
+  it('refuses an empty, oversized or Gmail-blocked file before any request is made', async () => {
+    const fetchMock = mockResponses(attachment, session);
+    await expect(
+      frontendApi.uploadReplyAttachment(session, new File([], 'empty.txt')),
+    ).rejects.toMatchObject({ status: 400, code: 'empty_attachment' });
+    const huge = new File([new Uint8Array(10 * 1024 * 1024 + 1)], 'video.mp4');
+    const tooLarge = frontendApi.uploadReplyAttachment(session, huge);
+    await expect(tooLarge).rejects.toMatchObject({ status: 413, code: 'attachment_too_large' });
+    await expect(tooLarge.catch((error: unknown) => errorMessage(error))).resolves.toBe(
+      'That file is larger than 10 MB. Share it another way or attach a smaller file.',
+    );
+    const blocked = frontendApi.uploadReplyAttachment(session, new File(['x'], 'Setup.EXE'));
+    await expect(blocked).rejects.toMatchObject({ status: 415, code: 'blocked_file_type' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('does not replay an upload whose first attempt failed with a retryable status', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 503 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(
+      frontendApi.uploadReplyAttachment(session, new File(['x'], 'eta.csv', { type: 'text/csv' })),
+    ).rejects.toMatchObject({ status: 503 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('deletes an upload, accepts the empty response and checks the session', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(session)));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(
+      frontendApi.deleteReplyAttachment(session, attachment.id),
+    ).resolves.toBeUndefined();
+    expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([
+      `/v1/mailbox/reply-attachments/${attachment.id}`,
+      '/v1/me',
+    ]);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'DELETE' });
+  });
+
+  it('words the send refusals for the composer', () => {
+    expect(errorMessage(new FrontendApiError(409, 'attachment_not_found'))).toBe(
+      'An attached file is no longer available. Remove it and attach it again.',
+    );
+    expect(errorMessage(new FrontendApiError(413, 'attachments_too_large'))).toBe(
+      'Attachments total more than 18 MB. Remove a file to send.',
+    );
+    expect(errorMessage(new FrontendApiError(503, 'reply_attachments_unavailable'))).toBe(
+      'Attachments are temporarily unavailable. Send without files or try again later.',
+    );
+  });
+});
+
 describe('copilot runs', () => {
   const runId = '00000000-0000-4000-8000-000000000031';
   const run = {
