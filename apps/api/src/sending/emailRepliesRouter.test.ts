@@ -1,7 +1,7 @@
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
-import { REPLY_ATTACHMENT_MAX_BYTES } from '@lc/contract';
-import type { ReplyAttachmentResponse } from '@lc/contract';
+import { OUTBOUND_ATTACHMENT_MAX_BYTES } from '@lc/contract';
+import type { OutboundAttachmentResponse } from '@lc/contract';
 import { testTenantBody } from '../tenantFixture.test-helper.js';
 import { tinyPng, uploadSignatureImage } from '../signatureImageFixture.test-helper.js';
 import { createTestApp, testMailboxEmail } from '../testAppInstance.test-helper.js';
@@ -294,15 +294,15 @@ describe('POST /v1/mailbox/emails/:emailId/replies', () => {
 const tinyPdf = Buffer.concat([Buffer.from('%PDF-1.7\n', 'ascii'), Buffer.alloc(16, 0)]);
 const csv = Buffer.from('container,eta\nMSKU1234567,2026-12-01\n', 'utf8');
 
-async function uploadReplyAttachment(
+async function uploadOutboundAttachment(
   testApp: TestApp,
   cookie: string,
   content: Buffer,
   fileName: string,
   contentType: string,
-): Promise<ReplyAttachmentResponse> {
+): Promise<OutboundAttachmentResponse> {
   const response = await request(testApp.app)
-    .post('/v1/mailbox/reply-attachments')
+    .post('/v1/mailbox/outbound-attachments')
     .query({ fileName })
     .set('Cookie', cookie)
     .set('Content-Type', contentType)
@@ -317,14 +317,14 @@ describe('POST /v1/mailbox/emails/:emailId/replies with attachmentIds', () => {
   it('sends the uploads as attachments in the order given, stamps them with the row once Gmail took it, and lists them', async () => {
     const testApp = createTestApp();
     const { cookie, ...scope } = await connectedMailbox(testApp);
-    const rateCard = await uploadReplyAttachment(
+    const rateCard = await uploadOutboundAttachment(
       testApp,
       cookie,
       tinyPdf,
       'Rate card.pdf',
       'application/pdf',
     );
-    const eta = await uploadReplyAttachment(testApp, cookie, csv, 'eta.csv', 'text/csv');
+    const eta = await uploadOutboundAttachment(testApp, cookie, csv, 'eta.csv', 'text/csv');
 
     const response = await request(testApp.app)
       .post(repliesPath(inboxEmailId))
@@ -339,7 +339,7 @@ describe('POST /v1/mailbox/emails/:emailId/replies with attachmentIds', () => {
       { content: csv, contentType: 'text/csv', fileName: 'eta.csv' },
     ]);
     expect(
-      await testApp.repositories.replyAttachmentRepository.listReplyAttachmentsOfSentMail(
+      await testApp.repositories.outboundAttachmentRepository.listOutboundAttachmentsOfSentMail(
         scope,
         sentMailId,
       ),
@@ -348,7 +348,7 @@ describe('POST /v1/mailbox/emails/:emailId/replies with attachmentIds', () => {
     expect(
       (
         await request(testApp.app)
-          .delete(`/v1/mailbox/reply-attachments/${rateCard.id}`)
+          .delete(`/v1/mailbox/outbound-attachments/${rateCard.id}`)
           .set('Cookie', cookie)
       ).status,
     ).toBe(404);
@@ -366,7 +366,7 @@ describe('POST /v1/mailbox/emails/:emailId/replies with attachmentIds', () => {
   it('resumes a row left pending with the files the body names', async () => {
     const testApp = createTestApp();
     const { cookie, ...scope } = await connectedMailbox(testApp);
-    const rateCard = await uploadReplyAttachment(
+    const rateCard = await uploadOutboundAttachment(
       testApp,
       cookie,
       tinyPdf,
@@ -410,7 +410,7 @@ describe('POST /v1/mailbox/emails/:emailId/replies with attachmentIds', () => {
     const testApp = createTestApp();
     const { cookie, ...scope } = await connectedMailbox(testApp);
     const agent = request(testApp.app);
-    const rateCard = await uploadReplyAttachment(
+    const rateCard = await uploadOutboundAttachment(
       testApp,
       cookie,
       tinyPdf,
@@ -431,7 +431,7 @@ describe('POST /v1/mailbox/emails/:emailId/replies with attachmentIds', () => {
     expect(duplicate.status).toBe(400);
 
     const otherMailId = '22222222-2222-4222-8222-222222222222';
-    await testApp.repositories.replyAttachmentRepository.attachToSentMail(
+    await testApp.repositories.outboundAttachmentRepository.attachToSentMail(
       scope,
       [rateCard.id],
       otherMailId,
@@ -440,17 +440,17 @@ describe('POST /v1/mailbox/emails/:emailId/replies with attachmentIds', () => {
     expect(alreadySent.status).toBe(409);
     expect(alreadySent.body.error).toBe('attachment_already_sent');
 
-    const big = await uploadReplyAttachment(
+    const big = await uploadOutboundAttachment(
       testApp,
       cookie,
-      Buffer.alloc(REPLY_ATTACHMENT_MAX_BYTES, 1),
+      Buffer.alloc(OUTBOUND_ATTACHMENT_MAX_BYTES, 1),
       'big-1.bin',
       'application/octet-stream',
     );
-    const bigger = await uploadReplyAttachment(
+    const bigger = await uploadOutboundAttachment(
       testApp,
       cookie,
-      Buffer.alloc(REPLY_ATTACHMENT_MAX_BYTES, 2),
+      Buffer.alloc(OUTBOUND_ATTACHMENT_MAX_BYTES, 2),
       'big-2.bin',
       'application/octet-stream',
     );
@@ -464,20 +464,20 @@ describe('POST /v1/mailbox/emails/:emailId/replies with attachmentIds', () => {
     ).toBeUndefined();
     expect(testApp.gmailSender.sentMessages).toHaveLength(0);
 
-    const noBucket = createTestApp({ replyAttachmentsEnabled: false });
+    const noBucket = createTestApp({ outboundAttachmentsEnabled: false });
     const session = await connectedMailbox(noBucket);
     const unavailable = await request(noBucket.app)
       .post(repliesPath(inboxEmailId))
       .set('Cookie', session.cookie)
       .send({ sentMailId, text: 'Rates attached.', attachmentIds: [rateCard.id] });
     expect(unavailable.status).toBe(503);
-    expect(unavailable.body.error).toBe('reply_attachments_unavailable');
+    expect(unavailable.body.error).toBe('outbound_attachments_unavailable');
   });
 
   it('leaves the files unsent when Gmail refuses the mail, so the retry under a new id carries them', async () => {
     const testApp = createTestApp();
     const { cookie, ...scope } = await connectedMailbox(testApp);
-    const rateCard = await uploadReplyAttachment(
+    const rateCard = await uploadOutboundAttachment(
       testApp,
       cookie,
       tinyPdf,
@@ -492,7 +492,7 @@ describe('POST /v1/mailbox/emails/:emailId/replies with attachmentIds', () => {
     expect(refused.status).toBe(502);
     expect(refused.body.sentMail).toMatchObject({ status: 'failed', attachments: [] });
     expect(
-      await testApp.repositories.replyAttachmentRepository.findReplyAttachments(scope, [
+      await testApp.repositories.outboundAttachmentRepository.findOutboundAttachments(scope, [
         rateCard.id,
       ]),
     ).toMatchObject([{ sentMailId: null }]);
@@ -505,7 +505,7 @@ describe('POST /v1/mailbox/emails/:emailId/replies with attachmentIds', () => {
     expect(retried.status).toBe(201);
     expect(retried.body.attachments).toEqual([rateCard]);
     expect(
-      await testApp.repositories.replyAttachmentRepository.findReplyAttachments(scope, [
+      await testApp.repositories.outboundAttachmentRepository.findOutboundAttachments(scope, [
         rateCard.id,
       ]),
     ).toMatchObject([{ sentMailId: retryId }]);
@@ -515,20 +515,20 @@ describe('POST /v1/mailbox/emails/:emailId/replies with attachmentIds', () => {
   it('fails the row and answers 409 when a file is removed between the check and the read, before anything reaches Gmail', async () => {
     const testApp = createTestApp();
     const { cookie, ...scope } = await connectedMailbox(testApp);
-    const rateCard = await uploadReplyAttachment(
+    const rateCard = await uploadOutboundAttachment(
       testApp,
       cookie,
       tinyPdf,
       'Rate card.pdf',
       'application/pdf',
     );
-    const repository = testApp.repositories.replyAttachmentRepository;
-    const findReplyAttachments = repository.findReplyAttachments.bind(repository);
-    repository.findReplyAttachments = async (findScope, attachmentIds) => {
-      const found = await findReplyAttachments(findScope, attachmentIds);
+    const repository = testApp.repositories.outboundAttachmentRepository;
+    const findOutboundAttachments = repository.findOutboundAttachments.bind(repository);
+    repository.findOutboundAttachments = async (findScope, attachmentIds) => {
+      const found = await findOutboundAttachments(findScope, attachmentIds);
       // The composer's delete lands right after the send's check: row and object both gone.
-      await repository.deleteUnsentReplyAttachment(findScope, rateCard.id);
-      testApp.replyAttachmentStore.objects.clear();
+      await repository.deleteUnsentOutboundAttachment(findScope, rateCard.id);
+      testApp.outboundAttachmentStore.objects.clear();
       return found;
     };
 
@@ -547,20 +547,20 @@ describe('POST /v1/mailbox/emails/:emailId/replies with attachmentIds', () => {
   it('still sends when a file row is removed after the bytes were read, and lists only what was stamped', async () => {
     const testApp = createTestApp();
     const { cookie } = await connectedMailbox(testApp);
-    const rateCard = await uploadReplyAttachment(
+    const rateCard = await uploadOutboundAttachment(
       testApp,
       cookie,
       tinyPdf,
       'Rate card.pdf',
       'application/pdf',
     );
-    const store = testApp.replyAttachmentStore;
+    const store = testApp.outboundAttachmentStore;
     const readAttachment = store.readAttachment.bind(store);
     store.readAttachment = async (attachment) => {
       const content = await readAttachment(attachment);
       // The composer's delete lands after the bytes are in hand.
       const session = (await request(testApp.app).get('/v1/me').set('Cookie', cookie)).body;
-      await testApp.repositories.replyAttachmentRepository.deleteUnsentReplyAttachment(
+      await testApp.repositories.outboundAttachmentRepository.deleteUnsentOutboundAttachment(
         session,
         rateCard.id,
       );

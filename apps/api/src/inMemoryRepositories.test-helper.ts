@@ -18,8 +18,8 @@ import type {
   MailboxConnectionRepository,
   MailboxCredentials,
   MailboxCredentialsRepository,
-  ReplyAttachment,
-  ReplyAttachmentRepository,
+  OutboundAttachment,
+  OutboundAttachmentRepository,
   Rfq,
   RfqRepository,
   SentMail,
@@ -45,7 +45,7 @@ export function createInMemoryRepositories(): {
   sentMailRepository: SentMailRepository;
   rfqRepository: RfqRepository;
   signatureImageRepository: SignatureImageRepository;
-  replyAttachmentRepository: ReplyAttachmentRepository;
+  outboundAttachmentRepository: OutboundAttachmentRepository;
   agentRunRepository: AgentRunRepository;
   /** Seeds the inbox list directly; the processor's insert path is not part of the API. Detail fields default to empty. */
   addEmail(
@@ -75,7 +75,7 @@ export function createInMemoryRepositories(): {
   const sentMails: (SentMail & { mailboxId: string; tenantId: string })[] = [];
   const rfqs: (Rfq & { mailboxId: string; tenantId: string })[] = [];
   const signatureImages: (SignatureImage & { mailboxId: string; tenantId: string })[] = [];
-  const replyAttachments: (ReplyAttachment & { mailboxId: string; tenantId: string })[] = [];
+  const outboundAttachments: (OutboundAttachment & { mailboxId: string; tenantId: string })[] = [];
   const agentRuns: (AgentRun & { mailboxId: string; tenantId: string })[] = [];
 
   function emailsInScope({ mailboxId, tenantId }: { mailboxId: string; tenantId: string }) {
@@ -617,21 +617,21 @@ export function createInMemoryRepositories(): {
         return removed ? stripScope(removed) : undefined;
       },
     },
-    replyAttachmentRepository: {
-      async createReplyAttachment({ mailboxId, tenantId }, attachmentToCreate) {
+    outboundAttachmentRepository: {
+      async createOutboundAttachment({ mailboxId, tenantId }, attachmentToCreate) {
         const attachment = {
           ...attachmentToCreate,
           sentMailId: null,
-          createdAt: new Date(2026, 0, 1, 0, 0, replyAttachments.length),
+          createdAt: new Date(2026, 0, 1, 0, 0, outboundAttachments.length),
           mailboxId,
           tenantId,
         };
-        replyAttachments.push(attachment);
+        outboundAttachments.push(attachment);
         return stripAttachmentScope(attachment);
       },
-      async findReplyAttachments({ mailboxId, tenantId }, attachmentIds) {
+      async findOutboundAttachments({ mailboxId, tenantId }, attachmentIds) {
         return attachmentIds.flatMap((attachmentId) => {
-          const attachment = replyAttachments.find(
+          const attachment = outboundAttachments.find(
             (candidate) =>
               candidate.id === attachmentId &&
               candidate.mailboxId === mailboxId &&
@@ -640,8 +640,8 @@ export function createInMemoryRepositories(): {
           return attachment ? [stripAttachmentScope(attachment)] : [];
         });
       },
-      async listReplyAttachmentsOfSentMail({ mailboxId, tenantId }, sentMailId) {
-        return replyAttachments
+      async listOutboundAttachmentsOfSentMail({ mailboxId, tenantId }, sentMailId) {
+        return outboundAttachments
           .filter(
             (attachment) =>
               attachment.sentMailId === sentMailId &&
@@ -653,7 +653,7 @@ export function createInMemoryRepositories(): {
       },
       async attachToSentMail({ mailboxId, tenantId }, attachmentIds, sentMailId) {
         let changed = 0;
-        for (const attachment of replyAttachments) {
+        for (const attachment of outboundAttachments) {
           if (
             attachmentIds.includes(attachment.id) &&
             attachment.mailboxId === mailboxId &&
@@ -666,8 +666,8 @@ export function createInMemoryRepositories(): {
         }
         return changed;
       },
-      async deleteUnsentReplyAttachment({ mailboxId, tenantId }, attachmentId) {
-        const index = replyAttachments.findIndex(
+      async deleteUnsentOutboundAttachment({ mailboxId, tenantId }, attachmentId) {
+        const index = outboundAttachments.findIndex(
           (attachment) =>
             attachment.id === attachmentId &&
             attachment.mailboxId === mailboxId &&
@@ -675,7 +675,7 @@ export function createInMemoryRepositories(): {
             attachment.sentMailId === null,
         );
         if (index === -1) return undefined;
-        const [removed] = replyAttachments.splice(index, 1);
+        const [removed] = outboundAttachments.splice(index, 1);
         return removed ? stripAttachmentScope(removed) : undefined;
       },
     },
@@ -834,8 +834,8 @@ function stripScope(
 }
 
 function stripAttachmentScope(
-  attachment: ReplyAttachment & { mailboxId: string; tenantId: string },
-): ReplyAttachment {
+  attachment: OutboundAttachment & { mailboxId: string; tenantId: string },
+): OutboundAttachment {
   return {
     id: attachment.id,
     fileName: attachment.fileName,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PrismaClient } from '../db/prismaClient.js';
-import { createPrismaReplyAttachmentRepository } from './replyAttachmentRepository.js';
+import { createPrismaOutboundAttachmentRepository } from './outboundAttachmentRepository.js';
 
 const scope = { tenantId: 'tenant-1', mailboxId: 'mailbox-1' };
 const rateCardId = '00000000-0000-4000-8000-00000000000a';
@@ -40,7 +40,7 @@ function createPrismaStub(answers: {
     return result;
   };
   const stub = {
-    replyAttachment: {
+    outboundAttachment: {
       findMany: record('findMany', answers.findMany ?? []),
       findFirst: record('findFirst', answers.findFirst ?? null),
       create: record('create', answers.create),
@@ -51,13 +51,12 @@ function createPrismaStub(answers: {
   return { prismaClient: stub as unknown as PrismaClient, calls };
 }
 
-describe('createPrismaReplyAttachmentRepository', () => {
+describe('createPrismaOutboundAttachmentRepository', () => {
   it('creates with the scope columns set by the repository, not the caller', async () => {
     const { prismaClient, calls } = createPrismaStub({ create: rateCardRow });
-    const created = await createPrismaReplyAttachmentRepository(prismaClient).createReplyAttachment(
-      scope,
-      rateCardToCreate,
-    );
+    const created = await createPrismaOutboundAttachmentRepository(
+      prismaClient,
+    ).createOutboundAttachment(scope, rateCardToCreate);
     expect(created).toEqual(rateCardRow);
     expect(calls).toEqual([
       {
@@ -71,11 +70,11 @@ describe('createPrismaReplyAttachmentRepository', () => {
 
   it('finds by id inside the scope, in the order asked, skipping unknown ids and not querying for none', async () => {
     const { prismaClient, calls } = createPrismaStub({ findMany: [rateCardRow, photoRow] });
-    const repository = createPrismaReplyAttachmentRepository(prismaClient);
-    expect(await repository.findReplyAttachments(scope, [])).toEqual([]);
+    const repository = createPrismaOutboundAttachmentRepository(prismaClient);
+    expect(await repository.findOutboundAttachments(scope, [])).toEqual([]);
     expect(calls).toEqual([]);
 
-    const found = await repository.findReplyAttachments(scope, [photoId, 'unknown', rateCardId]);
+    const found = await repository.findOutboundAttachments(scope, [photoId, 'unknown', rateCardId]);
     expect(found).toEqual([photoRow, rateCardRow]);
     expect(calls[0]?.args).toEqual(
       expect.objectContaining({
@@ -90,7 +89,7 @@ describe('createPrismaReplyAttachmentRepository', () => {
 
   it('lists the files of one sent mail inside the scope, oldest first', async () => {
     const { prismaClient, calls } = createPrismaStub({ findMany: [rateCardRow] });
-    await createPrismaReplyAttachmentRepository(prismaClient).listReplyAttachmentsOfSentMail(
+    await createPrismaOutboundAttachmentRepository(prismaClient).listOutboundAttachmentsOfSentMail(
       scope,
       sentMailId,
     );
@@ -104,7 +103,7 @@ describe('createPrismaReplyAttachmentRepository', () => {
 
   it('stamps only unsent files of the mailbox with the sent mail and reports how many changed', async () => {
     const { prismaClient, calls } = createPrismaStub({ updateMany: { count: 1 } });
-    const repository = createPrismaReplyAttachmentRepository(prismaClient);
+    const repository = createPrismaOutboundAttachmentRepository(prismaClient);
     expect(await repository.attachToSentMail(scope, [], sentMailId)).toBe(0);
     expect(calls).toEqual([]);
 
@@ -128,10 +127,9 @@ describe('createPrismaReplyAttachmentRepository', () => {
   it('deletes only an unsent file inside the scope and reports it; undefined otherwise', async () => {
     const unsent = createPrismaStub({ findFirst: rateCardRow, deleteMany: { count: 1 } });
     expect(
-      await createPrismaReplyAttachmentRepository(unsent.prismaClient).deleteUnsentReplyAttachment(
-        scope,
-        rateCardId,
-      ),
+      await createPrismaOutboundAttachmentRepository(
+        unsent.prismaClient,
+      ).deleteUnsentOutboundAttachment(scope, rateCardId),
     ).toEqual(rateCardRow);
     expect(unsent.calls.map((call) => call.method)).toEqual(['findFirst', 'deleteMany']);
     expect(unsent.calls[1]?.args).toEqual({
@@ -141,9 +139,9 @@ describe('createPrismaReplyAttachmentRepository', () => {
     // Already on a mail, or another mailbox's: the scoped findFirst finds nothing and nothing is deleted.
     const sentOrNotOurs = createPrismaStub({ findFirst: null });
     expect(
-      await createPrismaReplyAttachmentRepository(
+      await createPrismaOutboundAttachmentRepository(
         sentOrNotOurs.prismaClient,
-      ).deleteUnsentReplyAttachment(scope, rateCardId),
+      ).deleteUnsentOutboundAttachment(scope, rateCardId),
     ).toBeUndefined();
     expect(sentOrNotOurs.calls.map((call) => call.method)).toEqual(['findFirst']);
   });

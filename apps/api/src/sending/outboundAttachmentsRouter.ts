@@ -4,54 +4,56 @@ import express from 'express';
 import type { NextFunction, Request, RequestHandler, Response, Router } from 'express';
 import { fileTypeFromBuffer } from 'file-type';
 import createHttpError from 'http-errors';
-import type { ReplyAttachment, ReplyAttachmentRepository } from '@lc/core';
+import type { OutboundAttachment, OutboundAttachmentRepository } from '@lc/core';
 import {
-  REPLY_ATTACHMENT_MAX_BYTES,
+  OUTBOUND_ATTACHMENT_MAX_BYTES,
   isGmailBlockedExtension,
   hasGmailBlockedExtension,
-  uploadReplyAttachmentQuerySchema,
+  uploadOutboundAttachmentQuerySchema,
 } from '@lc/contract';
-import type { ReplyAttachmentResponse } from '@lc/contract';
+import type { OutboundAttachmentResponse } from '@lc/contract';
 import { getSession } from '../auth/requireSession.js';
 import { parseIdOr404 } from '../http/parseIdOr404.js';
 import { parseRequestQuery } from '../http/parseRequestQuery.js';
-import { replyAttachmentS3Key } from './replyAttachmentStore.js';
-import type { ReplyAttachmentStore } from './replyAttachmentStore.js';
+import { outboundAttachmentS3Key } from './outboundAttachmentStore.js';
+import type { OutboundAttachmentStore } from './outboundAttachmentStore.js';
 
-export interface ReplyAttachmentsRouterDependencies {
-  replyAttachmentRepository: ReplyAttachmentRepository;
+export interface OutboundAttachmentsRouterDependencies {
+  outboundAttachmentRepository: OutboundAttachmentRepository;
   /** Undefined when the API has no bucket configured (local dev, tests): every route answers 503. */
-  replyAttachmentStore: ReplyAttachmentStore | undefined;
+  outboundAttachmentStore: OutboundAttachmentStore | undefined;
   requireSession: RequestHandler;
 }
 
 const FALLBACK_CONTENT_TYPE = 'application/octet-stream';
 
 /**
- * Files the operator attaches to a reply, mounted at /v1/mailbox/reply-attachments. Uploaded as
+ * Files the operator attaches to an outgoing mail (a reply today, an RFQ next), mounted at
+ * /v1/mailbox/outbound-attachments. Uploaded as
  * the operator picks them, before the send, so the composer can show each one and the send only
  * names ids.
  *   POST   /?fileName=     raw bytes (<= 10 MB); 201 with the attachment
  *   DELETE /:attachmentId  204 for an upload no mail carries; 404 otherwise
- * The per-reply count and total size are the send's business (PR 4), not the upload's.
+ * The per-mail count and total size are the send's business, not the upload's.
  */
-export function createReplyAttachmentsRouter({
-  replyAttachmentRepository,
-  replyAttachmentStore,
+export function createOutboundAttachmentsRouter({
+  outboundAttachmentRepository,
+  outboundAttachmentStore,
   requireSession,
-}: ReplyAttachmentsRouterDependencies): Router {
+}: OutboundAttachmentsRouterDependencies): Router {
   const router = express.Router();
 
-  const requireStore = (store: ReplyAttachmentStore | undefined): store is ReplyAttachmentStore =>
-    store !== undefined;
+  const requireStore = (
+    store: OutboundAttachmentStore | undefined,
+  ): store is OutboundAttachmentStore => store !== undefined;
 
   router.post('/', requireSession, rawAttachmentBody, async (request, response) => {
-    if (!requireStore(replyAttachmentStore)) {
-      response.status(503).json({ error: 'reply_attachments_unavailable' });
+    if (!requireStore(outboundAttachmentStore)) {
+      response.status(503).json({ error: 'outbound_attachments_unavailable' });
       return;
     }
     const session = getSession(response);
-    const { fileName } = parseRequestQuery(uploadReplyAttachmentQuerySchema, request.query);
+    const { fileName } = parseRequestQuery(uploadOutboundAttachmentQuerySchema, request.query);
     if (hasGmailBlockedExtension(fileName)) {
       throw createHttpError(415, 'blocked_file_type');
     }
@@ -67,10 +69,10 @@ export function createReplyAttachmentsRouter({
     }
     const contentType = detected?.mime ?? declaredContentType(request) ?? FALLBACK_CONTENT_TYPE;
     const attachmentId = randomUUID();
-    const s3Key = replyAttachmentS3Key(session, attachmentId);
+    const s3Key = outboundAttachmentS3Key(session, attachmentId);
     // Object first, row second: a row without bytes would fail the send; an object without a row is only litter.
-    await replyAttachmentStore.putAttachment(s3Key, content, contentType);
-    const attachment = await replyAttachmentRepository.createReplyAttachment(session, {
+    await outboundAttachmentStore.putAttachment(s3Key, content, contentType);
+    const attachment = await outboundAttachmentRepository.createOutboundAttachment(session, {
       id: attachmentId,
       fileName,
       contentType,
@@ -78,26 +80,26 @@ export function createReplyAttachmentsRouter({
       sha256: createHash('sha256').update(content).digest('hex'),
       s3Key,
     });
-    response.status(201).json(toReplyAttachmentResponse(attachment));
+    response.status(201).json(toOutboundAttachmentResponse(attachment));
   });
 
   router.delete('/:attachmentId', requireSession, async (request, response) => {
-    if (!requireStore(replyAttachmentStore)) {
-      response.status(503).json({ error: 'reply_attachments_unavailable' });
+    if (!requireStore(outboundAttachmentStore)) {
+      response.status(503).json({ error: 'outbound_attachments_unavailable' });
       return;
     }
     const attachmentId = parseIdOr404(request.params.attachmentId);
     const session = getSession(response);
-    const deleted = await replyAttachmentRepository.deleteUnsentReplyAttachment(
+    const deleted = await outboundAttachmentRepository.deleteUnsentOutboundAttachment(
       session,
       attachmentId,
     );
     if (!deleted) throw createHttpError(404, 'not_found');
     // The row is gone, so no send can pick the file up; a leftover object is litter, not a fault.
     try {
-      await replyAttachmentStore.deleteAttachment(deleted.s3Key);
+      await outboundAttachmentStore.deleteAttachment(deleted.s3Key);
     } catch (error) {
-      console.warn('reply attachment object not deleted', { s3Key: deleted.s3Key, error });
+      console.warn('outbound attachment object not deleted', { s3Key: deleted.s3Key, error });
     }
     response.status(204).end();
   });
@@ -111,7 +113,7 @@ const rawAttachmentBody: RequestHandler = (
   response: Response,
   next: NextFunction,
 ) => {
-  express.raw({ type: () => true, limit: REPLY_ATTACHMENT_MAX_BYTES })(
+  express.raw({ type: () => true, limit: OUTBOUND_ATTACHMENT_MAX_BYTES })(
     request,
     response,
     (error?: unknown) => {
@@ -143,7 +145,9 @@ function declaredContentType(request: Request): string | undefined {
   }
 }
 
-export function toReplyAttachmentResponse(attachment: ReplyAttachment): ReplyAttachmentResponse {
+export function toOutboundAttachmentResponse(
+  attachment: OutboundAttachment,
+): OutboundAttachmentResponse {
   return {
     id: attachment.id,
     fileName: attachment.fileName,

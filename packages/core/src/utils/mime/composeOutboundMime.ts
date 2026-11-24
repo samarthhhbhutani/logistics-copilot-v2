@@ -12,7 +12,7 @@ export interface InlineImage {
 }
 
 /** A file the recipient gets as a regular attachment, listed under the message. */
-export interface OutboundAttachment {
+export interface OutboundMessageAttachment {
   content: Uint8Array;
   contentType: string;
   fileName: string;
@@ -43,7 +43,7 @@ export interface OutboundMessage {
   signatureHtml?: string;
   inlineImages?: InlineImage[];
   /** Files attached by the operator, in the order they are listed. Unset or empty: none. */
-  attachments?: OutboundAttachment[];
+  attachments?: OutboundMessageAttachment[];
   /** Full RFC 5322 form, angle brackets included: `<rfq-123.1@tenant.example>`. */
   messageId: string;
   /** Message-ID of the mail being answered; set together with `references` on every reply. */

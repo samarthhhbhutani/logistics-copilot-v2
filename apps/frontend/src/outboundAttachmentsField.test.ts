@@ -5,15 +5,15 @@ import { createRoot } from 'react-dom/client';
 import type { Root } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ReplyAttachmentResponse } from '@lc/contract';
+import type { OutboundAttachmentResponse } from '@lc/contract';
 import { frontendApi, FrontendApiError } from './frontendApi.js';
-import { formatFileSize, ReplyAttachmentsField } from './replyAttachmentsField.js';
+import { formatFileSize, OutboundAttachmentsField } from './outboundAttachmentsField.js';
 
 const session = {
   tenantId: '00000000-0000-4000-8000-000000000002',
   mailboxId: '00000000-0000-4000-8000-000000000001',
 };
-function attachmentOf(file: File, id: string): ReplyAttachmentResponse {
+function attachmentOf(file: File, id: string): OutboundAttachmentResponse {
   return {
     id,
     fileName: file.name,
@@ -27,7 +27,7 @@ function fileOf(name: string, sizeBytes: number, type = 'application/pdf') {
 }
 /** Answers each upload in turn with a stored file under the next id, or with the given error. */
 function answerUploads(...answers: (string | Error)[]) {
-  const upload = vi.spyOn(frontendApi, 'uploadReplyAttachment');
+  const upload = vi.spyOn(frontendApi, 'uploadOutboundAttachment');
   for (const answer of answers) {
     if (answer instanceof Error) upload.mockRejectedValueOnce(answer);
     else
@@ -41,8 +41,8 @@ function answerUploads(...answers: (string | Error)[]) {
 let container: HTMLDivElement;
 let root: Root | undefined;
 let queryClient: QueryClient;
-let attachments: ReplyAttachmentResponse[];
-const onAttachmentsChange = vi.fn((next: ReplyAttachmentResponse[]) => {
+let attachments: OutboundAttachmentResponse[];
+const onAttachmentsChange = vi.fn((next: OutboundAttachmentResponse[]) => {
   attachments = next;
 });
 
@@ -53,7 +53,7 @@ async function render(disabled = false) {
       createElement(
         QueryClientProvider,
         { client: queryClient },
-        createElement(ReplyAttachmentsField, {
+        createElement(OutboundAttachmentsField, {
           session,
           attachments,
           onAttachmentsChange,
@@ -128,10 +128,10 @@ describe('formatFileSize', () => {
   });
 });
 
-describe('ReplyAttachmentsField', () => {
+describe('OutboundAttachmentsField', () => {
   it('uploads picked files one after another, lists them, and removes one on request', async () => {
     const upload = answerUploads('a1', 'a2');
-    const remove = vi.spyOn(frontendApi, 'deleteReplyAttachment').mockResolvedValue();
+    const remove = vi.spyOn(frontendApi, 'deleteOutboundAttachment').mockResolvedValue();
     await render();
     expect(chips()).toEqual([]);
 
@@ -175,7 +175,7 @@ describe('ReplyAttachmentsField', () => {
     expect(button('Attach files')!.disabled).toBe(true);
     await pick(fileOf('one-more.pdf', 100));
     expect(upload).not.toHaveBeenCalled();
-    expect(alertText()).toBe('one-more.pdf: A reply can carry at most 10 files.');
+    expect(alertText()).toBe('one-more.pdf: A mail can carry at most 10 files.');
 
     attachments = [attachmentOf(fileOf('big.pdf', 17 * 1024 * 1024), 'big')];
     await render();
@@ -193,7 +193,7 @@ describe('ReplyAttachmentsField', () => {
       attachmentOf(fileOf('b.pdf', 10), 'a2'),
     ];
     const remove = vi
-      .spyOn(frontendApi, 'deleteReplyAttachment')
+      .spyOn(frontendApi, 'deleteOutboundAttachment')
       .mockRejectedValueOnce(new FrontendApiError(404, 'not_found'))
       .mockRejectedValueOnce(new TypeError('Failed to fetch'));
     await render();

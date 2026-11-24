@@ -1,11 +1,11 @@
 import { z } from 'zod';
 
 /** One file; Gmail takes 25 MB per mail, so this leaves room for the body, signature images and encoding overhead. */
-export const REPLY_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
-/** Per reply, enforced when the reply is sent and in the composer. */
-export const REPLY_ATTACHMENTS_MAX_PER_REPLY = 10;
-export const REPLY_ATTACHMENTS_MAX_TOTAL_BYTES = 18 * 1024 * 1024;
-export const REPLY_ATTACHMENT_FILE_NAME_MAX_LENGTH = 200;
+export const OUTBOUND_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+/** Per outgoing mail (every mail of an RFQ carries the whole set), enforced at the send and in the composer. */
+export const OUTBOUND_ATTACHMENTS_MAX_PER_MAIL = 10;
+export const OUTBOUND_ATTACHMENTS_MAX_TOTAL_BYTES = 18 * 1024 * 1024;
+export const OUTBOUND_ATTACHMENT_FILE_NAME_MAX_LENGTH = 200;
 
 /**
  * Extensions Gmail refuses to send (support.google.com/mail/answer/6590), also inside archives.
@@ -83,26 +83,26 @@ export function hasGmailBlockedExtension(fileName: string): boolean {
   return extension !== undefined && isGmailBlockedExtension(extension);
 }
 
-/** A file waiting in the composer or carried by a sent reply. */
-export const replyAttachmentResponseSchema = z.object({
+/** A file waiting in the composer or carried by a sent mail. */
+export const outboundAttachmentResponseSchema = z.object({
   id: z.uuid(),
   fileName: z.string(),
   contentType: z.string(),
   sizeBytes: z.number().int().nonnegative(),
   createdAt: z.iso.datetime(),
 });
-export type ReplyAttachmentResponse = z.infer<typeof replyAttachmentResponseSchema>;
+export type OutboundAttachmentResponse = z.infer<typeof outboundAttachmentResponseSchema>;
 
 /**
- * POST /v1/mailbox/reply-attachments?fileName=: the body is the raw file bytes with its Content-Type
+ * POST /v1/mailbox/outbound-attachments?fileName=: the body is the raw file bytes with its Content-Type
  * (any type; the stored type is what the bytes are when that can be told, else the declared one,
- * else application/octet-stream). 201 ReplyAttachmentResponse. 400 empty_attachment, 413
+ * else application/octet-stream). 201 OutboundAttachmentResponse. 400 empty_attachment, 413
  * attachment_too_large, 415 blocked_file_type (Gmail would refuse it), 503
- * reply_attachments_unavailable (no bucket configured). The upload is not yet on any mail: the
+ * outbound_attachments_unavailable (no bucket configured). The upload is not yet on any mail: the
  * send names it by id.
  */
-export const uploadReplyAttachmentQuerySchema = z.object({
-  fileName: z.string().trim().min(1).max(REPLY_ATTACHMENT_FILE_NAME_MAX_LENGTH),
+export const uploadOutboundAttachmentQuerySchema = z.object({
+  fileName: z.string().trim().min(1).max(OUTBOUND_ATTACHMENT_FILE_NAME_MAX_LENGTH),
 });
 
-/** DELETE /v1/mailbox/reply-attachments/:attachmentId. 204; 404 not_found, also once a sent mail carries it. */
+/** DELETE /v1/mailbox/outbound-attachments/:attachmentId. 204; 404 not_found, also once a sent mail carries it. */

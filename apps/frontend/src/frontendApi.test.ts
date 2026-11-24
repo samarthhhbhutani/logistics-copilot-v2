@@ -1029,9 +1029,9 @@ describe('reply attachments', () => {
     const file = new File([new Uint8Array([1, 2, 3])], 'Rate card.pdf', {
       type: 'application/pdf',
     });
-    expect(await frontendApi.uploadReplyAttachment(session, file)).toEqual(attachment);
+    expect(await frontendApi.uploadOutboundAttachment(session, file)).toEqual(attachment);
     const [path, options] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(path).toBe('/v1/mailbox/reply-attachments?fileName=Rate+card.pdf');
+    expect(path).toBe('/v1/mailbox/outbound-attachments?fileName=Rate+card.pdf');
     expect(options).toMatchObject({
       method: 'POST',
       headers: { 'Content-Type': 'application/pdf' },
@@ -1040,7 +1040,7 @@ describe('reply attachments', () => {
     expect(fetchMock.mock.calls[1]?.[0]).toBe('/v1/me');
 
     const untyped = mockResponses(attachment, session);
-    await frontendApi.uploadReplyAttachment(session, new File([new Uint8Array(3)], 'eta.dat'));
+    await frontendApi.uploadOutboundAttachment(session, new File([new Uint8Array(3)], 'eta.dat'));
     expect(untyped.mock.calls[0]?.[1]).toMatchObject({
       headers: { 'Content-Type': 'application/octet-stream' },
     });
@@ -1049,15 +1049,15 @@ describe('reply attachments', () => {
   it('refuses an empty, oversized or Gmail-blocked file before any request is made', async () => {
     const fetchMock = mockResponses(attachment, session);
     await expect(
-      frontendApi.uploadReplyAttachment(session, new File([], 'empty.txt')),
+      frontendApi.uploadOutboundAttachment(session, new File([], 'empty.txt')),
     ).rejects.toMatchObject({ status: 400, code: 'empty_attachment' });
     const huge = new File([new Uint8Array(10 * 1024 * 1024 + 1)], 'video.mp4');
-    const tooLarge = frontendApi.uploadReplyAttachment(session, huge);
+    const tooLarge = frontendApi.uploadOutboundAttachment(session, huge);
     await expect(tooLarge).rejects.toMatchObject({ status: 413, code: 'attachment_too_large' });
     await expect(tooLarge.catch((error: unknown) => errorMessage(error))).resolves.toBe(
       'That file is larger than 10 MB. Share it another way or attach a smaller file.',
     );
-    const blocked = frontendApi.uploadReplyAttachment(session, new File(['x'], 'Setup.EXE'));
+    const blocked = frontendApi.uploadOutboundAttachment(session, new File(['x'], 'Setup.EXE'));
     await expect(blocked).rejects.toMatchObject({ status: 415, code: 'blocked_file_type' });
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -1066,7 +1066,10 @@ describe('reply attachments', () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 503 }));
     vi.stubGlobal('fetch', fetchMock);
     await expect(
-      frontendApi.uploadReplyAttachment(session, new File(['x'], 'eta.csv', { type: 'text/csv' })),
+      frontendApi.uploadOutboundAttachment(
+        session,
+        new File(['x'], 'eta.csv', { type: 'text/csv' }),
+      ),
     ).rejects.toMatchObject({ status: 503 });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -1078,10 +1081,10 @@ describe('reply attachments', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(session)));
     vi.stubGlobal('fetch', fetchMock);
     await expect(
-      frontendApi.deleteReplyAttachment(session, attachment.id),
+      frontendApi.deleteOutboundAttachment(session, attachment.id),
     ).resolves.toBeUndefined();
     expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([
-      `/v1/mailbox/reply-attachments/${attachment.id}`,
+      `/v1/mailbox/outbound-attachments/${attachment.id}`,
       '/v1/me',
     ]);
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'DELETE' });
@@ -1094,7 +1097,7 @@ describe('reply attachments', () => {
     expect(errorMessage(new FrontendApiError(413, 'attachments_too_large'))).toBe(
       'Attachments total more than 18 MB. Remove a file to send.',
     );
-    expect(errorMessage(new FrontendApiError(503, 'reply_attachments_unavailable'))).toBe(
+    expect(errorMessage(new FrontendApiError(503, 'outbound_attachments_unavailable'))).toBe(
       'Attachments are temporarily unavailable. Send without files or try again later.',
     );
   });

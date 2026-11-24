@@ -1,12 +1,12 @@
 import createHttpError from 'http-errors';
 import type {
   MailboxScope,
+  OutboundMessageAttachment,
   OutboundAttachment,
-  ReplyAttachment,
-  ReplyAttachmentRepository,
+  OutboundAttachmentRepository,
 } from '@lc/core';
-import { REPLY_ATTACHMENTS_MAX_TOTAL_BYTES } from '@lc/contract';
-import type { ReplyAttachmentStore } from './replyAttachmentStore.js';
+import { OUTBOUND_ATTACHMENTS_MAX_TOTAL_BYTES } from '@lc/contract';
+import type { OutboundAttachmentStore } from './outboundAttachmentStore.js';
 
 /**
  * The uploads a send names, in the order given, checked before the sent_mails row is written: every
@@ -14,14 +14,17 @@ import type { ReplyAttachmentStore } from './replyAttachmentStore.js';
  * attachment_already_sent; a replay under the same id passes), and the total must fit a Gmail
  * message (413 attachments_too_large). Empty ids: nothing to check, nothing returned.
  */
-export async function findPickedReplyAttachments(
-  replyAttachmentRepository: ReplyAttachmentRepository,
+export async function findPickedOutboundAttachments(
+  outboundAttachmentRepository: OutboundAttachmentRepository,
   scope: MailboxScope,
   attachmentIds: string[],
   sentMailId: string,
-): Promise<ReplyAttachment[]> {
+): Promise<OutboundAttachment[]> {
   if (attachmentIds.length === 0) return [];
-  const attachments = await replyAttachmentRepository.findReplyAttachments(scope, attachmentIds);
+  const attachments = await outboundAttachmentRepository.findOutboundAttachments(
+    scope,
+    attachmentIds,
+  );
   if (attachments.length !== attachmentIds.length)
     throw createHttpError(409, 'attachment_not_found');
   if (
@@ -30,7 +33,7 @@ export async function findPickedReplyAttachments(
     throw createHttpError(409, 'attachment_already_sent');
   }
   const totalBytes = attachments.reduce((sum, attachment) => sum + attachment.sizeBytes, 0);
-  if (totalBytes > REPLY_ATTACHMENTS_MAX_TOTAL_BYTES) {
+  if (totalBytes > OUTBOUND_ATTACHMENTS_MAX_TOTAL_BYTES) {
     throw createHttpError(413, 'attachments_too_large');
   }
   return attachments;
@@ -38,12 +41,12 @@ export async function findPickedReplyAttachments(
 
 /** The MIME parts for the files a sent mail carries, bytes from the bucket. */
 export async function readOutboundAttachments(
-  replyAttachmentStore: ReplyAttachmentStore,
-  attachments: ReplyAttachment[],
-): Promise<OutboundAttachment[]> {
+  outboundAttachmentStore: OutboundAttachmentStore,
+  attachments: OutboundAttachment[],
+): Promise<OutboundMessageAttachment[]> {
   return Promise.all(
     attachments.map(async (attachment) => ({
-      content: await replyAttachmentStore.readAttachment(attachment),
+      content: await outboundAttachmentStore.readAttachment(attachment),
       contentType: attachment.contentType,
       fileName: attachment.fileName,
     })),
