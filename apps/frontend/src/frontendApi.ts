@@ -6,32 +6,37 @@ import {
   emailDetailSchema,
   getRfqBySourceEmailResponseSchema,
   getRfqResponseSchema,
+  gmailConnectResponseSchema,
+  hasGmailBlockedExtension,
   listAttachmentsResponseSchema,
+  listEmailsResponseSchema,
   listRfqsResponseSchema,
   listSignatureImagesResponseSchema,
   listVendorsResponseSchema,
-  threadResponseSchema,
-  gmailConnectResponseSchema,
-  listEmailsResponseSchema,
+  mailboxCreatedResponseSchema,
   mailboxResponseSchema,
+  operatorSessionResponseSchema,
+  OUTBOUND_ATTACHMENT_MAX_BYTES,
+  OUTBOUND_ATTACHMENTS_MAX_PER_MAIL,
+  OUTBOUND_ATTACHMENTS_MAX_TOTAL_BYTES,
   outboundAttachmentResponseSchema,
   rfqSuggestionResponseSchema,
   sendReplyFailedResponseSchema,
   sendRfqResponseSchema,
   sentMailResponseSchema,
   sessionResponseSchema,
-  signatureImageResponseSchema,
-  hasGmailBlockedExtension,
-  OUTBOUND_ATTACHMENT_MAX_BYTES,
-  OUTBOUND_ATTACHMENTS_MAX_PER_MAIL,
-  OUTBOUND_ATTACHMENTS_MAX_TOTAL_BYTES,
   SIGNATURE_IMAGE_CONTENT_TYPES,
   SIGNATURE_IMAGE_MAX_BYTES,
   SIGNATURE_IMAGES_MAX_PER_MAILBOX,
+  signatureImageResponseSchema,
+  tenantCreatedResponseSchema,
+  threadResponseSchema,
 } from '@lc/contract';
 import type {
   ClassificationLabel,
   CreateAgentRunRequest,
+  CreateMailboxRequest,
+  CreateTenantRequest,
   DraftRfqMailsBody,
   GmailLabel,
   SendReplyBody,
@@ -205,6 +210,50 @@ export const frontendApi = {
       { parse: () => undefined },
       { method: 'POST', signal },
       REPLAY_SAFE_POST,
+    );
+  },
+  /** The operator console's own session (lc_operator cookie), independent of any mailbox login. */
+  async operatorSession(signal?: AbortSignal) {
+    try {
+      return await requestJson('/operator/me', operatorSessionResponseSchema, { signal });
+    } catch (error) {
+      if (isUnauthenticated(error)) return null;
+      throw error;
+    }
+  },
+  operatorLogin(email: string, password: string, signal?: AbortSignal) {
+    return requestJson(
+      '/operator/login',
+      operatorSessionResponseSchema,
+      { method: 'POST', body: JSON.stringify({ email, password }), signal },
+      REPLAY_SAFE_POST,
+    );
+  },
+  operatorLogout(signal?: AbortSignal) {
+    return requestJson(
+      '/operator/logout',
+      { parse: () => undefined },
+      { method: 'POST', signal },
+      REPLAY_SAFE_POST,
+    );
+  },
+  /** Operator only. Not replay-safe: a retried create would make a second tenant. */
+  createTenant(body: CreateTenantRequest, signal?: AbortSignal) {
+    return requestJson('/tenants', tenantCreatedResponseSchema, {
+      method: 'POST',
+      body: JSON.stringify(body),
+      signal,
+    });
+  },
+  createMailbox(tenantId: string, body: CreateMailboxRequest, signal?: AbortSignal) {
+    return requestJson(
+      `/tenants/${encodeURIComponent(tenantId)}/mailboxes`,
+      mailboxCreatedResponseSchema,
+      {
+        method: 'POST',
+        body: JSON.stringify(body),
+        signal,
+      },
     );
   },
   async mailbox(session: SessionResponse, signal?: AbortSignal) {
@@ -610,7 +659,13 @@ export function errorMessage(error: unknown): string {
   if (error instanceof FrontendApiError) {
     if (error.code === 'invalid_credentials')
       return 'That email and password do not match. Please try again.';
+    if (error.code === 'not_operator')
+      return 'Your operator session has expired. Sign in again to continue.';
     if (error.status === 401) return 'Your session has expired. Sign in again to continue.';
+    if (error.code === 'tenant_not_found') return 'No tenant has that id. Check it and try again.';
+    if (error.code === 'email_taken') return 'A mailbox with that email already exists.';
+    if (error.code.startsWith('invalid_body:'))
+      return `Check these fields: ${error.code.slice('invalid_body:'.length).trim()}`;
     if (error.code === 'attachments_unavailable')
       return 'Downloads are temporarily unavailable. Please try again later.';
     if (error.status === 429) return 'Too many requests. Please try again in a moment.';

@@ -8,7 +8,7 @@ export const operatorInputSchema = z.object({
     .email()
     .max(254)
     .transform((email) => email.toLowerCase()),
-  password: z.string().min(12).max(256),
+  password: z.string().min(6).max(256),
 });
 
 export type OperatorInput = z.infer<typeof operatorInputSchema>;

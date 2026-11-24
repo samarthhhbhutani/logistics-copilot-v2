@@ -278,6 +278,35 @@ h2 {
 .loginFormWrap .formError {
   margin-top: 14px;
 }
+.operatorLayout {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 40px 24px 64px;
+}
+.operatorHeader {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-bottom: 36px;
+}
+.operatorHeader .muted {
+  margin: 0 auto 0 0;
+}
+.operatorForms {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 48px;
+  align-items: start;
+}
+.operatorForms .loginFormWrap {
+  max-width: none;
+}
+.formSuccess {
+  margin-top: 14px;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
 .signInButton {
   width: 100%;
   justify-content: space-between;

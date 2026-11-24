@@ -60,6 +60,10 @@ const { tenantId } = await repositories.tenantRepository.createTenant({
   pushServiceAccountEmail: 'push@synthetic.iam.gserviceaccount.com',
 });
 const passwordHash = await hashPassword('frontend-test-password');
+await repositories.operatorRepository.upsertOperator({
+  email: 'operator@example.com',
+  passwordHash: await hashPassword('operator-test-password'),
+});
 const inlineImageEmail = await parseRawEmail(
   await readFile(
     new URL(

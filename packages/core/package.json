@@ -42,7 +42,7 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:status": "prisma migrate status",
-    "operator:create": "node dist/operators/createOperatorScript.js"
+    "operator:create": "node --env-file-if-exists=../../.env dist/operators/createOperatorScript.js"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.10.0",

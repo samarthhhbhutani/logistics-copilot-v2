@@ -49,7 +49,7 @@ describe('bootstrapOperator', () => {
   it('rejects a short password or a non-email before touching the repository', async () => {
     const repository = createInMemoryOperatorRepository();
     await expect(
-      bootstrapOperator({ email: 'ops@example.com', password: 'short' }, repository),
+      bootstrapOperator({ email: 'ops@example.com', password: 'tiny' }, repository),
     ).rejects.toThrow();
     await expect(
       bootstrapOperator({ email: 'not-an-email', password: 'long enough password' }, repository),
