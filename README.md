@@ -120,9 +120,11 @@ ever needed). `requireSession` guards every session-scoped route and exposes the
 
 `operators` (`packages/core/src/operators`) holds who may run the operator routes: email plus an
 argon2id hash, tied to no tenant. Accounts are never created over HTTP; a human runs
-`OPERATOR_EMAIL=… OPERATOR_PASSWORD=… DATABASE_URL=… npm run operator:create` (`createOperatorScript`,
-`bootstrapOperator`), which also resets the password of an existing email. Passwords are 12 to 256
-characters. There is one operator cookie (`lc_operator`, 8 hours) and no operator UI yet.
+`OPERATOR_EMAIL=… OPERATOR_PASSWORD=… npm run operator:create` (dev database from `.env`; set
+`DATABASE_URL` in the shell to target staging or production) (`createOperatorScript`,
+`bootstrapOperator`), which also resets the password of an existing email. Passwords are 6 to 256
+characters, like mailbox logins. There is one operator cookie (`lc_operator`, 8 hours); the frontend's `/operator` page
+(`operatorPage.tsx`) is the console: sign in, create a tenant, create its mailboxes.
 
 ## Stored body text
 

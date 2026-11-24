@@ -5,6 +5,7 @@ import type { SessionResponse } from '@lc/contract';
 import { errorMessage, frontendApi } from './frontendApi.js';
 import { LoginPage } from './loginPage.js';
 import { MailboxPage } from './mailboxPage.js';
+import { OperatorPage } from './operatorPage.js';
 import { RfqsPage } from './rfqsPage.js';
 
 function SessionPage() {
@@ -77,6 +78,7 @@ export function FrontendApp() {
       <Route path="/login" element={<SessionPage />} />
       <Route path="/mailbox" element={<SessionPage />} />
       <Route path="/rfqs" element={<SessionPage />} />
+      <Route path="/operator" element={<OperatorPage />} />
       <Route
         path="*"
         element={
