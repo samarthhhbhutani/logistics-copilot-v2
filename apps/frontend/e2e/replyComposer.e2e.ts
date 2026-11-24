@@ -2,10 +2,12 @@ import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
-// "Shipment update 11" is claimed by this spec alone; the synthetic server keeps every send for the
-// whole run, and each send here mints its own id, so nothing a later test reads changes.
+// "Shipment update 11" and "Shipment update 12" are claimed by this spec alone; the synthetic server
+// keeps every send for the whole run, and each send here mints its own id, so nothing a later test
+// reads changes.
 const rfqSubject = 'RFQ: Mumbai to Rotterdam · 2 × 40ft';
 const subject = 'Shipment update 11';
+const attachmentsSubject = 'Shipment update 12';
 
 function messageLink(page: Page, subject: string) {
   return page.getByRole('link').filter({ has: page.getByText(subject, { exact: true }) });
@@ -116,4 +118,114 @@ test('replies to the newest inbound mail of a conversation from under the messag
   await composer.getByRole('button', { name: 'Write another reply', exact: true }).click();
   await expect(message).toBeEnabled();
   await expect(message).toHaveValue('');
+});
+
+test('attaches files as they are picked, carries them again after Gmail refuses, and lists them on the sent reply', async ({
+  page,
+}) => {
+  await signIn(page);
+  await messageLink(page, attachmentsSubject).click();
+  await expect(page.getByRole('heading', { name: attachmentsSubject, exact: true })).toBeVisible();
+  const composer = page.getByRole('region', { name: 'Reply', exact: true });
+  const attachedFiles = composer.getByRole('list', { name: 'Attached files' });
+  const fileInput = composer.locator('input[type="file"]');
+
+  // Each pick is uploaded at once, in order; the chips show the stored files.
+  const uploads: string[] = [];
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && request.url().includes('/reply-attachments')) {
+      uploads.push(new URL(request.url()).searchParams.get('fileName') ?? '');
+    }
+  });
+  await fileInput.setInputFiles([
+    { name: 'rates.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 rates') },
+    { name: 'terms.txt', mimeType: 'text/plain', buffer: Buffer.from('Payment within 30 days.') },
+  ]);
+  await expect(attachedFiles.getByRole('listitem')).toHaveText([
+    /rates\.pdf\s*14 bytes/,
+    /terms\.txt\s*23 bytes/,
+  ]);
+  expect(uploads).toEqual(['rates.pdf', 'terms.txt']);
+
+  // A file Gmail would refuse is turned down on the page, before any upload, and the rest stay.
+  await fileInput.setInputFiles([
+    { name: 'setup.exe', mimeType: 'application/octet-stream', buffer: Buffer.from('MZ') },
+  ]);
+  await expect(composer.getByRole('alert')).toHaveText(
+    'setup.exe: Gmail does not deliver files of this type. Zip it with a different name or share it another way.',
+  );
+  expect(uploads).toEqual(['rates.pdf', 'terms.txt']);
+
+  // Removing a chip deletes the upload.
+  const deleted = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'DELETE' && response.url().includes('/reply-attachments/'),
+  );
+  await attachedFiles.getByRole('button', { name: 'Remove terms.txt', exact: true }).click();
+  expect((await deleted).status()).toBe(204);
+  await expect(attachedFiles.getByRole('listitem')).toHaveText([/rates\.pdf/]);
+
+  // Gmail refuses the first send: the API answers 502 with the failed row, and the files it named
+  // stay unsent on the page, so the retry under a new id carries the same ids.
+  const sendBodies: { sentMailId: string; attachmentIds?: string[] }[] = [];
+  await page.route('**/v1/mailbox/emails/*/replies', async (route, request) => {
+    const body = request.postDataJSON() as { sentMailId: string; attachmentIds?: string[] };
+    sendBodies.push(body);
+    if (sendBodies.length > 1) {
+      await route.fallback();
+      return;
+    }
+    const now = new Date().toISOString();
+    await route.fulfill({
+      status: 502,
+      json: {
+        error: 'send_failed',
+        sentMail: {
+          id: body.sentMailId,
+          kind: 'reply',
+          status: 'failed',
+          inReplyToEmailId: new URL(request.url()).pathname.split('/').at(-2),
+          rfqId: null,
+          vendorId: null,
+          vendorContactId: null,
+          gmailThreadId: 'thread-e2e',
+          rfcMessageId: '<e2e@example.com>',
+          toRecipients: [{ name: 'Coastal Shipping', address: 'ravi@example.com' }],
+          ccRecipients: [],
+          subject: `Re: ${attachmentsSubject}`,
+          bodyText: 'Attached as discussed.',
+          gmailMessageId: null,
+          errorCode: 'bad_request',
+          attachments: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+    });
+  });
+  await composer.getByLabel('Message', { exact: true }).fill('Attached as discussed.');
+  await composer.getByRole('button', { name: 'Send reply', exact: true }).click();
+  await expect(composer.getByRole('alert')).toHaveText(
+    'Reply not sent. Gmail rejected the message. Check the address and the text.',
+  );
+  await expect(attachedFiles.getByRole('listitem')).toHaveText([/rates\.pdf/]);
+
+  await composer.getByRole('button', { name: 'Try again', exact: true }).click();
+  await expect(composer.getByRole('status')).toHaveText(
+    'Reply sent to ravi@example.com with 1 file.',
+  );
+  expect(sendBodies).toHaveLength(2);
+  expect(sendBodies[0]!.attachmentIds).toHaveLength(1);
+  expect(sendBodies[1]!.attachmentIds).toEqual(sendBodies[0]!.attachmentIds);
+  expect(sendBodies[1]!.sentMailId).not.toBe(sendBodies[0]!.sentMailId);
+  await expect(composer.getByRole('button', { name: 'Attach files', exact: true })).toBeDisabled();
+  await expect(
+    attachedFiles.getByRole('button', { name: 'Remove rates.pdf', exact: true }),
+  ).toBeDisabled();
+  await page.unroute('**/v1/mailbox/emails/*/replies');
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+
+  await composer.getByRole('button', { name: 'Write another reply', exact: true }).click();
+  await expect(attachedFiles).toHaveCount(0);
+  await expect(composer.getByRole('button', { name: 'Attach files', exact: true })).toBeEnabled();
 });

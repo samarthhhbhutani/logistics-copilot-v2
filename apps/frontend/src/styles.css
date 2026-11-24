@@ -1879,3 +1879,52 @@ a.emailRow:focus-visible {
     justify-self: start;
   }
 }
+.replyField .replyFieldLabel {
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 0.84rem;
+}
+.attachedFiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.attachedFile {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 6px 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+.attachedFileName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attachedFileRemove {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.attachedFileRemove:hover,
+.attachedFileRemove:focus-visible {
+  color: var(--ink);
+  background: var(--line);
+}
+.attachedFileRemove:disabled {
+  cursor: default;
+  opacity: 0.5;
+}

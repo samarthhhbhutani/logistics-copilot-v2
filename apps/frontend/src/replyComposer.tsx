@@ -1,13 +1,20 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { Check, RefreshCw, Send, TriangleAlert } from 'lucide-react';
-import type { EmailDetailResponse, SentMailResponse, SessionResponse } from '@lc/contract';
+import type {
+  EmailDetailResponse,
+  ReplyAttachmentResponse,
+  SendReplyBody,
+  SentMailResponse,
+  SessionResponse,
+} from '@lc/contract';
 import { MAX_REPLY_TEXT_LENGTH } from '@lc/contract';
 import { errorMessage, frontendApi, FrontendApiError, isUnauthenticated } from './frontendApi.js';
 import { describeSentMailStatus } from './rfqSend.js';
 import { AskCopilot } from './askCopilot.js';
 import { parseReplyCc } from './replyCcRecipients.js';
 import type { ReplyCcRecipient } from './replyCcRecipients.js';
+import { ReplyAttachmentsField } from './replyAttachmentsField.js';
 
 /** The mail a reply answers: the thread's newest inbound message (`emails` arrive oldest first). */
 export function newestInboundEmail(emails: EmailDetailResponse[]): EmailDetailResponse | undefined {
@@ -20,7 +27,8 @@ export function newestInboundEmail(emails: EmailDetailResponse[]): EmailDetailRe
 /**
  * Writes a plain-text reply to one inbound mail and sends it from the operator's mailbox; the API
  * adds the subject, the To recipient, the threading headers and the mailbox signature. Cc is the
- * operator's choice, typed as addresses separated by commas.
+ * operator's choice, typed as addresses separated by commas. Files are uploaded as they are picked
+ * and the send names their ids; a refused send leaves them unsent, so the retry carries them again.
  *
  * `sentMailId` is the idempotency key the API expects: it is kept across a retry of a request that
  * never answered (the same id can only ever produce one mail) and replaced after a `failed` answer
@@ -49,17 +57,19 @@ export function ReplyComposer({
   const [bodyText, setBodyText] = useState('');
   const [ccText, setCcText] = useState('');
   const [ccProblem, setCcProblem] = useState<string | null>(null);
+  const [attachments, setAttachments] = useState<ReplyAttachmentResponse[]>([]);
   const [sentMailId, setSentMailId] = useState(() => crypto.randomUUID());
   const [sentMail, setSentMail] = useState<SentMailResponse | null>(null);
   const [validationMessage, setValidationMessage] = useState<string | null>(null);
   const send = useMutation({
-    mutationFn: ({ text, cc }: { text: string; cc: ReplyCcRecipient[] }) =>
-      frontendApi.sendReply(
-        session,
-        email.id,
-        // The API defaults cc to none; leave it out rather than send an empty list.
-        cc.length > 0 ? { sentMailId, text, cc } : { sentMailId, text },
-      ),
+    mutationFn: ({ text, cc }: { text: string; cc: ReplyCcRecipient[] }) => {
+      // The API defaults cc and attachmentIds to none; leave them out rather than send empty lists.
+      const body: SendReplyBody = { sentMailId, text };
+      if (cc.length > 0) body.cc = cc;
+      if (attachments.length > 0)
+        body.attachmentIds = attachments.map((attachment) => attachment.id);
+      return frontendApi.sendReply(session, email.id, body);
+    },
     onSuccess: (mail) => {
       setSentMail(mail);
       // The failed row keeps this id; the next attempt needs its own.
@@ -67,7 +77,12 @@ export function ReplyComposer({
       if (mail.status === 'sent') onSent?.(mail);
     },
     onError: (error) => {
-      if (error instanceof FrontendApiError && error.code === 'sent_mail_id_taken') {
+      // sent_mail_id_taken: the id is someone else's. attachment_not_found: a file vanished before
+      // the send and the API failed the row under this id. Either way the next attempt needs its own.
+      if (
+        error instanceof FrontendApiError &&
+        (error.code === 'sent_mail_id_taken' || error.code === 'attachment_not_found')
+      ) {
         setSentMailId(crypto.randomUUID());
       }
     },
@@ -112,6 +127,8 @@ export function ReplyComposer({
     setSentMailId(crypto.randomUUID());
     setSentMail(null);
     setBodyText('');
+    // The files went with the sent mail; the next reply starts without any.
+    setAttachments([]);
     setValidationMessage(null);
     send.reset();
   }
@@ -190,6 +207,12 @@ export function ReplyComposer({
           </p>
         )}
       </div>
+      <ReplyAttachmentsField
+        session={session}
+        attachments={attachments}
+        onAttachmentsChange={setAttachments}
+        disabled={handedOff || send.isPending}
+      />
       <div className="replyComposerActions">
         {sentMail?.status !== 'sent' && (
           <button className="button" aria-disabled={send.isPending} onClick={submit}>
@@ -220,6 +243,9 @@ export function ReplyComposer({
           Reply sent to {email.sender.email}
           {sentMail && sentMail.ccRecipients.length > 0
             ? `, cc ${sentMail.ccRecipients.map((recipient) => recipient.address).join(', ')}`
+            : ''}
+          {sentMail && sentMail.attachments.length > 0
+            ? ` with ${sentMail.attachments.length} ${sentMail.attachments.length === 1 ? 'file' : 'files'}`
             : ''}
           .
         </p>
