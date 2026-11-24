@@ -3,7 +3,7 @@ import {
   fileNameExtension,
   isGmailBlockedExtension,
   hasGmailBlockedExtension,
-} from './replyAttachments.js';
+} from './outboundAttachments.js';
 
 describe('fileNameExtension', () => {
   it('takes the last dot, lower-cased, and has none for dotless, dot-leading or dot-trailing names', () => {

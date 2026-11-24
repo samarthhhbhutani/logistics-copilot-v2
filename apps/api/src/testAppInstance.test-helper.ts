@@ -15,8 +15,8 @@ import type { AttachmentDownloadUrlSigner } from './emails/attachmentDownloadUrl
 import { createInMemoryRepositories } from './inMemoryRepositories.test-helper.js';
 import { createFakeSignatureImageStore } from './fakeSignatureImageStore.test-helper.js';
 import type { FakeSignatureImageStore } from './fakeSignatureImageStore.test-helper.js';
-import { createFakeReplyAttachmentStore } from './fakeReplyAttachmentStore.test-helper.js';
-import type { FakeReplyAttachmentStore } from './fakeReplyAttachmentStore.test-helper.js';
+import { createFakeOutboundAttachmentStore } from './fakeOutboundAttachmentStore.test-helper.js';
+import type { FakeOutboundAttachmentStore } from './fakeOutboundAttachmentStore.test-helper.js';
 
 export const testSessionSecret = 'test-session-secret-that-is-at-least-32-chars';
 
@@ -42,7 +42,7 @@ export interface TestAppOptions {
   /** Default on: an in-memory bucket for signature images. Off exercises the 503 path. */
   signatureImagesEnabled?: boolean;
   /** Default on: an in-memory bucket for reply attachments. Off exercises the 503 path. */
-  replyAttachmentsEnabled?: boolean;
+  outboundAttachmentsEnabled?: boolean;
 }
 
 export interface TestApp {
@@ -52,7 +52,7 @@ export interface TestApp {
   gmailSender: FakeGmailSender;
   encryptionUtil: EncryptionUtil;
   signatureImageStore: FakeSignatureImageStore;
-  replyAttachmentStore: FakeReplyAttachmentStore;
+  outboundAttachmentStore: FakeOutboundAttachmentStore;
   repositories: ReturnType<typeof createInMemoryRepositories>;
 }
 
@@ -70,7 +70,7 @@ export function createTestApp({
   rfqMailDrafter,
   agentReplyProposer,
   signatureImagesEnabled = true,
-  replyAttachmentsEnabled = true,
+  outboundAttachmentsEnabled = true,
 }: TestAppOptions = {}): TestApp {
   const config = loadConfig({
     STAGE: stage,
@@ -83,7 +83,7 @@ export function createTestApp({
   const gmailWatch = createFakeGmailWatch();
   const gmailSender = createFakeGmailSender();
   const signatureImageStore = createFakeSignatureImageStore();
-  const replyAttachmentStore = createFakeReplyAttachmentStore();
+  const outboundAttachmentStore = createFakeOutboundAttachmentStore();
   const encryptionUtil = createEncryptionUtil(randomBytes(32).toString('base64'));
   const app = createAppInstance({
     config,
@@ -96,7 +96,7 @@ export function createTestApp({
     rfqMailDrafter,
     agentReplyProposer,
     signatureImageStore: signatureImagesEnabled ? signatureImageStore : undefined,
-    replyAttachmentStore: replyAttachmentsEnabled ? replyAttachmentStore : undefined,
+    outboundAttachmentStore: outboundAttachmentsEnabled ? outboundAttachmentStore : undefined,
     gmailOAuth,
     gmailWatch,
     gmailSender,
@@ -110,7 +110,7 @@ export function createTestApp({
     gmailSender,
     encryptionUtil,
     signatureImageStore,
-    replyAttachmentStore,
+    outboundAttachmentStore,
     repositories,
   };
 }

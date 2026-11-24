@@ -1,6 +1,6 @@
-import type { ReplyAttachmentStore } from './sending/replyAttachmentStore.js';
+import type { OutboundAttachmentStore } from './sending/outboundAttachmentStore.js';
 
-export interface FakeReplyAttachmentStore extends ReplyAttachmentStore {
+export interface FakeOutboundAttachmentStore extends OutboundAttachmentStore {
   /** What has been put and not deleted, by S3 key. */
   objects: Map<string, { content: Uint8Array; contentType: string }>;
   /** Make the next deleteAttachment throw, to exercise the row-deleted-object-left path. */
@@ -8,8 +8,8 @@ export interface FakeReplyAttachmentStore extends ReplyAttachmentStore {
 }
 
 /** Stands in for the raw-mail bucket: keeps the uploaded bytes in memory. */
-export function createFakeReplyAttachmentStore(): FakeReplyAttachmentStore {
-  const fake: FakeReplyAttachmentStore = {
+export function createFakeOutboundAttachmentStore(): FakeOutboundAttachmentStore {
+  const fake: FakeOutboundAttachmentStore = {
     objects: new Map(),
     failNextDelete: false,
     async putAttachment(s3Key, content, contentType) {

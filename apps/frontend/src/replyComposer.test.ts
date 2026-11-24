@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   AgentRunResponse,
   EmailDetailResponse,
-  ReplyAttachmentResponse,
+  OutboundAttachmentResponse,
   SentMailResponse,
 } from '@lc/contract';
 import { frontendApi, FrontendApiError } from './frontendApi.js';
@@ -42,7 +42,7 @@ function sentMail(
   status: SentMailResponse['status'],
   errorCode: string | null = null,
   ccRecipients: SentMailResponse['ccRecipients'] = [],
-  attachments: ReplyAttachmentResponse[] = [],
+  attachments: OutboundAttachmentResponse[] = [],
 ) {
   return {
     id,
@@ -66,7 +66,7 @@ function sentMail(
   } satisfies SentMailResponse;
 }
 /** The uploads the composer has made so far, by id, so a send can list the ones its body names. */
-const uploaded = new Map<string, ReplyAttachmentResponse>();
+const uploaded = new Map<string, OutboundAttachmentResponse>();
 /** Answers each send with the given status, under whatever id the composer minted; a sent mail lists the named files. */
 function answerSends(...statuses: (SentMailResponse['status'] | Error)[]) {
   const sendReply = vi.spyOn(frontendApi, 'sendReply');
@@ -89,8 +89,8 @@ function answerSends(...statuses: (SentMailResponse['status'] | Error)[]) {
 }
 /** Stores every picked file under the next id, as the API would. */
 function acceptUploads() {
-  return vi.spyOn(frontendApi, 'uploadReplyAttachment').mockImplementation((_session, file) => {
-    const attachment: ReplyAttachmentResponse = {
+  return vi.spyOn(frontendApi, 'uploadOutboundAttachment').mockImplementation((_session, file) => {
+    const attachment: OutboundAttachmentResponse = {
       id: `00000000-0000-4000-8000-0000000000a${uploaded.size + 1}`,
       fileName: file.name,
       contentType: file.type,
@@ -353,7 +353,7 @@ describe('ReplyComposer', () => {
 
   it('leaves attachmentIds out of a reply without files and mints a new id after attachment_not_found', async () => {
     acceptUploads();
-    vi.spyOn(frontendApi, 'deleteReplyAttachment').mockResolvedValue();
+    vi.spyOn(frontendApi, 'deleteOutboundAttachment').mockResolvedValue();
     const sendReply = answerSends(new FrontendApiError(409, 'attachment_not_found'), 'sent');
     await render();
     await type('Dear Ravi');

@@ -133,7 +133,7 @@ test('attaches files as they are picked, carries them again after Gmail refuses,
   // Each pick is uploaded at once, in order; the chips show the stored files.
   const uploads: string[] = [];
   page.on('request', (request) => {
-    if (request.method() === 'POST' && request.url().includes('/reply-attachments')) {
+    if (request.method() === 'POST' && request.url().includes('/outbound-attachments')) {
       uploads.push(new URL(request.url()).searchParams.get('fileName') ?? '');
     }
   });
@@ -159,7 +159,7 @@ test('attaches files as they are picked, carries them again after Gmail refuses,
   // Removing a chip deletes the upload.
   const deleted = page.waitForResponse(
     (response) =>
-      response.request().method() === 'DELETE' && response.url().includes('/reply-attachments/'),
+      response.request().method() === 'DELETE' && response.url().includes('/outbound-attachments/'),
   );
   await attachedFiles.getByRole('button', { name: 'Remove terms.txt', exact: true }).click();
   expect((await deleted).status()).toBe(204);

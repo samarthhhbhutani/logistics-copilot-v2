@@ -3,7 +3,7 @@ import { useMutation } from '@tanstack/react-query';
 import { Check, RefreshCw, Send, TriangleAlert } from 'lucide-react';
 import type {
   EmailDetailResponse,
-  ReplyAttachmentResponse,
+  OutboundAttachmentResponse,
   SendReplyBody,
   SentMailResponse,
   SessionResponse,
@@ -14,7 +14,7 @@ import { describeSentMailStatus } from './rfqSend.js';
 import { AskCopilot } from './askCopilot.js';
 import { parseReplyCc } from './replyCcRecipients.js';
 import type { ReplyCcRecipient } from './replyCcRecipients.js';
-import { ReplyAttachmentsField } from './replyAttachmentsField.js';
+import { OutboundAttachmentsField } from './outboundAttachmentsField.js';
 
 /** The mail a reply answers: the thread's newest inbound message (`emails` arrive oldest first). */
 export function newestInboundEmail(emails: EmailDetailResponse[]): EmailDetailResponse | undefined {
@@ -57,7 +57,7 @@ export function ReplyComposer({
   const [bodyText, setBodyText] = useState('');
   const [ccText, setCcText] = useState('');
   const [ccProblem, setCcProblem] = useState<string | null>(null);
-  const [attachments, setAttachments] = useState<ReplyAttachmentResponse[]>([]);
+  const [attachments, setAttachments] = useState<OutboundAttachmentResponse[]>([]);
   const [sentMailId, setSentMailId] = useState(() => crypto.randomUUID());
   const [sentMail, setSentMail] = useState<SentMailResponse | null>(null);
   const [validationMessage, setValidationMessage] = useState<string | null>(null);
@@ -207,7 +207,7 @@ export function ReplyComposer({
           </p>
         )}
       </div>
-      <ReplyAttachmentsField
+      <OutboundAttachmentsField
         session={session}
         attachments={attachments}
         onAttachmentsChange={setAttachments}

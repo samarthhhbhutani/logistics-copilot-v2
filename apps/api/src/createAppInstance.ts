@@ -15,7 +15,7 @@ import type {
   GmailWatch,
   MailboxConnectionRepository,
   MailboxCredentialsRepository,
-  ReplyAttachmentRepository,
+  OutboundAttachmentRepository,
   RfqMailDrafter,
   RfqRepository,
   RfqSuggester,
@@ -40,8 +40,8 @@ import { createRfqDraftsRouter } from './rfqs/rfqDraftsRouter.js';
 import { createRfqsRouter } from './rfqs/rfqsRouter.js';
 import { createRfqSuggestionsRouter } from './rfqs/rfqSuggestionsRouter.js';
 import { createEmailRepliesRouter } from './sending/emailRepliesRouter.js';
-import { createReplyAttachmentsRouter } from './sending/replyAttachmentsRouter.js';
-import type { ReplyAttachmentStore } from './sending/replyAttachmentStore.js';
+import { createOutboundAttachmentsRouter } from './sending/outboundAttachmentsRouter.js';
+import type { OutboundAttachmentStore } from './sending/outboundAttachmentStore.js';
 import { createSignatureImagesRouter } from './signature/signatureImagesRouter.js';
 import type { SignatureImageStore } from './signature/signatureImageStore.js';
 import { createTenantsRouter } from './tenants/tenantsRouter.js';
@@ -59,14 +59,14 @@ export interface AppDependencies {
   sentMailRepository: SentMailRepository;
   rfqRepository: RfqRepository;
   signatureImageRepository: SignatureImageRepository;
-  replyAttachmentRepository: ReplyAttachmentRepository;
+  outboundAttachmentRepository: OutboundAttachmentRepository;
   agentRunRepository: AgentRunRepository;
   /** Runs the copilot for a thread; undefined without an OpenAI key, so POST /agent/runs answers 503. */
   agentReplyProposer: AgentReplyProposer | undefined;
   /** Stores signature images in the raw-mail bucket; undefined without one, so image routes answer 503 and mails go out without them. */
   signatureImageStore: SignatureImageStore | undefined;
   /** Stores the files an operator attaches to a reply in the raw-mail bucket; undefined without one, so the upload routes answer 503. */
-  replyAttachmentStore: ReplyAttachmentStore | undefined;
+  outboundAttachmentStore: OutboundAttachmentStore | undefined;
   /** Presigns S3 download links; undefined when no bucket is configured, so download links answer 503. */
   attachmentDownloadUrlSigner: AttachmentDownloadUrlSigner | undefined;
   /** Reads shipment details out of a customer mail; undefined without an OpenAI key, so the route answers 503. */
@@ -107,11 +107,11 @@ export function createAppInstance({
   sentMailRepository,
   rfqRepository,
   signatureImageRepository,
-  replyAttachmentRepository,
+  outboundAttachmentRepository,
   agentRunRepository,
   agentReplyProposer,
   signatureImageStore,
-  replyAttachmentStore,
+  outboundAttachmentStore,
   attachmentDownloadUrlSigner,
   rfqSuggester,
   attachmentContentReader,
@@ -199,16 +199,16 @@ export function createAppInstance({
       encryptionUtil,
       signatureImageRepository,
       signatureImageStore,
-      replyAttachmentRepository,
-      replyAttachmentStore,
+      outboundAttachmentRepository,
+      outboundAttachmentStore,
       requireSession,
     }),
   );
   v1Router.use(
-    '/mailbox/reply-attachments',
-    createReplyAttachmentsRouter({
-      replyAttachmentRepository,
-      replyAttachmentStore,
+    '/mailbox/outbound-attachments',
+    createOutboundAttachmentsRouter({
+      outboundAttachmentRepository,
+      outboundAttachmentStore,
       requireSession,
     }),
   );

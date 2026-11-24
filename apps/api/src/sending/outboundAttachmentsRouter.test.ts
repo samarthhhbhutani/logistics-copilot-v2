@@ -1,13 +1,13 @@
 import { createHash } from 'node:crypto';
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
-import { REPLY_ATTACHMENT_MAX_BYTES } from '@lc/contract';
+import { OUTBOUND_ATTACHMENT_MAX_BYTES } from '@lc/contract';
 import { testTenantBody } from '../tenantFixture.test-helper.js';
 import { createTestApp, testMailboxEmail } from '../testAppInstance.test-helper.js';
 import type { TestApp } from '../testAppInstance.test-helper.js';
 
 const password = 'a-long-enough-password';
-const attachmentsPath = '/v1/mailbox/reply-attachments';
+const attachmentsPath = '/v1/mailbox/outbound-attachments';
 /** Enough of a PDF header for file-type to recognise it. */
 const tinyPdf = Buffer.concat([Buffer.from('%PDF-1.7\n', 'ascii'), Buffer.alloc(16, 0)]);
 /** The DOS header file-type reads as an executable. */
@@ -47,7 +47,7 @@ function upload(
   return (contentType ? pending.set('Content-Type', contentType) : pending).send(content);
 }
 
-describe('/v1/mailbox/reply-attachments', () => {
+describe('/v1/mailbox/outbound-attachments', () => {
   it('stores the bytes under the tenant, records the row unsent, and deletes while no mail carries it', async () => {
     const testApp = createTestApp();
     const { cookie, mailboxId, tenantId } = await signedInMailbox(testApp);
@@ -62,11 +62,11 @@ describe('/v1/mailbox/reply-attachments', () => {
       createdAt: expect.any(String),
     });
     const s3Key = `${tenantId}/outbound/${mailboxId}/${uploaded.body.id}`;
-    expect(testApp.replyAttachmentStore.objects.get(s3Key)).toEqual({
+    expect(testApp.outboundAttachmentStore.objects.get(s3Key)).toEqual({
       content: tinyPdf,
       contentType: 'application/pdf',
     });
-    const [row] = await testApp.repositories.replyAttachmentRepository.findReplyAttachments(
+    const [row] = await testApp.repositories.outboundAttachmentRepository.findOutboundAttachments(
       { tenantId, mailboxId },
       [uploaded.body.id],
     );
@@ -80,7 +80,7 @@ describe('/v1/mailbox/reply-attachments', () => {
       .delete(`${attachmentsPath}/${uploaded.body.id}`)
       .set('Cookie', cookie);
     expect(deleted.status).toBe(204);
-    expect(testApp.replyAttachmentStore.objects.size).toBe(0);
+    expect(testApp.outboundAttachmentStore.objects.size).toBe(0);
     expect(
       (
         await request(testApp.app)
@@ -109,7 +109,7 @@ describe('/v1/mailbox/reply-attachments', () => {
     const testApp = createTestApp();
     const { cookie, mailboxId, tenantId } = await signedInMailbox(testApp);
     const uploaded = await upload(testApp, cookie, tinyPdf, 'Rate card.pdf', 'application/pdf');
-    const changed = await testApp.repositories.replyAttachmentRepository.attachToSentMail(
+    const changed = await testApp.repositories.outboundAttachmentRepository.attachToSentMail(
       { tenantId, mailboxId },
       [uploaded.body.id],
       '00000000-0000-4000-8000-000000000050',
@@ -119,19 +119,19 @@ describe('/v1/mailbox/reply-attachments', () => {
       .delete(`${attachmentsPath}/${uploaded.body.id}`)
       .set('Cookie', cookie);
     expect(deleted.status).toBe(404);
-    expect(testApp.replyAttachmentStore.objects.size).toBe(1);
+    expect(testApp.outboundAttachmentStore.objects.size).toBe(1);
   });
 
   it('keeps the row deletion even when the bucket delete fails', async () => {
     const testApp = createTestApp();
     const { cookie } = await signedInMailbox(testApp);
     const uploaded = await upload(testApp, cookie, csv, 'eta.csv', 'text/csv');
-    testApp.replyAttachmentStore.failNextDelete = true;
+    testApp.outboundAttachmentStore.failNextDelete = true;
     const deleted = await request(testApp.app)
       .delete(`${attachmentsPath}/${uploaded.body.id}`)
       .set('Cookie', cookie);
     expect(deleted.status).toBe(204);
-    expect(testApp.replyAttachmentStore.objects.size).toBe(1);
+    expect(testApp.outboundAttachmentStore.objects.size).toBe(1);
     expect(
       (
         await request(testApp.app)
@@ -160,7 +160,7 @@ describe('/v1/mailbox/reply-attachments', () => {
     const oversize = await upload(
       testApp,
       cookie,
-      Buffer.alloc(REPLY_ATTACHMENT_MAX_BYTES + 1, 1),
+      Buffer.alloc(OUTBOUND_ATTACHMENT_MAX_BYTES + 1, 1),
       'big.bin',
       'application/octet-stream',
     );
@@ -174,18 +174,18 @@ describe('/v1/mailbox/reply-attachments', () => {
       .send(csv);
     expect(unnamed.status).toBe(400);
 
-    expect(testApp.replyAttachmentStore.objects.size).toBe(0);
+    expect(testApp.outboundAttachmentStore.objects.size).toBe(0);
     expect(
       (await request(testApp.app).post(attachmentsPath).query({ fileName: 'x.csv' })).status,
     ).toBe(401);
   });
 
   it('answers 503 without a bucket', async () => {
-    const testApp = createTestApp({ replyAttachmentsEnabled: false });
+    const testApp = createTestApp({ outboundAttachmentsEnabled: false });
     const { cookie } = await signedInMailbox(testApp);
     const uploaded = await upload(testApp, cookie, csv, 'eta.csv', 'text/csv');
     expect(uploaded.status).toBe(503);
-    expect(uploaded.body.error).toBe('reply_attachments_unavailable');
+    expect(uploaded.body.error).toBe('outbound_attachments_unavailable');
     const deleted = await request(testApp.app)
       .delete(`${attachmentsPath}/00000000-0000-4000-8000-00000000000a`)
       .set('Cookie', cookie);

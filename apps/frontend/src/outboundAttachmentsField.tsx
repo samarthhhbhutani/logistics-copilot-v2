@@ -1,11 +1,14 @@
 import { useId, useRef, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { Paperclip, X } from 'lucide-react';
-import type { ReplyAttachmentResponse, SessionResponse } from '@lc/contract';
-import { REPLY_ATTACHMENTS_MAX_PER_REPLY, REPLY_ATTACHMENTS_MAX_TOTAL_BYTES } from '@lc/contract';
+import type { OutboundAttachmentResponse, SessionResponse } from '@lc/contract';
+import {
+  OUTBOUND_ATTACHMENTS_MAX_PER_MAIL,
+  OUTBOUND_ATTACHMENTS_MAX_TOTAL_BYTES,
+} from '@lc/contract';
 import { errorMessage, frontendApi, FrontendApiError } from './frontendApi.js';
 
-/** "812 bytes", "40.5 KB", "9.8 MB": enough precision to see which file fills the reply. */
+/** "812 bytes", "40.5 KB", "9.8 MB": enough precision to see which file fills the mail. */
 export function formatFileSize(sizeBytes: number): string {
   const oneDecimal = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
   if (sizeBytes < 1024) return `${sizeBytes} bytes`;
@@ -14,21 +17,21 @@ export function formatFileSize(sizeBytes: number): string {
 }
 
 /**
- * The files a reply carries. Each pick is uploaded at once (one request per file, in the order
- * picked) so the send only names ids; a file that the server or the per-reply caps refuse stops the
+ * The files an outgoing mail carries. Each pick is uploaded at once (one request per file, in the
+ * order picked) so the send only names ids; a file that the server or the per-mail caps refuse stops the
  * batch there, with the files before it kept and the reason shown under the list. Removing a chip
- * deletes the upload. The composer owns the list: it sends the ids and clears them for the next reply.
+ * deletes the upload. The composer owns the list: it sends the ids and clears them for the next mail.
  */
-export function ReplyAttachmentsField({
+export function OutboundAttachmentsField({
   session,
   attachments,
   onAttachmentsChange,
   disabled,
 }: {
   session: SessionResponse;
-  attachments: ReplyAttachmentResponse[];
-  onAttachmentsChange: (attachments: ReplyAttachmentResponse[]) => void;
-  /** The reply is sending or sent: the list is frozen with it. */
+  attachments: OutboundAttachmentResponse[];
+  onAttachmentsChange: (attachments: OutboundAttachmentResponse[]) => void;
+  /** The mail is sending or sent: the list is frozen with it. */
   disabled: boolean;
 }) {
   const hintId = useId();
@@ -40,14 +43,14 @@ export function ReplyAttachmentsField({
       let attached = attachments;
       for (const file of files) {
         try {
-          if (attached.length >= REPLY_ATTACHMENTS_MAX_PER_REPLY) {
+          if (attached.length >= OUTBOUND_ATTACHMENTS_MAX_PER_MAIL) {
             throw new FrontendApiError(413, 'attachment_limit_reached');
           }
           const totalBytes = attached.reduce((sum, attachment) => sum + attachment.sizeBytes, 0);
-          if (totalBytes + file.size > REPLY_ATTACHMENTS_MAX_TOTAL_BYTES) {
+          if (totalBytes + file.size > OUTBOUND_ATTACHMENTS_MAX_TOTAL_BYTES) {
             throw new FrontendApiError(413, 'attachments_too_large');
           }
-          const attachment = await frontendApi.uploadReplyAttachment(session, file);
+          const attachment = await frontendApi.uploadOutboundAttachment(session, file);
           attached = [...attached, attachment];
           onAttachmentsChange(attached);
         } catch (error) {
@@ -58,9 +61,9 @@ export function ReplyAttachmentsField({
     },
   });
   const remove = useMutation({
-    mutationFn: async (attachment: ReplyAttachmentResponse) => {
+    mutationFn: async (attachment: OutboundAttachmentResponse) => {
       try {
-        await frontendApi.deleteReplyAttachment(session, attachment.id);
+        await frontendApi.deleteOutboundAttachment(session, attachment.id);
       } catch (error) {
         // Already gone (or already sent): either way it has no place in this list.
         if (!(error instanceof FrontendApiError && error.status === 404)) throw error;
@@ -104,7 +107,7 @@ export function ReplyAttachmentsField({
           type="button"
           className="button secondary"
           aria-describedby={hintId}
-          disabled={busy || attachments.length >= REPLY_ATTACHMENTS_MAX_PER_REPLY}
+          disabled={busy || attachments.length >= OUTBOUND_ATTACHMENTS_MAX_PER_MAIL}
           onClick={() => fileInput.current?.click()}
         >
           <Paperclip size={16} aria-hidden="true" />
@@ -115,7 +118,7 @@ export function ReplyAttachmentsField({
           type="file"
           multiple
           hidden
-          data-testid="reply-attachment-files"
+          data-testid="outbound-attachment-files"
           onChange={(event) => {
             const files = [...(event.target.files ?? [])];
             event.target.value = '';
@@ -126,8 +129,8 @@ export function ReplyAttachmentsField({
         />
       </div>
       <p id={hintId} className="muted fieldHint">
-        Up to {REPLY_ATTACHMENTS_MAX_PER_REPLY} files,{' '}
-        {REPLY_ATTACHMENTS_MAX_TOTAL_BYTES / (1024 * 1024)} MB in total.
+        Up to {OUTBOUND_ATTACHMENTS_MAX_PER_MAIL} files,{' '}
+        {OUTBOUND_ATTACHMENTS_MAX_TOTAL_BYTES / (1024 * 1024)} MB in total.
       </p>
       {problem && (
         <p className="formError" role="alert">

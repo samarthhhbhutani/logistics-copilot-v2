@@ -1,11 +1,11 @@
-import type { ReplyAttachment, SentMail } from '@lc/core';
+import type { OutboundAttachment, SentMail } from '@lc/core';
 import type { SentMailResponse } from '@lc/contract';
-import { toReplyAttachmentResponse } from './replyAttachmentsRouter.js';
+import { toOutboundAttachmentResponse } from './outboundAttachmentsRouter.js';
 
 /** `attachments` is what the reply carries; an `rfq` mail has none and leaves it out. */
 export function toSentMailResponse(
   sentMail: SentMail,
-  attachments: ReplyAttachment[] = [],
+  attachments: OutboundAttachment[] = [],
 ): SentMailResponse {
   return {
     id: sentMail.id,
@@ -23,7 +23,7 @@ export function toSentMailResponse(
     bodyText: sentMail.bodyText,
     gmailMessageId: sentMail.gmailMessageId,
     errorCode: sentMail.errorCode,
-    attachments: attachments.map(toReplyAttachmentResponse),
+    attachments: attachments.map(toOutboundAttachmentResponse),
     createdAt: sentMail.createdAt.toISOString(),
     updatedAt: sentMail.updatedAt.toISOString(),
   };
