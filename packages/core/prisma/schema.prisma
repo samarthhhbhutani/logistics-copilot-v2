@@ -130,6 +130,18 @@ model MailboxLogin {
   @@map("mailbox_logins")
 }
 
+/// Who runs the service: creates tenants and mailboxes. Not tied to any tenant. Rows are made by
+/// `npm run operator:create` (createOperatorScript), never over HTTP; argon2id hash like MailboxLogin.
+model Operator {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("operators")
+}
+
 /// Which Gmail folder the message was in when it arrived: inbox = received by the mailbox owner,
 /// sent = written by them (Gmail UI or our send path). The ingest watch covers only these two.
 /// A snapshot at ingest; later label changes (read, archived, user labels) are not followed.

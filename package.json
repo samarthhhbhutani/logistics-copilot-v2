@@ -25,6 +25,7 @@
     "db:migrate": "npm run db:migrate -w @lc/core --",
     "db:deploy": "npm run db:deploy -w @lc/core",
     "db:status": "npm run db:status -w @lc/core",
+    "operator:create": "npm run build -w @lc/core && npm run operator:create -w @lc/core",
     "test:e2e": "npm run test:e2e -w @lc/frontend"
   },
   "devDependencies": {

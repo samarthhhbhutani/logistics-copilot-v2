@@ -3,6 +3,7 @@ export * from './telemetry/index.js';
 export * from './db/index.js';
 export * from './auth/index.js';
 export * from './tenants/index.js';
+export * from './operators/index.js';
 export * from './utils/index.js';
 export * from './connectors/index.js';
 export * from './emails/index.js';
