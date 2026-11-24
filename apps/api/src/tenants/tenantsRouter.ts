@@ -46,8 +46,8 @@ const tenantIdParamsSchema = z.object({ tenantId: z.uuid() });
  * Operator endpoints: POST / creates a tenant (one logistics desk) with its Google OAuth client,
  * secret encrypted at rest, and its Pub/Sub topic and push service account; POST /:tenantId/mailboxes
  * creates a mailbox (Gmail connected later by its owner) with its login credentials. Creating an
- * account never signs anyone in; the owner logs in via /v1/auth/login.
- * Open for now; gated by an operator token before the API is public (design doc).
+ * account never signs anyone in; the owner logs in via /v1/auth/login. Mounted behind
+ * requireOperatorToken in createAppInstance.
  */
 export function createTenantsRouter({
   tenantRepository,

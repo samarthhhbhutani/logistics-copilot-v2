@@ -2,7 +2,11 @@ import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { testTenantBody } from '../tenantFixture.test-helper.js';
-import { createTestApp, testMailboxEmail } from '../testAppInstance.test-helper.js';
+import {
+  createTestApp,
+  operatorAuthorizationHeader,
+  testMailboxEmail,
+} from '../testAppInstance.test-helper.js';
 import type { TestApp } from '../testAppInstance.test-helper.js';
 
 const password = 'a-long-enough-password';
@@ -12,9 +16,13 @@ async function signedInMailbox(
   { app }: TestApp,
   email = testMailboxEmail,
 ): Promise<{ cookie: string; tenantId: string }> {
-  const tenant = await request(app).post('/v1/tenants').send(testTenantBody);
+  const tenant = await request(app)
+    .post('/v1/tenants')
+    .set(operatorAuthorizationHeader)
+    .send(testTenantBody);
   await request(app)
     .post(`/v1/tenants/${tenant.body.tenantId}/mailboxes`)
+    .set(operatorAuthorizationHeader)
     .send({ email, password });
   const login = await request(app).post('/v1/auth/login').send({ email, password });
   const setCookie = login.headers['set-cookie'];

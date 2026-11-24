@@ -1,19 +1,54 @@
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { testTenantBody } from '../tenantFixture.test-helper.js';
-import { createTestApp, createTestAppInstance } from '../testAppInstance.test-helper.js';
+import {
+  createTestApp,
+  createTestAppInstance,
+  operatorAuthorizationHeader,
+  testOperatorToken,
+} from '../testAppInstance.test-helper.js';
 
 const mailboxBody = { email: 'Ops@Bhatia.example', password: 'a-long-enough-password' };
 
 describe('tenants', () => {
+  it('both operator routes are 401 without the operator token or with a wrong one, creating nothing', async () => {
+    const { app, repositories } = createTestApp();
+    const unauthenticated = await request(app).post('/v1/tenants').send(testTenantBody);
+    expect(unauthenticated.status).toBe(401);
+    expect(unauthenticated.body).toEqual({ error: 'not_operator' });
+
+    const wrongToken = await request(app)
+      .post('/v1/tenants')
+      .set({ authorization: `Bearer ${testOperatorToken}x` })
+      .send(testTenantBody);
+    expect(wrongToken.status).toBe(401);
+
+    const tenant = await request(app)
+      .post('/v1/tenants')
+      .set(operatorAuthorizationHeader)
+      .send(testTenantBody);
+    const mailbox = await request(app)
+      .post(`/v1/tenants/${tenant.body.tenantId}/mailboxes`)
+      .set({ authorization: 'Basic not-a-bearer' })
+      .send(mailboxBody);
+    expect(mailbox.status).toBe(401);
+    expect(
+      await repositories.mailboxCredentialsRepository.findMailboxCredentials(mailboxBody.email),
+    ).toBeUndefined();
+  });
+
   it('creates a tenant, then a mailbox with credentials under it, without signing anyone in', async () => {
     const app = createTestAppInstance();
-    const tenant = await request(app).post('/v1/tenants').send(testTenantBody);
+    const tenant = await request(app)
+      .post('/v1/tenants')
+      .set(operatorAuthorizationHeader)
+      .send(testTenantBody);
     expect(tenant.status).toBe(201);
     expect(tenant.body).toEqual({ tenantId: expect.any(String) });
 
     const mailbox = await request(app)
       .post(`/v1/tenants/${tenant.body.tenantId}/mailboxes`)
+      .set(operatorAuthorizationHeader)
       .send(mailboxBody);
     expect(mailbox.status).toBe(201);
     expect(mailbox.body).toEqual({ mailboxId: expect.any(String), tenantId: tenant.body.tenantId });
@@ -22,7 +57,10 @@ describe('tenants', () => {
 
   it('stores the Google client secret encrypted, never as typed', async () => {
     const { app, repositories, encryptionUtil } = createTestApp();
-    const tenant = await request(app).post('/v1/tenants').send(testTenantBody);
+    const tenant = await request(app)
+      .post('/v1/tenants')
+      .set(operatorAuthorizationHeader)
+      .send(testTenantBody);
     const stored = await repositories.tenantRepository.findTenantGoogleClient(tenant.body.tenantId);
     expect(stored?.clientId).toBe(testTenantBody.googleClientId);
     expect(stored?.encryptedClientSecret).not.toBe(testTenantBody.googleClientSecret);
@@ -34,7 +72,10 @@ describe('tenants', () => {
 
   it('rejects a tenant without its Google client or Pub/Sub push setup, naming every field', async () => {
     const app = createTestAppInstance();
-    const response = await request(app).post('/v1/tenants').send({ name: 'Bhatia Desk' });
+    const response = await request(app)
+      .post('/v1/tenants')
+      .set(operatorAuthorizationHeader)
+      .send({ name: 'Bhatia Desk' });
     expect(response.status).toBe(400);
     expect(response.body.error).toMatch(/googleClientId/);
     expect(response.body.error).toMatch(/googleClientSecret/);
@@ -44,7 +85,10 @@ describe('tenants', () => {
 
   it('stores the Pub/Sub topic and push service account, readable for watch and push verification', async () => {
     const { app, repositories } = createTestApp();
-    const tenant = await request(app).post('/v1/tenants').send(testTenantBody);
+    const tenant = await request(app)
+      .post('/v1/tenants')
+      .set(operatorAuthorizationHeader)
+      .send(testTenantBody);
     expect(tenant.status).toBe(201);
     expect(await repositories.tenantRepository.findTenantPubsubPush(tenant.body.tenantId)).toEqual({
       topicName: testTenantBody.pubsubTopicName,
@@ -61,12 +105,14 @@ describe('tenants', () => {
     ]) {
       const response = await request(app)
         .post('/v1/tenants')
+        .set(operatorAuthorizationHeader)
         .send({ ...testTenantBody, pubsubTopicName });
       expect(response.status, pubsubTopicName).toBe(400);
       expect(response.body.error).toMatch(/pubsubTopicName/);
     }
     const response = await request(app)
       .post('/v1/tenants')
+      .set(operatorAuthorizationHeader)
       .send({ ...testTenantBody, pushServiceAccountEmail: 'ops@bhatia.example' });
     expect(response.status).toBe(400);
     expect(response.body.error).toMatch(/pushServiceAccountEmail/);
@@ -76,22 +122,34 @@ describe('tenants', () => {
     const app = createTestAppInstance();
     const unknown = await request(app)
       .post('/v1/tenants/00000000-0000-4000-8000-000000000000/mailboxes')
+      .set(operatorAuthorizationHeader)
       .send(mailboxBody);
     expect(unknown.status).toBe(404);
 
-    const tenant = await request(app).post('/v1/tenants').send(testTenantBody);
+    const tenant = await request(app)
+      .post('/v1/tenants')
+      .set(operatorAuthorizationHeader)
+      .send(testTenantBody);
     const path = `/v1/tenants/${tenant.body.tenantId}/mailboxes`;
-    await request(app).post(path).send(mailboxBody);
-    expect((await request(app).post(path).send(mailboxBody)).status).toBe(409);
+    await request(app).post(path).set(operatorAuthorizationHeader).send(mailboxBody);
+    expect(
+      (await request(app).post(path).set(operatorAuthorizationHeader).send(mailboxBody)).status,
+    ).toBe(409);
 
     const invalid = await request(app)
       .post(path)
+      .set(operatorAuthorizationHeader)
       .send({ email: 'not-an-email', password: 'short' });
     expect(invalid.status).toBe(400);
     expect(invalid.body.error).toMatch(/email/);
     expect(invalid.body.error).toMatch(/password/);
     expect(
-      (await request(app).post('/v1/tenants/not-a-uuid/mailboxes').send(mailboxBody)).status,
+      (
+        await request(app)
+          .post('/v1/tenants/not-a-uuid/mailboxes')
+          .set(operatorAuthorizationHeader)
+          .send(mailboxBody)
+      ).status,
     ).toBe(400);
   });
 });
