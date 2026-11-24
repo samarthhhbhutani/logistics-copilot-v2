@@ -5,7 +5,12 @@ import { createRoot } from 'react-dom/client';
 import type { Root } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AgentRunResponse, EmailDetailResponse, SentMailResponse } from '@lc/contract';
+import type {
+  AgentRunResponse,
+  EmailDetailResponse,
+  ReplyAttachmentResponse,
+  SentMailResponse,
+} from '@lc/contract';
 import { frontendApi, FrontendApiError } from './frontendApi.js';
 import { newestInboundEmail, ReplyComposer } from './replyComposer.js';
 import { AGENT_RUN_POLL_MS } from './useAgentRun.js';
@@ -37,6 +42,7 @@ function sentMail(
   status: SentMailResponse['status'],
   errorCode: string | null = null,
   ccRecipients: SentMailResponse['ccRecipients'] = [],
+  attachments: ReplyAttachmentResponse[] = [],
 ) {
   return {
     id,
@@ -54,12 +60,14 @@ function sentMail(
     bodyText: 'Dear Ravi',
     gmailMessageId: status === 'sent' ? 'gm-9' : null,
     errorCode,
-    attachments: [],
+    attachments,
     createdAt: '2026-11-22T10:00:00.000Z',
     updatedAt: '2026-11-22T10:00:01.000Z',
   } satisfies SentMailResponse;
 }
-/** Answers each send with the given status, under whatever id the composer minted. */
+/** The uploads the composer has made so far, by id, so a send can list the ones its body names. */
+const uploaded = new Map<string, ReplyAttachmentResponse>();
+/** Answers each send with the given status, under whatever id the composer minted; a sent mail lists the named files. */
 function answerSends(...statuses: (SentMailResponse['status'] | Error)[]) {
   const sendReply = vi.spyOn(frontendApi, 'sendReply');
   for (const status of statuses) {
@@ -72,11 +80,42 @@ function answerSends(...statuses: (SentMailResponse['status'] | Error)[]) {
             status,
             status === 'failed' ? 'bad_request' : null,
             (body.cc ?? []).map((recipient) => ({ name: recipient.name ?? '', ...recipient })),
+            status === 'sent' ? (body.attachmentIds ?? []).map((id) => uploaded.get(id)!) : [],
           ),
         ),
       );
   }
   return sendReply;
+}
+/** Stores every picked file under the next id, as the API would. */
+function acceptUploads() {
+  return vi.spyOn(frontendApi, 'uploadReplyAttachment').mockImplementation((_session, file) => {
+    const attachment: ReplyAttachmentResponse = {
+      id: `00000000-0000-4000-8000-0000000000a${uploaded.size + 1}`,
+      fileName: file.name,
+      contentType: file.type,
+      sizeBytes: file.size,
+      createdAt: '2026-11-22T09:30:00.000Z',
+    };
+    uploaded.set(attachment.id, attachment);
+    return Promise.resolve(attachment);
+  });
+}
+async function pickFiles(...names: string[]) {
+  const input = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+  Object.defineProperty(input, 'files', {
+    value: names.map((name) => new File(['x'], name, { type: 'application/pdf' })),
+    configurable: true,
+  });
+  await act(async () => {
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await settle();
+}
+function attachedFileNames() {
+  return [...container.querySelectorAll('[aria-label="Attached files"] .attachedFileName')].map(
+    (chip) => chip.textContent,
+  );
 }
 
 let container: HTMLDivElement;
@@ -120,8 +159,9 @@ async function typeCc(value: string) {
   });
 }
 function button(name: string) {
-  return [...container.querySelectorAll('button')].find((candidate) =>
-    candidate.textContent?.includes(name),
+  return [...container.querySelectorAll('button')].find(
+    (candidate) =>
+      candidate.textContent?.includes(name) || candidate.getAttribute('aria-label') === name,
   );
 }
 async function type(value: string) {
@@ -147,6 +187,7 @@ beforeEach(() => {
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   onSignedOut.mockReset();
   onSent.mockReset();
+  uploaded.clear();
 });
 
 afterEach(async () => {
@@ -280,6 +321,55 @@ describe('ReplyComposer', () => {
     await type('Again');
     await click('Send reply');
     expect(onSignedOut).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends the attached files by id, keeps them for a retry after a refusal, and starts the next reply without them', async () => {
+    acceptUploads();
+    const sendReply = answerSends('failed', 'sent');
+    await render();
+    await type('Dear Ravi');
+    await pickFiles('rates.pdf', 'terms.pdf');
+    expect(attachedFileNames()).toEqual(['rates.pdf', 'terms.pdf']);
+
+    await click('Send reply');
+    const [, , firstBody] = sendReply.mock.calls[0]!;
+    expect(firstBody.attachmentIds).toEqual([...uploaded.keys()]);
+    expect(container.textContent).toContain('Reply not sent.');
+    // Gmail refused the mail, so the uploads are still unsent and ride along under the new id.
+    expect(attachedFileNames()).toEqual(['rates.pdf', 'terms.pdf']);
+
+    await click('Try again');
+    const [, , secondBody] = sendReply.mock.calls[1]!;
+    expect(secondBody.sentMailId).not.toBe(firstBody.sentMailId);
+    expect(secondBody.attachmentIds).toEqual(firstBody.attachmentIds);
+    expect(container.textContent).toContain('Reply sent to ravi@example.com with 2 files.');
+    expect(button('Attach files')!.disabled).toBe(true);
+    expect(button('Remove rates.pdf')!.disabled).toBe(true);
+
+    await click('Write another reply');
+    expect(attachedFileNames()).toEqual([]);
+    expect(button('Attach files')!.disabled).toBe(false);
+  });
+
+  it('leaves attachmentIds out of a reply without files and mints a new id after attachment_not_found', async () => {
+    acceptUploads();
+    vi.spyOn(frontendApi, 'deleteReplyAttachment').mockResolvedValue();
+    const sendReply = answerSends(new FrontendApiError(409, 'attachment_not_found'), 'sent');
+    await render();
+    await type('Dear Ravi');
+    await pickFiles('rates.pdf');
+    await click('Send reply');
+    expect(container.textContent).toContain(
+      'An attached file is no longer available. Remove it and attach it again.',
+    );
+
+    await click('Remove rates.pdf');
+    await click('Try again');
+    const [, , firstBody] = sendReply.mock.calls[0]!;
+    const [, , secondBody] = sendReply.mock.calls[1]!;
+    expect(secondBody.sentMailId).not.toBe(firstBody.sentMailId);
+    expect(secondBody).toEqual({ sentMailId: expect.any(String), text: 'Dear Ravi' });
+    expect(container.textContent).toContain('Reply sent to ravi@example.com.');
   });
 
   it('puts the copilot proposal into the message, ready to edit and send', async () => {

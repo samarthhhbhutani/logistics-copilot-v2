@@ -372,7 +372,10 @@ test('hostile and HTML-only messages read seamlessly without reader toggles and 
   const noAttachments = page.getByText('No attachments', { exact: true });
   await noAttachments.scrollIntoViewIfNeeded();
   await expect(noAttachments).toBeVisible();
-  await expect(page.getByRole('button', { name: /files/i })).toHaveCount(0);
+  // Scoped to the messages: the reply composer below has its own "Attach files" button.
+  await expect(page.locator('.threadMessages').getByRole('button', { name: /files/i })).toHaveCount(
+    0,
+  );
   await page.getByRole('link', { name: 'Back to All mail' }).click();
   await messageLink(page, '(No subject)').click();
   await expect(page.getByRole('heading', { name: '(No subject)', exact: true })).toBeVisible();
