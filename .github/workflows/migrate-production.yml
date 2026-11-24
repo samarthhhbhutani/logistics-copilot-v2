@@ -1,0 +1,38 @@
+name: migrate-production
+
+# Applies pending Prisma migrations to the production database. Never on push: started by hand
+# (Actions, Run workflow) and held by the `production` environment's required reviewer before the
+# job runs. Uses the session pooler (DIRECT_URL) from the `production` environment; the transaction
+# pooler cannot hold the locks migrate needs.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: migrate-production
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Show pending migrations
+        # Exits 1 while migrations are pending, which is the expected state here; the log is the record.
+        run: npm run db:status -w @lc/core || true
+        env:
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+      - name: Apply migrations
+        run: npm run db:deploy -w @lc/core
+        env:
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+      - name: Verify database matches migrations
+        run: npm run db:status -w @lc/core
+        env:
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
