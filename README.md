@@ -96,16 +96,16 @@ The identity is the **mailbox**: one Gmail inbox, one login, one person. `mailbo
 is the only place the address lives and doubles as the login name; `mailbox_logins` holds only the
 argon2id password hash. A tenant (one logistics desk) exists before its mailboxes.
 
-| Route                                  | Who      | Does                                                               |
-| -------------------------------------- | -------- | ------------------------------------------------------------------ |
-| `POST /v1/tenants`                     | operator | creates a tenant -> `{ tenantId }`                                 |
-| `POST /v1/tenants/:tenantId/mailboxes` | operator | creates a mailbox (Gmail connected later) + credentials; no cookie |
-| `POST /v1/auth/login`                  | owner    | verifies the password, sets `lc_session`                           |
-| `POST /v1/auth/logout`                 | owner    | clears the cookie                                                  |
-| `GET /v1/me`                           | owner    | `{ mailboxId, tenantId }` from the session                         |
+| Route                                  | Who      | Does                                                                                  |
+| -------------------------------------- | -------- | ------------------------------------------------------------------------------------- |
+| `POST /v1/tenants`                     | operator | creates a tenant -> `{ tenantId }`; `Authorization: Bearer <OPERATOR_TOKEN>`          |
+| `POST /v1/tenants/:tenantId/mailboxes` | operator | creates a mailbox (Gmail connected later) + credentials; no cookie; same Bearer token |
+| `POST /v1/auth/login`                  | owner    | verifies the password, sets `lc_session`                                              |
+| `POST /v1/auth/logout`                 | owner    | clears the cookie                                                                     |
+| `GET /v1/me`                           | owner    | `{ mailboxId, tenantId }` from the session                                            |
 
-The operator routes are open for now and **must be gated by an operator token before the API is
-public**. `lc_session` is an httpOnly `SameSite=Lax` (Secure outside dev) cookie holding an HS256 JWT
+The operator routes answer 401 `not_operator` unless the request carries `OPERATOR_TOKEN` as a Bearer
+token (`requireOperatorToken`; constant-time compare). `lc_session` is an httpOnly `SameSite=Lax` (Secure outside dev) cookie holding an HS256 JWT
 (`sub` = mailbox id, `tenantId`; 7 days) signed with `SESSION_SECRET`. Stateless: logout clears the
 cookie, a token stays valid until expiry (add `mailbox_logins.token_version` if instant revocation is
 ever needed). `requireSession` guards every session-scoped route and exposes the claims through

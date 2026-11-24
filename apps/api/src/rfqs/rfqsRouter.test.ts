@@ -9,7 +9,11 @@ import {
 } from '@lc/contract';
 import type { OutboundAttachmentResponse, SendRfqResponse } from '@lc/contract';
 import { testTenantBody } from '../tenantFixture.test-helper.js';
-import { createTestApp, testMailboxEmail } from '../testAppInstance.test-helper.js';
+import {
+  createTestApp,
+  operatorAuthorizationHeader,
+  testMailboxEmail,
+} from '../testAppInstance.test-helper.js';
 import type { TestApp } from '../testAppInstance.test-helper.js';
 
 const password = 'a-long-enough-password';
@@ -43,9 +47,13 @@ interface Scope {
 }
 
 async function signedInMailbox({ app }: TestApp): Promise<Scope> {
-  const tenant = await request(app).post('/v1/tenants').send(testTenantBody);
+  const tenant = await request(app)
+    .post('/v1/tenants')
+    .set(operatorAuthorizationHeader)
+    .send(testTenantBody);
   const mailbox = await request(app)
     .post(`/v1/tenants/${tenant.body.tenantId}/mailboxes`)
+    .set(operatorAuthorizationHeader)
     .send({ email: testMailboxEmail, password });
   const login = await request(app)
     .post('/v1/auth/login')
@@ -699,10 +707,12 @@ describe('GET /v1/mailbox/rfqs/:rfqId', () => {
 
     const otherTenant = await request(testApp.app)
       .post('/v1/tenants')
+      .set(operatorAuthorizationHeader)
       .send({ ...testTenantBody, name: 'Other Forwarder' });
     const otherEmail = 'other@example.com';
     await request(testApp.app)
       .post(`/v1/tenants/${otherTenant.body.tenantId}/mailboxes`)
+      .set(operatorAuthorizationHeader)
       .send({ email: otherEmail, password });
     const otherLogin = await request(testApp.app)
       .post('/v1/auth/login')
@@ -773,10 +783,12 @@ describe('GET /v1/mailbox/rfqs/bySourceEmail/:emailId', () => {
 
     const otherTenant = await request(testApp.app)
       .post('/v1/tenants')
+      .set(operatorAuthorizationHeader)
       .send({ ...testTenantBody, name: 'Other Forwarder' });
     const otherEmail = 'other@example.com';
     await request(testApp.app)
       .post(`/v1/tenants/${otherTenant.body.tenantId}/mailboxes`)
+      .set(operatorAuthorizationHeader)
       .send({ email: otherEmail, password });
     const otherLogin = await request(testApp.app)
       .post('/v1/auth/login')
@@ -974,10 +986,12 @@ describe('GET /v1/mailbox/rfqs', () => {
 
     const otherTenant = await request(testApp.app)
       .post('/v1/tenants')
+      .set(operatorAuthorizationHeader)
       .send({ ...testTenantBody, name: 'Other Forwarder' });
     const otherEmail = 'other@example.com';
     await request(testApp.app)
       .post(`/v1/tenants/${otherTenant.body.tenantId}/mailboxes`)
+      .set(operatorAuthorizationHeader)
       .send({ email: otherEmail, password });
     const otherLogin = await request(testApp.app)
       .post('/v1/auth/login')

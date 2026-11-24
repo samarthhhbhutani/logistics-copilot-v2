@@ -3,7 +3,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_AGENT_INSTRUCTION, PROPOSE_REPLY_PROMPT_VERSION } from '@lc/core';
 import type { AgentReplyProposer, RunAgentInput, RunAgentResult } from '@lc/core';
 import { testTenantBody } from '../tenantFixture.test-helper.js';
-import { createTestApp, testMailboxEmail } from '../testAppInstance.test-helper.js';
+import {
+  createTestApp,
+  operatorAuthorizationHeader,
+  testMailboxEmail,
+} from '../testAppInstance.test-helper.js';
 import type { TestApp } from '../testAppInstance.test-helper.js';
 import { RUN_CRASHED_CODE } from './agentRunsRouter.js';
 
@@ -52,9 +56,13 @@ function fakeProposer(answer: RunAgentResult | Error) {
 }
 
 async function signedInMailbox({ app }: TestApp) {
-  const tenant = await request(app).post('/v1/tenants').send(testTenantBody);
+  const tenant = await request(app)
+    .post('/v1/tenants')
+    .set(operatorAuthorizationHeader)
+    .send(testTenantBody);
   const mailbox = await request(app)
     .post(`/v1/tenants/${tenant.body.tenantId}/mailboxes`)
+    .set(operatorAuthorizationHeader)
     .send({ email: testMailboxEmail, password });
   const login = await request(app)
     .post('/v1/auth/login')
@@ -355,6 +363,7 @@ describe('GET /v1/mailbox/agent/runs/:agentRunId', () => {
       .post(
         `/v1/tenants/${(await request(testApp.app).get('/v1/me').set('Cookie', cookie)).body.tenantId}/mailboxes`,
       )
+      .set(operatorAuthorizationHeader)
       .send({ email: 'other@bhatia.example', password });
     expect(otherMailbox.status).toBe(201);
     const otherLogin = await request(testApp.app)

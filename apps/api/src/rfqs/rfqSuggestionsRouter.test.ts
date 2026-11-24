@@ -9,7 +9,11 @@ import type {
 import { rfqSuggestionResponseSchema } from '@lc/contract';
 import { testTenantBody } from '../tenantFixture.test-helper.js';
 import { createFakeAttachmentContentReader } from '../fakeAttachmentContentReader.test-helper.js';
-import { createTestApp, testMailboxEmail } from '../testAppInstance.test-helper.js';
+import {
+  createTestApp,
+  operatorAuthorizationHeader,
+  testMailboxEmail,
+} from '../testAppInstance.test-helper.js';
 import type { TestApp } from '../testAppInstance.test-helper.js';
 
 const password = 'a-long-enough-password';
@@ -49,9 +53,13 @@ function fakeSuggester(
 async function signedInMailbox({
   app,
 }: TestApp): Promise<{ cookie: string; mailboxId: string; tenantId: string }> {
-  const tenant = await request(app).post('/v1/tenants').send(testTenantBody);
+  const tenant = await request(app)
+    .post('/v1/tenants')
+    .set(operatorAuthorizationHeader)
+    .send(testTenantBody);
   const mailbox = await request(app)
     .post(`/v1/tenants/${tenant.body.tenantId}/mailboxes`)
+    .set(operatorAuthorizationHeader)
     .send({ email: testMailboxEmail, password });
   const login = await request(app)
     .post('/v1/auth/login')

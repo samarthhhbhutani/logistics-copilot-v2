@@ -19,6 +19,9 @@ import { createFakeOutboundAttachmentStore } from './fakeOutboundAttachmentStore
 import type { FakeOutboundAttachmentStore } from './fakeOutboundAttachmentStore.test-helper.js';
 
 export const testSessionSecret = 'test-session-secret-that-is-at-least-32-chars';
+export const testOperatorToken = 'test-operator-token-that-is-at-least-32-chars';
+/** What every test sends to the operator routes: `.set(operatorAuthorizationHeader)`. */
+export const operatorAuthorizationHeader = { authorization: `Bearer ${testOperatorToken}` };
 
 export interface TestAppOptions {
   /** Exercises the secure-cookie path. */
@@ -102,6 +105,7 @@ export function createTestApp({
     gmailSender,
     encryptionUtil,
     sessionSecret: testSessionSecret,
+    operatorToken: testOperatorToken,
   });
   return {
     app,
