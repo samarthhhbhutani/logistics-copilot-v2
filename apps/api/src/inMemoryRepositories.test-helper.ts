@@ -622,6 +622,7 @@ export function createInMemoryRepositories(): {
         const attachment = {
           ...attachmentToCreate,
           sentMailId: null,
+          rfqId: null,
           createdAt: new Date(2026, 0, 1, 0, 0, outboundAttachments.length),
           mailboxId,
           tenantId,
@@ -651,6 +652,33 @@ export function createInMemoryRepositories(): {
           .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
           .map(stripAttachmentScope);
       },
+      async listOutboundAttachmentsOfRfq({ mailboxId, tenantId }, rfqId) {
+        return outboundAttachments
+          .filter(
+            (attachment) =>
+              attachment.rfqId === rfqId &&
+              attachment.mailboxId === mailboxId &&
+              attachment.tenantId === tenantId,
+          )
+          .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
+          .map(stripAttachmentScope);
+      },
+      async attachToRfq({ mailboxId, tenantId }, attachmentIds, rfqId) {
+        let changed = 0;
+        for (const attachment of outboundAttachments) {
+          if (
+            attachmentIds.includes(attachment.id) &&
+            attachment.mailboxId === mailboxId &&
+            attachment.tenantId === tenantId &&
+            attachment.sentMailId === null &&
+            attachment.rfqId === null
+          ) {
+            attachment.rfqId = rfqId;
+            changed += 1;
+          }
+        }
+        return changed;
+      },
       async attachToSentMail({ mailboxId, tenantId }, attachmentIds, sentMailId) {
         let changed = 0;
         for (const attachment of outboundAttachments) {
@@ -658,7 +686,8 @@ export function createInMemoryRepositories(): {
             attachmentIds.includes(attachment.id) &&
             attachment.mailboxId === mailboxId &&
             attachment.tenantId === tenantId &&
-            attachment.sentMailId === null
+            attachment.sentMailId === null &&
+            attachment.rfqId === null
           ) {
             attachment.sentMailId = sentMailId;
             changed += 1;
@@ -672,7 +701,8 @@ export function createInMemoryRepositories(): {
             attachment.id === attachmentId &&
             attachment.mailboxId === mailboxId &&
             attachment.tenantId === tenantId &&
-            attachment.sentMailId === null,
+            attachment.sentMailId === null &&
+            attachment.rfqId === null,
         );
         if (index === -1) return undefined;
         const [removed] = outboundAttachments.splice(index, 1);
@@ -844,6 +874,7 @@ function stripAttachmentScope(
     sha256: attachment.sha256,
     s3Key: attachment.s3Key,
     sentMailId: attachment.sentMailId,
+    rfqId: attachment.rfqId,
     createdAt: attachment.createdAt,
   };
 }

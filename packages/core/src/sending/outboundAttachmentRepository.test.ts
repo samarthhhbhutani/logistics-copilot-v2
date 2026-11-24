@@ -17,6 +17,7 @@ const rateCardToCreate = {
 const rateCardRow = {
   ...rateCardToCreate,
   sentMailId: null,
+  rfqId: null,
   createdAt: new Date('2026-11-22T10:00:00Z'),
 };
 const photoRow = {
@@ -101,7 +102,7 @@ describe('createPrismaOutboundAttachmentRepository', () => {
     );
   });
 
-  it('stamps only unsent files of the mailbox with the sent mail and reports how many changed', async () => {
+  it('stamps only unowned files of the mailbox with the sent mail and reports how many changed', async () => {
     const { prismaClient, calls } = createPrismaStub({ updateMany: { count: 1 } });
     const repository = createPrismaOutboundAttachmentRepository(prismaClient);
     expect(await repository.attachToSentMail(scope, [], sentMailId)).toBe(0);
@@ -117,6 +118,7 @@ describe('createPrismaOutboundAttachmentRepository', () => {
             tenantId: 'tenant-1',
             id: { in: [rateCardId, photoId] },
             sentMailId: null,
+            rfqId: null,
           },
           data: { sentMailId },
         },
@@ -124,7 +126,7 @@ describe('createPrismaOutboundAttachmentRepository', () => {
     ]);
   });
 
-  it('deletes only an unsent file inside the scope and reports it; undefined otherwise', async () => {
+  it('deletes only an unowned file inside the scope and reports it; undefined otherwise', async () => {
     const unsent = createPrismaStub({ findFirst: rateCardRow, deleteMany: { count: 1 } });
     expect(
       await createPrismaOutboundAttachmentRepository(
@@ -133,7 +135,13 @@ describe('createPrismaOutboundAttachmentRepository', () => {
     ).toEqual(rateCardRow);
     expect(unsent.calls.map((call) => call.method)).toEqual(['findFirst', 'deleteMany']);
     expect(unsent.calls[1]?.args).toEqual({
-      where: { id: rateCardId, mailboxId: 'mailbox-1', tenantId: 'tenant-1', sentMailId: null },
+      where: {
+        id: rateCardId,
+        mailboxId: 'mailbox-1',
+        tenantId: 'tenant-1',
+        sentMailId: null,
+        rfqId: null,
+      },
     });
 
     // Already on a mail, or another mailbox's: the scoped findFirst finds nothing and nothing is deleted.

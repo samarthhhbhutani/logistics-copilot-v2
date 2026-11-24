@@ -103,7 +103,7 @@ export function createEmailRepliesRouter({
       outboundAttachmentRepository,
       scope,
       replyRequest.attachmentIds,
-      replyRequest.sentMailId,
+      { sentMailId: replyRequest.sentMailId },
     );
     const { connection, credentials, refreshToken, inlineImages } = await loadSendingMailbox(
       {

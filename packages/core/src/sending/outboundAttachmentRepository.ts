@@ -1,7 +1,10 @@
 import type { PrismaClient } from '../db/prismaClient.js';
 import type { MailboxScope } from '../connectors/gmail/mailboxConnectionRepository.js';
 
-/** One file uploaded from a composer for an outgoing mail. Unsent until `sentMailId` is set by the send. */
+/**
+ * One file uploaded from a composer. Unused until a send sets its owner: `sentMailId` for the reply
+ * that carried it, `rfqId` for the RFQ whose every vendor mail carries it. Never both.
+ */
 export interface OutboundAttachment {
   id: string;
   fileName: string;
@@ -11,8 +14,10 @@ export interface OutboundAttachment {
   sha256: string;
   /** <tenantId>/outbound/<mailboxId>/<id> in the raw-mail bucket. */
   s3Key: string;
-  /** The sent_mails row carrying it; null while the upload waits in the composer. */
+  /** The sent_mails row carrying it; null while the upload waits in the composer or belongs to an RFQ. */
   sentMailId: string | null;
+  /** The RFQ whose vendor mails carry it; null while the upload waits in the composer or belongs to a reply. */
+  rfqId: string | null;
   createdAt: Date;
 }
 
@@ -41,16 +46,20 @@ export interface OutboundAttachmentRepository {
     scope: MailboxScope,
     sentMailId: string,
   ): Promise<OutboundAttachment[]>;
+  /** The files every mail of one RFQ carries, oldest upload first. */
+  listOutboundAttachmentsOfRfq(scope: MailboxScope, rfqId: string): Promise<OutboundAttachment[]>;
   /**
-   * Stamps unsent attachments of the mailbox with the sent mail that carries them. Returns how many
-   * rows changed: fewer than asked means an id was unknown, another mailbox's, or already sent.
+   * Stamps unused attachments of the mailbox with the sent mail that carries them. Returns how many
+   * rows changed: fewer than asked means an id was unknown, another mailbox's, or already owned.
    */
   attachToSentMail(
     scope: MailboxScope,
     attachmentIds: string[],
     sentMailId: string,
   ): Promise<number>;
-  /** Deletes an upload nobody sent. Undefined when it is not the mailbox's or is already on a sent mail. */
+  /** Same as attachToSentMail, with the RFQ as owner. Files already the RFQ's are left as they are and not counted. */
+  attachToRfq(scope: MailboxScope, attachmentIds: string[], rfqId: string): Promise<number>;
+  /** Deletes an upload nobody sent. Undefined when it is not the mailbox's or already has an owner. */
   deleteUnsentOutboundAttachment(
     scope: MailboxScope,
     attachmentId: string,
@@ -65,6 +74,7 @@ const outboundAttachmentSelect = {
   sha256: true,
   s3Key: true,
   sentMailId: true,
+  rfqId: true,
   createdAt: true,
 } as const;
 
@@ -97,11 +107,28 @@ export function createPrismaOutboundAttachmentRepository(
       });
     },
 
+    async listOutboundAttachmentsOfRfq({ mailboxId, tenantId }, rfqId) {
+      return prismaClient.outboundAttachment.findMany({
+        where: { mailboxId, tenantId, rfqId },
+        select: outboundAttachmentSelect,
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      });
+    },
+
+    async attachToRfq({ mailboxId, tenantId }, attachmentIds, rfqId) {
+      if (attachmentIds.length === 0) return 0;
+      const { count } = await prismaClient.outboundAttachment.updateMany({
+        where: { mailboxId, tenantId, id: { in: attachmentIds }, sentMailId: null, rfqId: null },
+        data: { rfqId },
+      });
+      return count;
+    },
+
     async attachToSentMail({ mailboxId, tenantId }, attachmentIds, sentMailId) {
       if (attachmentIds.length === 0) return 0;
-      // `sentMailId: null` in the where: a file already on a mail is never moved to another.
+      // Both owners null in the where: a file already on a mail or an RFQ is never moved.
       const { count } = await prismaClient.outboundAttachment.updateMany({
-        where: { mailboxId, tenantId, id: { in: attachmentIds }, sentMailId: null },
+        where: { mailboxId, tenantId, id: { in: attachmentIds }, sentMailId: null, rfqId: null },
         data: { sentMailId },
       });
       return count;
@@ -109,13 +136,13 @@ export function createPrismaOutboundAttachmentRepository(
 
     async deleteUnsentOutboundAttachment({ mailboxId, tenantId }, attachmentId) {
       const attachment = await prismaClient.outboundAttachment.findFirst({
-        where: { id: attachmentId, mailboxId, tenantId, sentMailId: null },
+        where: { id: attachmentId, mailboxId, tenantId, sentMailId: null, rfqId: null },
         select: outboundAttachmentSelect,
       });
       if (!attachment) return undefined;
-      // Scoped delete with the unsent condition repeated: the findFirst above is not a lock.
+      // Scoped delete with the unused condition repeated: the findFirst above is not a lock.
       const { count } = await prismaClient.outboundAttachment.deleteMany({
-        where: { id: attachmentId, mailboxId, tenantId, sentMailId: null },
+        where: { id: attachmentId, mailboxId, tenantId, sentMailId: null, rfqId: null },
       });
       return count === 1 ? attachment : undefined;
     },

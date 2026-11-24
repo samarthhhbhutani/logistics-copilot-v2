@@ -1,4 +1,8 @@
 import { z } from 'zod';
+import {
+  OUTBOUND_ATTACHMENTS_MAX_PER_MAIL,
+  outboundAttachmentResponseSchema,
+} from './outboundAttachments.js';
 import { currentClassificationSchema } from './emails.js';
 import { sentMailResponseSchema } from './sentMails.js';
 import { vendorCategorySchema } from './vendors.js';
@@ -179,12 +183,18 @@ export type RfqMailText = z.infer<typeof rfqMailTextSchema>;
  * the client (crypto.randomUUID) and is the idempotency key: the same PUT again sends only the mails
  * still pending or failed and reports the rest as they are, and a contact added to `recipients` on
  * a later call gets a mail then. Every recipient vendor's category needs an entry in `mails`.
+ * `attachmentIds` are uploads (POST /v1/mailbox/outbound-attachments) every vendor mail carries; they
+ * become the RFQ's on the first call and stay with it, so a later call (retry, added contact) carries
+ * the same files whether or not it repeats the ids.
  *   200 SendRfqResponse (rfq + one sent mail per contact, each with its own status)
  *   400 missing_mail_text (a recipient's category has no text) | invalid_body
  *   404 email_not_found | vendor_not_found (unknown or archived) | contact_not_found (unknown, archived
  *       or not of that vendor)
  *   409 rfq_id_taken (id used by another mailbox, or with another source mail) | mailbox_not_connected |
- *       google_client_not_configured
+ *       google_client_not_configured | attachment_not_found (an id that is not this mailbox's upload) |
+ *       attachment_already_sent (an upload another mail or RFQ carries)
+ *   413 attachments_too_large (every vendor mail carries the whole set, so the per-mail total applies)
+ *   503 outbound_attachments_unavailable (files named but no bucket configured)
  */
 export const sendRfqBodySchema = z.object({
   sourceEmailId: z.uuid(),
@@ -206,6 +216,11 @@ export const sendRfqBodySchema = z.object({
     .array(rfqMailTextSchema)
     .min(1)
     .refine((mails) => distinct(mails.map((mail) => mail.category)), 'one text per category'),
+  attachmentIds: z
+    .array(z.uuid())
+    .max(OUTBOUND_ATTACHMENTS_MAX_PER_MAIL)
+    .refine(distinct, 'attachment ids must be unique')
+    .default([]),
 });
 export type SendRfqBody = z.input<typeof sendRfqBodySchema>;
 
@@ -243,6 +258,8 @@ export const rfqWithMailsResponseSchema = z.object({
   rfq: rfqResponseSchema,
   /** Status sent | failed | pending (not reached this time) | sending (outcome unknown, resolved later by the sweeper). */
   mails: z.array(rfqMailWithRepliesResponseSchema),
+  /** The files every mail of the RFQ carries, upload order; listed once here rather than on each mail. */
+  attachments: z.array(outboundAttachmentResponseSchema).default([]),
 });
 export type RfqWithMailsResponse = z.infer<typeof rfqWithMailsResponseSchema>;
 

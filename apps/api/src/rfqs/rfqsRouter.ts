@@ -17,6 +17,9 @@ import type {
   GmailSender,
   MailboxConnectionRepository,
   MailboxScope,
+  OutboundAttachment,
+  OutboundAttachmentRepository,
+  OutboundMessageAttachment,
   Rfq,
   RfqListItem,
   RfqRepository,
@@ -51,6 +54,12 @@ import {
 import { loadSendingMailbox } from '../sending/loadSendingMailbox.js';
 import type { SendingMailbox } from '../sending/loadSendingMailbox.js';
 import type { SignatureImageStore } from '../signature/signatureImageStore.js';
+import {
+  findPickedOutboundAttachments,
+  readOutboundAttachments,
+} from '../sending/pickedOutboundAttachments.js';
+import type { OutboundAttachmentStore } from '../sending/outboundAttachmentStore.js';
+import { toOutboundAttachmentResponse } from '../sending/outboundAttachmentsRouter.js';
 
 export interface RfqsRouterDependencies {
   emailReadRepository: EmailReadRepository;
@@ -64,6 +73,9 @@ export interface RfqsRouterDependencies {
   signatureImageRepository: SignatureImageRepository;
   /** Undefined without a bucket: HTML signatures then go out without their images. */
   signatureImageStore: SignatureImageStore | undefined;
+  outboundAttachmentRepository: OutboundAttachmentRepository;
+  /** Undefined without a bucket: a send naming attachments then answers 503. */
+  outboundAttachmentStore: OutboundAttachmentStore | undefined;
   requireSession: RequestHandler;
 }
 
@@ -73,7 +85,7 @@ const CONCURRENT_GMAIL_SENDS = 2;
 /**
  * The mailbox's RFQs: sending one to vendors and reading them back, mounted at /v1/mailbox/rfqs.
  *   GET /?limit&cursor               every rfq newest first, grouped by the customer mail it answers, with reply counts per rfq
- *   PUT /:rfqId/send                 { sourceEmailId, details, recipients, mails }   see sendRfqBodySchema for codes
+ *   PUT /:rfqId/send                 { sourceEmailId, details, recipients, mails, attachmentIds? }   see sendRfqBodySchema for codes
  *   GET /:rfqId                      the rfq and its mails, each with the replies it drew; polled while a mail is still `sending`
  *   GET /bySourceEmail/:emailId      the same for the newest rfq sent from that customer mail; 404 rfq_not_found when none was
  *
@@ -82,6 +94,11 @@ const CONCURRENT_GMAIL_SENDS = 2;
  * The request is a batch, so one refusal does not stop the others: 200 is always the answer once
  * the batch ran, and each mail carries its own status. The same PUT again (same rfqId) is the retry:
  * it sends what is still pending or failed and leaves sent and sending rows alone.
+ *
+ * Attachments belong to the RFQ, not to each mail: the ids a PUT names are stamped with the rfq row
+ * right after it is written (before any mail), every mail then carries the RFQ's files as read from
+ * the row, and a later PUT carries the same set whether it repeats the ids or not. Stamping again on
+ * a replay is harmless (only unowned files move) and heals a crash between the rfq write and the stamp.
  */
 export function createRfqsRouter({
   emailReadRepository,
@@ -94,6 +111,8 @@ export function createRfqsRouter({
   encryptionUtil,
   signatureImageRepository,
   signatureImageStore,
+  outboundAttachmentRepository,
+  outboundAttachmentStore,
   requireSession,
 }: RfqsRouterDependencies): Router {
   const router = express.Router();
@@ -137,6 +156,16 @@ export function createRfqsRouter({
     if (recipientContacts.some(({ vendor }) => !mailTextByCategory.has(vendor.category))) {
       throw createHttpError(400, 'missing_mail_text');
     }
+    if (sendRequest.attachmentIds.length > 0 && !outboundAttachmentStore) {
+      response.status(503).json({ error: 'outbound_attachments_unavailable' });
+      return;
+    }
+    await findPickedOutboundAttachments(
+      outboundAttachmentRepository,
+      scope,
+      sendRequest.attachmentIds,
+      { rfqId },
+    );
     const sendingMailbox = await loadSendingMailbox(
       {
         mailboxConnectionRepository,
@@ -149,6 +178,20 @@ export function createRfqsRouter({
     );
 
     const rfq = await createRfqOrReuseExisting(rfqRepository, scope, rfqId, sendRequest);
+    const rfqAttachments = await stampAttachmentsOnRfq(scope, rfq.id, sendRequest.attachmentIds);
+    let outboundMessageAttachments: OutboundMessageAttachment[] = [];
+    if (outboundAttachmentStore && rfqAttachments.length > 0) {
+      try {
+        outboundMessageAttachments = await readOutboundAttachments(
+          outboundAttachmentStore,
+          rfqAttachments,
+        );
+      } catch (error) {
+        // No mail of this batch has been handed to Gmail; the pending rows stay for the next PUT.
+        console.warn('rfq attachment bytes unavailable', { rfqId: rfq.id, error });
+        throw createHttpError(409, 'attachment_not_found');
+      }
+    }
     const rfqMailsToCreate = recipientContacts.map(({ vendor, contact }) =>
       buildPendingRfqMail(
         rfq,
@@ -160,7 +203,7 @@ export function createRfqsRouter({
     );
     const rfqMails = await sentMailRepository.createPendingRfqMails(scope, rfqMailsToCreate);
 
-    await sendPendingAndFailedMails(rfqMails, scope, sendingMailbox);
+    await sendPendingAndFailedMails(rfqMails, scope, sendingMailbox, outboundMessageAttachments);
 
     const responseBody: SendRfqResponse = await rfqWithMails(scope, rfq);
     response.status(200).json(responseBody);
@@ -194,7 +237,34 @@ export function createRfqsRouter({
       mails: (await sentMailRepository.listRfqMails(scope, rfq.id)).map(
         toRfqMailWithRepliesResponse,
       ),
+      attachments: (
+        await outboundAttachmentRepository.listOutboundAttachmentsOfRfq(scope, rfq.id)
+      ).map(toOutboundAttachmentResponse),
     };
+  }
+
+  /**
+   * Makes the named uploads the RFQ's and returns everything the RFQ carries, as stored. Ids already
+   * stamped (a replay) are skipped by the repository; one that is still missing afterwards was
+   * deleted or claimed by another send since the check above, and nothing has gone out yet.
+   */
+  async function stampAttachmentsOnRfq(
+    scope: MailboxScope,
+    rfqId: string,
+    attachmentIds: string[],
+  ): Promise<OutboundAttachment[]> {
+    if (attachmentIds.length > 0) {
+      await outboundAttachmentRepository.attachToRfq(scope, attachmentIds, rfqId);
+    }
+    const rfqAttachments = await outboundAttachmentRepository.listOutboundAttachmentsOfRfq(
+      scope,
+      rfqId,
+    );
+    const stampedIds = new Set(rfqAttachments.map((attachment) => attachment.id));
+    if (attachmentIds.some((attachmentId) => !stampedIds.has(attachmentId))) {
+      throw createHttpError(409, 'attachment_not_found');
+    }
+    return rfqAttachments;
   }
 
   /**
@@ -206,6 +276,7 @@ export function createRfqsRouter({
     rfqMails: SentMail[],
     scope: MailboxScope,
     { connection, credentials, refreshToken, inlineImages }: SendingMailbox,
+    attachments: OutboundMessageAttachment[],
   ): Promise<void> {
     let mailboxNeedsReconnect = false;
     const mailsToSend = rfqMails.filter(
@@ -224,7 +295,11 @@ export function createRfqsRouter({
         gmailSendResult = await gmailSender.sendMessage({
           credentials,
           refreshToken,
-          message: { ...buildRfqMailMessage(mail, connection), inlineImages },
+          message: {
+            ...buildRfqMailMessage(mail, connection),
+            inlineImages,
+            ...(attachments.length > 0 ? { attachments } : {}),
+          },
         });
       } catch (error) {
         // Only a 4xx proves Gmail did not take the mail; anything else leaves the row in
