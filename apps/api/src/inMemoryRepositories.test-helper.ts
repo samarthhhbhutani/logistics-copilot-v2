@@ -18,6 +18,8 @@ import type {
   MailboxConnectionRepository,
   MailboxCredentials,
   MailboxCredentialsRepository,
+  OperatorCredentials,
+  OperatorRepository,
   OutboundAttachment,
   OutboundAttachmentRepository,
   Rfq,
@@ -35,6 +37,7 @@ import type {
 /** Test doubles with the same contracts as the Prisma repositories, no database. */
 export function createInMemoryRepositories(): {
   tenantRepository: TenantRepository;
+  operatorRepository: OperatorRepository;
   mailboxCredentialsRepository: MailboxCredentialsRepository;
   mailboxConnectionRepository: MailboxConnectionRepository;
   emailReadRepository: EmailReadRepository;
@@ -66,6 +69,7 @@ export function createInMemoryRepositories(): {
   const googleClientByTenantId = new Map<string, TenantGoogleClient>();
   const pubsubPushByTenantId = new Map<string, TenantPubsubPush>();
   const credentialsByEmail = new Map<string, MailboxCredentials>();
+  const operatorByEmail = new Map<string, OperatorCredentials>();
   const connectionByMailboxId = new Map<string, MailboxConnection>();
   const emails: (EmailDetail & {
     mailboxId: string;
@@ -168,6 +172,20 @@ export function createInMemoryRepositories(): {
       },
       async findTenantPubsubPush(tenantId) {
         return pubsubPushByTenantId.get(tenantId);
+      },
+    },
+    operatorRepository: {
+      async findOperatorByEmail(email) {
+        return operatorByEmail.get(email);
+      },
+      async upsertOperator({ email, passwordHash }) {
+        const operator = {
+          operatorId: operatorByEmail.get(email)?.operatorId ?? randomUUID(),
+          email,
+          passwordHash,
+        };
+        operatorByEmail.set(email, operator);
+        return operator;
       },
     },
     mailboxCredentialsRepository: {

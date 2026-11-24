@@ -11,3 +11,13 @@ export const loginRequestSchema = z.object({ email: emailAddressSchema, password
 /** What POST /v1/auth/login and GET /v1/me return: the signed-in mailbox and its tenant. */
 export const sessionResponseSchema = z.object({ mailboxId: z.uuid(), tenantId: z.uuid() });
 export type SessionResponse = z.infer<typeof sessionResponseSchema>;
+
+/** Operator login: any non-empty password is checked, the length rule lives where accounts are made. */
+export const operatorLoginRequestSchema = z.object({
+  email: emailAddressSchema,
+  password: z.string().min(1).max(256),
+});
+
+/** What POST /v1/operator/login and GET /v1/operator/me return: the signed-in operator. */
+export const operatorSessionResponseSchema = z.object({ operatorId: z.uuid(), email: z.email() });
+export type OperatorSessionResponse = z.infer<typeof operatorSessionResponseSchema>;

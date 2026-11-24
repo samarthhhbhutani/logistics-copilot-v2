@@ -1,7 +1,8 @@
 import { randomBytes } from 'node:crypto';
-import { createEncryptionUtil, loadConfig } from '@lc/core';
+import { createEncryptionUtil, createOperatorSessionToken, loadConfig } from '@lc/core';
 import type { AgentReplyProposer, EncryptionUtil, RfqMailDrafter, RfqSuggester } from '@lc/core';
 import type { Express } from 'express';
+import { OPERATOR_COOKIE_NAME } from './auth/operatorCookie.js';
 import { createAppInstance } from './createAppInstance.js';
 import { createFakeGmailOAuth } from './fakeGmailOAuth.test-helper.js';
 import type { FakeGmailOAuth } from './fakeGmailOAuth.test-helper.js';
@@ -19,9 +20,14 @@ import { createFakeOutboundAttachmentStore } from './fakeOutboundAttachmentStore
 import type { FakeOutboundAttachmentStore } from './fakeOutboundAttachmentStore.test-helper.js';
 
 export const testSessionSecret = 'test-session-secret-that-is-at-least-32-chars';
-export const testOperatorToken = 'test-operator-token-that-is-at-least-32-chars';
-/** What every test sends to the operator routes: `.set(operatorAuthorizationHeader)`. */
-export const operatorAuthorizationHeader = { authorization: `Bearer ${testOperatorToken}` };
+export const testOperator = {
+  operatorId: '0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f',
+  email: 'operator@logistics-copilot.example',
+};
+/** A signed-in operator, minted directly: what every test sends to the operator routes via `.set(operatorSessionHeader)`. */
+export const operatorSessionHeader = {
+  cookie: `${OPERATOR_COOKIE_NAME}=${await createOperatorSessionToken(testOperator, testSessionSecret)}`,
+};
 
 export interface TestAppOptions {
   /** Exercises the secure-cookie path. */
@@ -105,7 +111,6 @@ export function createTestApp({
     gmailSender,
     encryptionUtil,
     sessionSecret: testSessionSecret,
-    operatorToken: testOperatorToken,
   });
   return {
     app,

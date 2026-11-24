@@ -96,16 +96,20 @@ The identity is the **mailbox**: one Gmail inbox, one login, one person. `mailbo
 is the only place the address lives and doubles as the login name; `mailbox_logins` holds only the
 argon2id password hash. A tenant (one logistics desk) exists before its mailboxes.
 
-| Route                                  | Who      | Does                                                                                  |
-| -------------------------------------- | -------- | ------------------------------------------------------------------------------------- |
-| `POST /v1/tenants`                     | operator | creates a tenant -> `{ tenantId }`; `Authorization: Bearer <OPERATOR_TOKEN>`          |
-| `POST /v1/tenants/:tenantId/mailboxes` | operator | creates a mailbox (Gmail connected later) + credentials; no cookie; same Bearer token |
-| `POST /v1/auth/login`                  | owner    | verifies the password, sets `lc_session`                                              |
-| `POST /v1/auth/logout`                 | owner    | clears the cookie                                                                     |
-| `GET /v1/me`                           | owner    | `{ mailboxId, tenantId }` from the session                                            |
+| Route                                  | Who      | Does                                                               |
+| -------------------------------------- | -------- | ------------------------------------------------------------------ |
+| `POST /v1/operator/login`              | operator | verifies the operator password, sets `lc_operator` (8 h)           |
+| `POST /v1/operator/logout`             | operator | clears `lc_operator`                                               |
+| `GET /v1/operator/me`                  | operator | `{ operatorId, email }` from the operator session                  |
+| `POST /v1/tenants`                     | operator | creates a tenant -> `{ tenantId }`                                 |
+| `POST /v1/tenants/:tenantId/mailboxes` | operator | creates a mailbox (Gmail connected later) + credentials; no cookie |
+| `POST /v1/auth/login`                  | owner    | verifies the password, sets `lc_session`                           |
+| `POST /v1/auth/logout`                 | owner    | clears the cookie                                                  |
+| `GET /v1/me`                           | owner    | `{ mailboxId, tenantId }` from the session                         |
 
-The operator routes answer 401 `not_operator` unless the request carries `OPERATOR_TOKEN` as a Bearer
-token (`requireOperatorToken`; constant-time compare). `lc_session` is an httpOnly `SameSite=Lax` (Secure outside dev) cookie holding an HS256 JWT
+The operator routes answer 401 `not_operator` unless the request carries a valid `lc_operator` cookie
+(`requireOperator`); a mailbox session never passes, since operator tokens use their own issuer
+(`operatorSessionToken.ts`). `lc_session` is an httpOnly `SameSite=Lax` (Secure outside dev) cookie holding an HS256 JWT
 (`sub` = mailbox id, `tenantId`; 7 days) signed with `SESSION_SECRET`. Stateless: logout clears the
 cookie, a token stays valid until expiry (add `mailbox_logins.token_version` if instant revocation is
 ever needed). `requireSession` guards every session-scoped route and exposes the claims through
@@ -118,7 +122,7 @@ ever needed). `requireSession` guards every session-scoped route and exposes the
 argon2id hash, tied to no tenant. Accounts are never created over HTTP; a human runs
 `OPERATOR_EMAIL=… OPERATOR_PASSWORD=… DATABASE_URL=… npm run operator:create` (`createOperatorScript`,
 `bootstrapOperator`), which also resets the password of an existing email. Passwords are 12 to 256
-characters. The operator login routes that use this table replace the Bearer `OPERATOR_TOKEN`.
+characters. There is one operator cookie (`lc_operator`, 8 hours) and no operator UI yet.
 
 ## Stored body text
 

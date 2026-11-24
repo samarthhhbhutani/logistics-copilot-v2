@@ -30,8 +30,6 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(8080),
   /** HMAC key for session JWTs (API only). Generate: openssl rand -base64 48 */
   SESSION_SECRET: z.string().min(32).optional(),
-  /** Bearer token for the operator routes under /v1/tenants (API only). Generate: openssl rand -base64 48 */
-  OPERATOR_TOKEN: z.string().min(32).optional(),
   /** AES-256-GCM key for secrets at rest (createEncryptionUtil): 32 bytes, base64. Generate: openssl rand -base64 32 */
   TOKEN_ENCRYPTION_KEY: z.string().min(1).optional(),
   /**

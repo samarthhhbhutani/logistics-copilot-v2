@@ -162,7 +162,9 @@ PUSH_ENDPOINT=https://t3x6leuzhskn32hfhaw3f7u5wm0azded.lambda-url.ap-south-1.on.
    `TOKEN_ENCRYPTION_KEY`:
 
    ```sh
-   curl -X POST "$API_BASE_URL/v1/tenants" -H "authorization: Bearer $OPERATOR_TOKEN" \
+   curl -c operator.cookies -X POST "$API_BASE_URL/v1/operator/login" \
+     -H 'content-type: application/json' -d '{"email":"<operator email>","password":"<operator password>"}'
+   curl -b operator.cookies -X POST "$API_BASE_URL/v1/tenants" \
      -H 'content-type: application/json' -d '{
      "name": "Acme Logistics",
      "googleClientId": "<client id>",
@@ -177,7 +179,7 @@ PUSH_ENDPOINT=https://t3x6leuzhskn32hfhaw3f7u5wm0azded.lambda-url.ap-south-1.on.
 2. For each mailbox, create its operator login:
 
    ```sh
-   curl -X POST "$API_BASE_URL/v1/tenants/<tenantId>/mailboxes" -H "authorization: Bearer $OPERATOR_TOKEN" \
+   curl -b operator.cookies -X POST "$API_BASE_URL/v1/tenants/<tenantId>/mailboxes" \
      -H 'content-type: application/json' \
      -d '{"email":"ops@acme-logistics.com","password":"<initial password>"}'
    ```
