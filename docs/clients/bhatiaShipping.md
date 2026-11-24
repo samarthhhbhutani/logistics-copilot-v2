@@ -9,6 +9,7 @@ on a call, then using the operator console. Generic reference: `docs/clientOnboa
 | ------------------------------ | ------- | ------------------------------------------------------------------------------- |
 | Operator console               | us      | `https://frontend-production-0fcc0b30.up.railway.app/operator`                  |
 | OAuth redirect URI             | us      | `https://frontend-production-0fcc0b30.up.railway.app/v1/mailbox/gmail/callback` |
+| Local redirect URI (debugging) | us      | `http://localhost:8080/v1/mailbox/gmail/callback`                               |
 | Push endpoint URL              | us      | `https://635pchk5vyu7as53wj7vkztdgu0djzlw.lambda-url.ap-south-1.on.aws/`        |
 | Google project ID              | Bhatia  | `bhatia-shipping-mail` (suffix if taken)                                        |
 | OAuth client ID                | Bhatia  | `….apps.googleusercontent.com`                                                  |
@@ -31,16 +32,22 @@ the project ID to `bhatia-shipping-mail`; **Create**. When the bell confirms, se
 `Cloud Pub/Sub API` > **Enable**. Both appear under _Enabled APIs & services_.
 
 **1.3 Consent screen.** Menu > **Google Auth Platform** > **Get started**. App name `Logistics
-Copilot`, support email theirs > **Next**. Audience: **Internal** (Workspace). If only plain
-`@gmail.com`: **External**; say on the call that the app stays in Testing, mailboxes must be added as
-test users, and Google expires the token every 7 days (weekly reconnect). > **Next** > contact email
+Copilot`, support email theirs, **Next**. Audience **Internal**: only their Workspace users can sign in,
+no Google verification, and tokens never expire on a timer (the option is available because the
+Workspace admin created the project, so it sits under their organisation). **Next**, contact email,
+**Create**. Then **Data Access**, **Add or remove scopes**: filter `gmail.readonly`, tick
+`…/auth/gmail.readonly`; filter `gmail.send`, tick `…/auth/gmail.send`, **Update**, **Save**. If their
+admin restricts third-party API access (Admin console, Security, API controls), the client must be
+allowed there.
 
-> **Create**. Then **Data Access** > **Add or remove scopes**: filter `gmail.readonly`, tick
-> `…/auth/gmail.readonly`; filter `gmail.send`, tick `…/auth/gmail.send` > **Update** > **Save**.
-> External only: **Audience** > **Test users** > **Add users** (every mailbox) > **Save**; do not Publish.
+Fallback only when a mailbox is a plain `@gmail.com` account, which Internal rejects: Audience
+**External**, app stays in Testing, **Audience**, **Test users**, **Add users** (every such mailbox), do
+not Publish. Google then expires the token every 7 days, so that owner reconnects weekly.
 
 **1.4 OAuth client.** **Clients** > **Create client**. Type **Web application**, name `Logistics
-Copilot API`. **Authorised redirect URIs** > **Add URI**: paste the ledger redirect URI exactly >
+Copilot API`. **Authorised redirect URIs**, **Add URI** twice: the ledger production redirect URI
+exactly, then the local one `http://localhost:8080/v1/mailbox/gmail/callback` (lets us reproduce a
+connect problem from a laptop against a copy of their tenant; they can remove it after go-live).
 **Create**. Dialog: read the **Client ID** into the ledger; the **secret shows once**: they copy it to
 their password manager and share it with you by password manager or by reading it aloud while you
 type it into the console (step 2). Lost it? Clients > the client > **Add secret**.
