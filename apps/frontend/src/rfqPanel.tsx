@@ -11,6 +11,7 @@ import type {
   DraftRfqMailsResponse,
   EmailDetailResponse,
   FreightMode,
+  OutboundAttachmentResponse,
   RfqDetails,
   RfqWithMailsResponse,
   SendRfqBody,
@@ -18,6 +19,7 @@ import type {
   VendorCategory,
 } from '@lc/contract';
 import { errorMessage, frontendApi, isUnauthenticated } from './frontendApi.js';
+import { OutboundAttachmentsField } from './outboundAttachmentsField.js';
 import {
   VENDOR_CATEGORIES,
   categoriesOfRecipients,
@@ -63,7 +65,9 @@ function draftsFromResponse(response: DraftRfqMailsResponse): RfqMailDrafts {
  * "Write vendor mails" drafts one mail per vendor category for the operator to edit on the same
  * screen, and "Send" mails every ticked contact their category's text, one Gmail thread each. The
  * RFQ id is minted here when the panel opens, so the send and every retry of it are the same PUT;
- * once sent, the form freezes and the per-contact outcomes take over. The id lives only in memory,
+ * once sent, the form freezes and the per-contact outcomes take over. Files attached under the drafts
+ * go on every vendor mail and are fixed with the first send: the API stamps them on the RFQ, so a
+ * retry carries them whether or not the body names them again. The id lives only in memory,
  * so on mount the panel asks the API for the newest RFQ sent from this mail: when there is one, a
  * second button says how many vendors replied and opens the record (RfqRecord); "Request vendor
  * quotes" stays beside it and opens a blank form for another request from the same mail.
@@ -85,6 +89,7 @@ export function RfqPanel({
   const [selectedContactIds, setSelectedContactIds] = useState<ReadonlySet<string>>(new Set());
   const [recipientsMessage, setRecipientsMessage] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<RfqMailDrafts | null>(null);
+  const [attachments, setAttachments] = useState<OutboundAttachmentResponse[]>([]);
   const [rfqId, setRfqId] = useState(() => crypto.randomUUID());
   const [sendResult, setSendResult] = useState<RfqWithMailsResponse | null>(null);
   const [sendMessage, setSendMessage] = useState<string | null>(null);
@@ -212,6 +217,8 @@ export function RfqPanel({
   function startAnother() {
     setRfqId(crypto.randomUUID());
     setSendResult(null);
+    // The files went with the request just sent; the next one starts without any.
+    setAttachments([]);
     setSendMessage(null);
     lastSendBody.current = null;
     sendRfq.reset();
@@ -243,6 +250,8 @@ export function RfqPanel({
       recipients,
       mails: texts.mails,
     };
+    // The API defaults attachmentIds to none; leave it out rather than send an empty list.
+    if (attachments.length > 0) body.attachmentIds = attachments.map((attachment) => attachment.id);
     lastSendBody.current = body;
     sendRfq.mutate(body);
   }
@@ -637,6 +646,14 @@ export function RfqPanel({
                   </div>
                 );
               })}
+              {(sentThisSession === null || attachments.length > 0) && (
+                <OutboundAttachmentsField
+                  session={session}
+                  attachments={attachments}
+                  onAttachmentsChange={setAttachments}
+                  disabled={!editable}
+                />
+              )}
               {sentThisSession === null &&
                 selectedCategories.some((category) => !drafts[category]) && (
                   <p className="inlineAlert" role="alert">
