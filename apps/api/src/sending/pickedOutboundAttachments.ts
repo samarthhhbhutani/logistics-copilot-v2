@@ -8,17 +8,27 @@ import type {
 import { OUTBOUND_ATTACHMENTS_MAX_TOTAL_BYTES } from '@lc/contract';
 import type { OutboundAttachmentStore } from './outboundAttachmentStore.js';
 
+/** Who a send is about to hand the files to: the reply's sent_mails row, or the RFQ behind a batch of vendor mails. */
+export type OutboundAttachmentOwner = { sentMailId: string } | { rfqId: string };
+
+function isOwnedByAnother(attachment: OutboundAttachment, owner: OutboundAttachmentOwner): boolean {
+  if (attachment.sentMailId === null && attachment.rfqId === null) return false;
+  if ('sentMailId' in owner) return attachment.sentMailId !== owner.sentMailId;
+  return attachment.rfqId !== owner.rfqId;
+}
+
 /**
- * The uploads a send names, in the order given, checked before the sent_mails row is written: every
- * id must be this mailbox's (409 attachment_not_found), unsent or already on this very mail (409
- * attachment_already_sent; a replay under the same id passes), and the total must fit a Gmail
- * message (413 attachments_too_large). Empty ids: nothing to check, nothing returned.
+ * The uploads a send names, in the order given, checked before anything is written: every id must
+ * be this mailbox's (409 attachment_not_found), unused or already this very owner's (409
+ * attachment_already_sent; a replay under the same id passes), and the total must fit one Gmail
+ * message (413 attachments_too_large; every mail of an RFQ carries the whole set). Empty ids:
+ * nothing to check, nothing returned.
  */
 export async function findPickedOutboundAttachments(
   outboundAttachmentRepository: OutboundAttachmentRepository,
   scope: MailboxScope,
   attachmentIds: string[],
-  sentMailId: string,
+  owner: OutboundAttachmentOwner,
 ): Promise<OutboundAttachment[]> {
   if (attachmentIds.length === 0) return [];
   const attachments = await outboundAttachmentRepository.findOutboundAttachments(
@@ -27,9 +37,7 @@ export async function findPickedOutboundAttachments(
   );
   if (attachments.length !== attachmentIds.length)
     throw createHttpError(409, 'attachment_not_found');
-  if (
-    attachments.some((attachment) => attachment.sentMailId && attachment.sentMailId !== sentMailId)
-  ) {
+  if (attachments.some((attachment) => isOwnedByAnother(attachment, owner))) {
     throw createHttpError(409, 'attachment_already_sent');
   }
   const totalBytes = attachments.reduce((sum, attachment) => sum + attachment.sizeBytes, 0);

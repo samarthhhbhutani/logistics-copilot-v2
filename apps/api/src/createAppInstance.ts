@@ -239,6 +239,8 @@ export function createAppInstance({
       encryptionUtil,
       signatureImageRepository,
       signatureImageStore,
+      outboundAttachmentRepository,
+      outboundAttachmentStore,
       requireSession,
     }),
   );

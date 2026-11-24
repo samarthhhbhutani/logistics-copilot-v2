@@ -406,6 +406,7 @@ describe('scoped mail 404 after an account switch', () => {
         updatedAt: '2026-11-16T00:00:00.000Z',
       },
       mails: [mail],
+      attachments: [],
     };
     const body: SendRfqBody = {
       sourceEmailId: emailId,
@@ -473,6 +474,7 @@ describe('scoped mail 404 after an account switch', () => {
         updatedAt: '2026-11-16T00:00:00.000Z',
       },
       mails: [],
+      attachments: [],
     };
     let fetchMock = mockResponses(result, session);
     expect(await frontendApi.rfqBySourceEmail(session, emailId)).toEqual(result);

@@ -1,12 +1,13 @@
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import {
+  OUTBOUND_ATTACHMENT_MAX_BYTES,
   getRfqBySourceEmailResponseSchema,
   getRfqResponseSchema,
   listRfqsResponseSchema,
   sendRfqResponseSchema,
 } from '@lc/contract';
-import type { SendRfqResponse } from '@lc/contract';
+import type { OutboundAttachmentResponse, SendRfqResponse } from '@lc/contract';
 import { testTenantBody } from '../tenantFixture.test-helper.js';
 import { createTestApp, testMailboxEmail } from '../testAppInstance.test-helper.js';
 import type { TestApp } from '../testAppInstance.test-helper.js';
@@ -401,6 +402,205 @@ describe('PUT /v1/mailbox/rfqs/:rfqId/send', () => {
     expect(anonymous.status).toBe(401);
     const badId = await send(testApp, scope.cookie, everyoneBody(vendors), 'not-a-uuid');
     expect(badId.status).toBe(404);
+  });
+});
+
+const tinyPdf = Buffer.concat([Buffer.from('%PDF-1.7\n', 'ascii'), Buffer.alloc(16, 0)]);
+const csv = Buffer.from('container,eta\nMSKU1234567,2026-12-01\n', 'utf8');
+
+async function uploadOutboundAttachment(
+  testApp: TestApp,
+  cookie: string,
+  content: Buffer,
+  fileName: string,
+  contentType: string,
+): Promise<OutboundAttachmentResponse> {
+  const response = await request(testApp.app)
+    .post('/v1/mailbox/outbound-attachments')
+    .query({ fileName })
+    .set('Cookie', cookie)
+    .set('Content-Type', contentType)
+    .send(content);
+  if (response.status !== 201) {
+    throw new Error(`upload failed: ${response.status} ${JSON.stringify(response.body)}`);
+  }
+  return response.body;
+}
+
+describe('PUT /v1/mailbox/rfqs/:rfqId/send with attachmentIds', () => {
+  it('puts the uploads on every vendor mail in the order given, stamps them with the rfq, and lists them once', async () => {
+    const testApp = createTestApp();
+    const { cookie, ...scope } = await connectedMailbox(testApp);
+    const vendors = await seedVendors(testApp, cookie);
+    const rateCard = await uploadOutboundAttachment(
+      testApp,
+      cookie,
+      tinyPdf,
+      'Rate card.pdf',
+      'application/pdf',
+    );
+    const eta = await uploadOutboundAttachment(testApp, cookie, csv, 'eta.csv', 'text/csv');
+
+    const response = await send(testApp, cookie, {
+      ...everyoneBody(vendors),
+      attachmentIds: [rateCard.id, eta.id],
+    });
+
+    expect(response.status).toBe(200);
+    const body = sendRfqResponseSchema.parse(response.body);
+    expect(statusesOf(body)).toEqual(['sent', 'sent', 'sent']);
+    expect(body.attachments).toEqual([rateCard, eta]);
+    expect(testApp.gmailSender.sentMessages).toHaveLength(3);
+    for (const sent of testApp.gmailSender.sentMessages) {
+      expect(sent.message.attachments).toEqual([
+        { content: tinyPdf, contentType: 'application/pdf', fileName: 'Rate card.pdf' },
+        { content: csv, contentType: 'text/csv', fileName: 'eta.csv' },
+      ]);
+    }
+    expect(
+      await testApp.repositories.outboundAttachmentRepository.findOutboundAttachments(scope, [
+        rateCard.id,
+        eta.id,
+      ]),
+    ).toMatchObject([
+      { rfqId, sentMailId: null },
+      { rfqId, sentMailId: null },
+    ]);
+    // Stamped files can no longer be deleted from the composer.
+    const deleted = await request(testApp.app)
+      .delete(`/v1/mailbox/outbound-attachments/${rateCard.id}`)
+      .set('Cookie', cookie);
+    expect(deleted.status).toBe(404);
+
+    // GET reports the same files, and a replay without ids keeps them and sends nothing.
+    const read = await request(testApp.app).get(rfqPath(rfqId)).set('Cookie', cookie);
+    expect(getRfqResponseSchema.parse(read.body)).toEqual(body);
+    const replay = await send(testApp, cookie, everyoneBody(vendors));
+    expect(replay.status).toBe(200);
+    expect(replay.body.attachments).toEqual([rateCard, eta]);
+    expect(testApp.gmailSender.sentMessages).toHaveLength(3);
+  });
+
+  it('sends without attachmentIds exactly as before', async () => {
+    const testApp = createTestApp();
+    const { cookie } = await connectedMailbox(testApp);
+    const vendors = await seedVendors(testApp, cookie);
+
+    const response = await send(testApp, cookie, everyoneBody(vendors));
+
+    expect(response.status).toBe(200);
+    expect(response.body.attachments).toEqual([]);
+    expect(testApp.gmailSender.sentMessages.every((sent) => !('attachments' in sent.message))).toBe(
+      true,
+    );
+  });
+
+  it('carries the files on the mail resent after a refusal, with or without the ids repeated', async () => {
+    const testApp = createTestApp();
+    const { cookie } = await connectedMailbox(testApp);
+    const vendors = await seedVendors(testApp, cookie);
+    const rateCard = await uploadOutboundAttachment(
+      testApp,
+      cookie,
+      tinyPdf,
+      'Rate card.pdf',
+      'application/pdf',
+    );
+    testApp.gmailSender.failNextSendWith = 'bad_request';
+
+    const first = await send(testApp, cookie, {
+      ...everyoneBody(vendors),
+      attachmentIds: [rateCard.id],
+    });
+    expect(first.status).toBe(200);
+    expect(statusesOf(sendRfqResponseSchema.parse(first.body)).sort()).toEqual([
+      'failed',
+      'sent',
+      'sent',
+    ]);
+    expect(first.body.attachments).toEqual([rateCard]);
+
+    const retried = await send(testApp, cookie, everyoneBody(vendors));
+    expect(retried.status).toBe(200);
+    expect(statusesOf(sendRfqResponseSchema.parse(retried.body))).toEqual(['sent', 'sent', 'sent']);
+    expect(retried.body.attachments).toEqual([rateCard]);
+    expect(testApp.gmailSender.sentMessages).toHaveLength(3);
+    expect(testApp.gmailSender.sentMessages[2]!.message.attachments).toEqual([
+      { content: tinyPdf, contentType: 'application/pdf', fileName: 'Rate card.pdf' },
+    ]);
+  });
+
+  it('refuses an unknown id, a file already on a reply or another rfq, a total past the limit, duplicates, and files without a bucket, before writing anything', async () => {
+    const testApp = createTestApp();
+    const { cookie, ...scope } = await connectedMailbox(testApp);
+    const vendors = await seedVendors(testApp, cookie);
+    const rateCard = await uploadOutboundAttachment(
+      testApp,
+      cookie,
+      tinyPdf,
+      'Rate card.pdf',
+      'application/pdf',
+    );
+    const sendWith = (attachmentIds: string[]) =>
+      send(testApp, cookie, { ...everyoneBody(vendors), attachmentIds });
+
+    const unknown = await sendWith(['00000000-0000-4000-8000-00000000dead']);
+    expect([unknown.status, unknown.body.error]).toEqual([409, 'attachment_not_found']);
+
+    const duplicate = await sendWith([rateCard.id, rateCard.id]);
+    expect(duplicate.status).toBe(400);
+
+    await testApp.repositories.outboundAttachmentRepository.attachToSentMail(
+      scope,
+      [rateCard.id],
+      '11111111-1111-4111-8111-111111111111',
+    );
+    const onReply = await sendWith([rateCard.id]);
+    expect([onReply.status, onReply.body.error]).toEqual([409, 'attachment_already_sent']);
+
+    const eta = await uploadOutboundAttachment(testApp, cookie, csv, 'eta.csv', 'text/csv');
+    await testApp.repositories.outboundAttachmentRepository.attachToRfq(
+      scope,
+      [eta.id],
+      '33333333-3333-4333-8333-333333333333',
+    );
+    const onOtherRfq = await sendWith([eta.id]);
+    expect([onOtherRfq.status, onOtherRfq.body.error]).toEqual([409, 'attachment_already_sent']);
+
+    const big = await uploadOutboundAttachment(
+      testApp,
+      cookie,
+      Buffer.alloc(OUTBOUND_ATTACHMENT_MAX_BYTES, 1),
+      'big-1.bin',
+      'application/octet-stream',
+    );
+    const bigger = await uploadOutboundAttachment(
+      testApp,
+      cookie,
+      Buffer.alloc(OUTBOUND_ATTACHMENT_MAX_BYTES, 2),
+      'big-2.bin',
+      'application/octet-stream',
+    );
+    const tooLarge = await sendWith([big.id, bigger.id]);
+    expect([tooLarge.status, tooLarge.body.error]).toEqual([413, 'attachments_too_large']);
+
+    // Nothing above created the rfq or reached Gmail.
+    const read = await request(testApp.app).get(rfqPath(rfqId)).set('Cookie', cookie);
+    expect(read.status).toBe(404);
+    expect(testApp.gmailSender.sentMessages).toHaveLength(0);
+
+    const noBucket = createTestApp({ outboundAttachmentsEnabled: false });
+    const session = await connectedMailbox(noBucket);
+    const noBucketVendors = await seedVendors(noBucket, session.cookie);
+    const unavailable = await send(noBucket, session.cookie, {
+      ...everyoneBody(noBucketVendors),
+      attachmentIds: [big.id],
+    });
+    expect([unavailable.status, unavailable.body.error]).toEqual([
+      503,
+      'outbound_attachments_unavailable',
+    ]);
+    expect(noBucket.gmailSender.sentMessages).toHaveLength(0);
   });
 });
 
