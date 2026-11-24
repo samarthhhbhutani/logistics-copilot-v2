@@ -112,6 +112,14 @@ ever needed). `requireSession` guards every session-scoped route and exposes the
 `getSession(response)`. Persistence goes through `TenantRepository` and `MailboxCredentialsRepository`
 (`packages/core/src/{tenants,auth}`), so route tests run in memory and `index.ts` wires Prisma.
 
+### Operators
+
+`operators` (`packages/core/src/operators`) holds who may run the operator routes: email plus an
+argon2id hash, tied to no tenant. Accounts are never created over HTTP; a human runs
+`OPERATOR_EMAIL=… OPERATOR_PASSWORD=… DATABASE_URL=… npm run operator:create` (`createOperatorScript`,
+`bootstrapOperator`), which also resets the password of an existing email. Passwords are 12 to 256
+characters. The operator login routes that use this table replace the Bearer `OPERATOR_TOKEN`.
+
 ## Stored body text
 
 `emails.body_text` is what the sender typed, not the whole message as sent. `emailProcessor` drops
