@@ -1459,6 +1459,15 @@ a.emailRow:focus-visible {
   margin: -6px 0 4px;
   font-size: 0.87rem;
 }
+.rfqRecordFiles {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.rfqRecordFiles p {
+  margin: 0;
+  font-size: 0.87rem;
+}
 .rfqSuggestionStatus {
   display: flex;
   align-items: center;
