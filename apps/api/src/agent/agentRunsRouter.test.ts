@@ -5,7 +5,7 @@ import type { AgentReplyProposer, RunAgentInput, RunAgentResult } from '@lc/core
 import { testTenantBody } from '../tenantFixture.test-helper.js';
 import {
   createTestApp,
-  operatorAuthorizationHeader,
+  operatorSessionHeader,
   testMailboxEmail,
 } from '../testAppInstance.test-helper.js';
 import type { TestApp } from '../testAppInstance.test-helper.js';
@@ -58,11 +58,11 @@ function fakeProposer(answer: RunAgentResult | Error) {
 async function signedInMailbox({ app }: TestApp) {
   const tenant = await request(app)
     .post('/v1/tenants')
-    .set(operatorAuthorizationHeader)
+    .set(operatorSessionHeader)
     .send(testTenantBody);
   const mailbox = await request(app)
     .post(`/v1/tenants/${tenant.body.tenantId}/mailboxes`)
-    .set(operatorAuthorizationHeader)
+    .set(operatorSessionHeader)
     .send({ email: testMailboxEmail, password });
   const login = await request(app)
     .post('/v1/auth/login')
@@ -363,7 +363,7 @@ describe('GET /v1/mailbox/agent/runs/:agentRunId', () => {
       .post(
         `/v1/tenants/${(await request(testApp.app).get('/v1/me').set('Cookie', cookie)).body.tenantId}/mailboxes`,
       )
-      .set(operatorAuthorizationHeader)
+      .set(operatorSessionHeader)
       .send({ email: 'other@bhatia.example', password });
     expect(otherMailbox.status).toBe(201);
     const otherLogin = await request(testApp.app)

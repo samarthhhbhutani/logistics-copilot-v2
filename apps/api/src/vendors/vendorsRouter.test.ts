@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { testTenantBody } from '../tenantFixture.test-helper.js';
 import {
   createTestApp,
-  operatorAuthorizationHeader,
+  operatorSessionHeader,
   testMailboxEmail,
 } from '../testAppInstance.test-helper.js';
 import type { TestApp } from '../testAppInstance.test-helper.js';
@@ -17,13 +17,10 @@ async function signedInMailbox(
   email = testMailboxEmail,
   tenantBody = testTenantBody,
 ): Promise<{ cookie: string }> {
-  const tenant = await request(app)
-    .post('/v1/tenants')
-    .set(operatorAuthorizationHeader)
-    .send(tenantBody);
+  const tenant = await request(app).post('/v1/tenants').set(operatorSessionHeader).send(tenantBody);
   await request(app)
     .post(`/v1/tenants/${tenant.body.tenantId}/mailboxes`)
-    .set(operatorAuthorizationHeader)
+    .set(operatorSessionHeader)
     .send({ email, password });
   const login = await request(app).post('/v1/auth/login').send({ email, password });
   const setCookie = login.headers['set-cookie'];

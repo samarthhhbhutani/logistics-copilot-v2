@@ -15,6 +15,7 @@ import type {
   GmailWatch,
   MailboxConnectionRepository,
   MailboxCredentialsRepository,
+  OperatorRepository,
   OutboundAttachmentRepository,
   RfqMailDrafter,
   RfqRepository,
@@ -26,7 +27,7 @@ import type {
 } from '@lc/core';
 import { createAgentRunsRouter } from './agent/agentRunsRouter.js';
 import { createAuthRouter } from './auth/authRouter.js';
-import { createRequireOperatorToken } from './auth/requireOperatorToken.js';
+import { createRequireOperator } from './auth/requireOperator.js';
 import { createRequireSession, getSession } from './auth/requireSession.js';
 import type { AttachmentContentReader } from './emails/attachmentContentReader.js';
 import type { AttachmentDownloadUrlSigner } from './emails/attachmentDownloadUrlSigner.js';
@@ -45,11 +46,13 @@ import { createOutboundAttachmentsRouter } from './sending/outboundAttachmentsRo
 import type { OutboundAttachmentStore } from './sending/outboundAttachmentStore.js';
 import { createSignatureImagesRouter } from './signature/signatureImagesRouter.js';
 import type { SignatureImageStore } from './signature/signatureImageStore.js';
+import { createOperatorRouter } from './operator/operatorRouter.js';
 import { createTenantsRouter } from './tenants/tenantsRouter.js';
 
 export interface AppDependencies {
   config: Config;
   tenantRepository: TenantRepository;
+  operatorRepository: OperatorRepository;
   mailboxCredentialsRepository: MailboxCredentialsRepository;
   mailboxConnectionRepository: MailboxConnectionRepository;
   emailReadRepository: EmailReadRepository;
@@ -86,8 +89,6 @@ export interface AppDependencies {
   encryptionUtil: EncryptionUtil;
   /** HMAC key for session cookies; required here rather than optional on Config so index.ts fails fast. */
   sessionSecret: string;
-  /** Bearer token for the operator routes under /v1/tenants; required for the same reason. */
-  operatorToken: string;
 }
 
 /**
@@ -100,6 +101,7 @@ export interface AppDependencies {
 export function createAppInstance({
   config,
   tenantRepository,
+  operatorRepository,
   mailboxCredentialsRepository,
   mailboxConnectionRepository,
   emailReadRepository,
@@ -124,14 +126,13 @@ export function createAppInstance({
   gmailSender,
   encryptionUtil,
   sessionSecret,
-  operatorToken,
 }: AppDependencies): Express {
   const expressApp = express();
   expressApp.use(express.json({ limit: '1mb' }));
   expressApp.use(cookieParser());
   const sessionCookie = { secure: config.STAGE !== 'dev' };
   const requireSession = createRequireSession(sessionSecret);
-  const requireOperatorToken = createRequireOperatorToken(operatorToken);
+  const requireOperator = createRequireOperator(sessionSecret);
 
   expressApp.get('/health', (_request, response) => {
     response.json({ ok: true, stage: config.STAGE });
@@ -143,8 +144,12 @@ export function createAppInstance({
     createAuthRouter({ mailboxCredentialsRepository, sessionSecret, sessionCookie }),
   );
   v1Router.use(
+    '/operator',
+    createOperatorRouter({ operatorRepository, sessionSecret, sessionCookie, requireOperator }),
+  );
+  v1Router.use(
     '/tenants',
-    requireOperatorToken,
+    requireOperator,
     createTenantsRouter({ tenantRepository, mailboxCredentialsRepository, encryptionUtil }),
   );
   // Who am I (mailbox + tenant): the smallest session-scoped route; what the frontend calls on load.

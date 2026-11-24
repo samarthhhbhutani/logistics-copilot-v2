@@ -6,7 +6,7 @@ import { testTenantBody } from '../tenantFixture.test-helper.js';
 import { tinyPng, uploadSignatureImage } from '../signatureImageFixture.test-helper.js';
 import {
   createTestApp,
-  operatorAuthorizationHeader,
+  operatorSessionHeader,
   testMailboxEmail,
 } from '../testAppInstance.test-helper.js';
 import type { TestApp } from '../testAppInstance.test-helper.js';
@@ -23,11 +23,11 @@ async function signedInMailbox({
 }: TestApp): Promise<{ cookie: string; mailboxId: string; tenantId: string }> {
   const tenant = await request(app)
     .post('/v1/tenants')
-    .set(operatorAuthorizationHeader)
+    .set(operatorSessionHeader)
     .send(testTenantBody);
   const mailbox = await request(app)
     .post(`/v1/tenants/${tenant.body.tenantId}/mailboxes`)
-    .set(operatorAuthorizationHeader)
+    .set(operatorSessionHeader)
     .send({ email: testMailboxEmail, password });
   const login = await request(app)
     .post('/v1/auth/login')

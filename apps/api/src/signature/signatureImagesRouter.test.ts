@@ -10,7 +10,7 @@ import {
 } from '../signatureImageFixture.test-helper.js';
 import {
   createTestApp,
-  operatorAuthorizationHeader,
+  operatorSessionHeader,
   testMailboxEmail,
 } from '../testAppInstance.test-helper.js';
 import type { TestApp } from '../testAppInstance.test-helper.js';
@@ -21,11 +21,11 @@ const imagesPath = '/v1/mailbox/signature/images';
 async function signedInMailbox({ app }: TestApp): Promise<{ cookie: string; mailboxId: string }> {
   const tenant = await request(app)
     .post('/v1/tenants')
-    .set(operatorAuthorizationHeader)
+    .set(operatorSessionHeader)
     .send(testTenantBody);
   const mailbox = await request(app)
     .post(`/v1/tenants/${tenant.body.tenantId}/mailboxes`)
-    .set(operatorAuthorizationHeader)
+    .set(operatorSessionHeader)
     .send({ email: testMailboxEmail, password });
   const login = await request(app)
     .post('/v1/auth/login')
@@ -212,12 +212,12 @@ describe('/v1/mailbox/signature/images', () => {
           (
             await request(testApp.app)
               .post('/v1/tenants')
-              .set(operatorAuthorizationHeader)
+              .set(operatorSessionHeader)
               .send({ ...testTenantBody, name: 'Other Forwarders' })
           ).body.tenantId
         }/mailboxes`,
       )
-      .set(operatorAuthorizationHeader)
+      .set(operatorSessionHeader)
       .send({ email: 'ops@other.example', password });
     expect(other.status).toBe(201);
     const login = await request(testApp.app)

@@ -47,7 +47,7 @@ const tenantIdParamsSchema = z.object({ tenantId: z.uuid() });
  * secret encrypted at rest, and its Pub/Sub topic and push service account; POST /:tenantId/mailboxes
  * creates a mailbox (Gmail connected later by its owner) with its login credentials. Creating an
  * account never signs anyone in; the owner logs in via /v1/auth/login. Mounted behind
- * requireOperatorToken in createAppInstance.
+ * requireOperator in createAppInstance.
  */
 export function createTenantsRouter({
   tenantRepository,
